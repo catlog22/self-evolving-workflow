@@ -43,6 +43,7 @@
     "test:codex-replay": "npm run build && node test/codex-replay.mjs",
     "test:codex-standalone": "npm run build && node test/codex-standalone.mjs",
     "test:codex-chain": "node test/codex-chain.mjs",
+    "test:codex-campaigns": "node test/codex-campaigns.mjs",
     "test:maestro-closeout": "npm run build && node test/maestro-closeout.mjs",
     "prepack": "npm run build"
   },

@@ -248,7 +248,11 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 | 5. 自进化闭环 | 选一个项目 Skill，生成局部补丁，通过真实宿主回放后应用并回滚。 | 旧版能复现问题，候选改善目标行为，原有成功场景通过。实际加载路径和哈希与候选一致，能拒绝基线漂移，应用和回滚都可复查。 |
 | 6. 扩大迁移范围 | 迁移元 Skill、Odyssey、Swarm 和其他步骤。按仓库或 Skill 比对旧规则，逐组切换。 | 宿主安装后可以从包内读取所需流程。Odyssey 可恢复原模式，Swarm 的角色及产物契约不变。新 Wiki 接管确认范围，旧运行记录走兼容读取。 |
 
-Odyssey 的七种模式已随 Skill 包分发。安装包验收覆盖 `odyssey-review` 的分派和恢复，兼容解析继续优先读取已有项目覆盖。Swarm 的角色、脚本和产物契约随包分发。同一轮更新重试复用原结果，更新回执提交后中断时可恢复派生状态。下一步用真实宿主验证两者的文档读取与恢复行为，再扩大固定版本的绑定范围。 [Odyssey 入口](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/specs/swarm-protocol.md)
+用 `maestro skills install maestro-odyssey team-swarm --workflow-root <repo>` 导入长期流程与协作 Skill。提交到 Git 后，把 `maestro-odyssey,team-swarm` 加入 `MAESTRO_PROJECT_SKILLS`。Odyssey 的七个 `odyssey-<mode>` 命令指向同一提交中的包，分派时选用对应模式的契约和必读文档。Swarm 绑定协调员与协议，角色通过包内链接打开，控制器和模板从同一提交取用。已存在的旧 Run 继续用兼容读取。 [Odyssey 入口](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/specs/swarm-protocol.md)
+
+安装包验收已覆盖七种 Odyssey 模式和 Swarm 的项目导入、分派和恢复。契约测试逐项比对八个命令的旧版与新绑定哈希。 [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs) · [契约测试](/D:/evolve-maestro-runtime/src/run/contract.test.ts)
+
+`npm run test:codex-campaigns` 用真实 Codex 验证 Odyssey Review 在 Git 版本变化后恢复原模式和文档，完成四维审查并封存 `review-session`。Swarm 调用两个 Codex ant 执行分支和一个 analyst。验收程序负责分派、执行同一 Git 提交中的 Python 控制器、恢复一次已提交的迭代更新，并通过 Maestro 封存两个 ant 结果、汇总报告和主产物。此样本覆盖真实宿主读取及回执，原生团队消息总线和其他 Odyssey 模式的完整执行仍需各自验收。 [真实宿主验收](/D:/evolve_workflow/test/codex-campaigns.mjs)
 
 统一 Maestro 入口以 Skill 包分发，入口按需链接意图分类、建链、Run 循环、自动执行和目标修订。Next 与 Ralph 的兼容入口委托该包。已有 Run 可通过旧解析入口读取迁移后的准备说明和分类目录。安装包同时分发元 Skill 及其契约和回放说明。 [统一 Maestro Skill](/D:/evolve-maestro-runtime/.claude/skills/maestro/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
