@@ -8,6 +8,7 @@ import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 import { graphMultiHopSearch } from './upstream/graph-search.js';
 import { slugify } from './upstream/slug.js';
 import { tokenizeWiki } from './wiki-tokens.js';
+import { appliesToContext, readWikiEntryMetadata, type WikiContext, type WikiEntryMetadata } from './wiki-entry.js';
 import type { WikiIngestOptions } from './wiki-ingest.js';
 
 interface Page {
@@ -17,6 +18,7 @@ interface Page {
   path: string;
   snippet: string;
   sources: string[];
+  entry?: WikiEntryMetadata;
 }
 
 interface PageFile extends Page {
@@ -28,6 +30,7 @@ export interface WikiSearchOptions {
   limit?: number;
   hop?: number;
   decay?: number;
+  includeHistory?: boolean;
 }
 
 export interface WikiHit extends Page {
@@ -59,6 +62,7 @@ export function readWikiPages(root: string): PageFile[] {
       pages.push({
         id: path.slice(5, -3), title, type: frontmatter.type.toLowerCase(), path, snippet,
         sources: readSources(content), body,
+        ...(path.startsWith('wiki/entries/') ? { entry: readWikiEntryMetadata(path, frontmatter) } : {}),
         links: [...body.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(link => link[1].trim()),
       });
     }
@@ -71,16 +75,23 @@ function resolveEdges(pages: PageFile[]) {
   const visible = pages.filter(page => page.type !== 'query');
   const byId = new Map(visible.map(page => [page.id.toLowerCase(), page.id]));
   const aliases = new Map<string, string | undefined>();
+  const stableAliases = new Map<string, string>();
   for (const page of visible) {
     for (const key of new Set([slugify(page.title), slugify(page.id.split('/').at(-1)!)])) {
       if (key) aliases.set(key, aliases.has(key) ? undefined : page.id);
+    }
+    for (const alias of page.entry?.aliases ?? []) {
+      const key = alias.toLowerCase();
+      const previous = byId.get(key) ?? byId.get(`entries/${key}`) ?? stableAliases.get(key);
+      if (previous && previous !== page.id) throw new InputError(`Duplicate Wiki alias: ${alias}`);
+      stableAliases.set(key, page.id);
     }
   }
   return visible.flatMap(page => {
     const targets = new Set<string>();
     for (const link of page.links) {
       const key = link.replaceAll('\\', '/').replace(/^wiki\//i, '').replace(/\.md$/i, '');
-      const target = byId.get(key.toLowerCase()) ?? aliases.get(slugify(key));
+      const target = byId.get(key.toLowerCase()) ?? stableAliases.get(key.toLowerCase()) ?? aliases.get(slugify(key));
       if (target && target !== page.id) targets.add(target);
     }
     return [...targets].map(target => ({ source: page.id, target }));
@@ -101,6 +112,27 @@ export class Wiki {
     return ingestWiki(this, source, options);
   }
 
+  constraints(context: WikiContext = {}) {
+    if (!existsSync(join(this.root, 'wiki'))) return [];
+    return readWikiPages(this.root).filter(page =>
+      page.entry?.mode === 'constraint' && page.entry.status === 'active' && appliesToContext(page.entry, context)
+    ).map(({ links: _links, ...page }) => page);
+  }
+
+  getEntry(id: string) {
+    if (!existsSync(join(this.root, 'wiki'))) return null;
+    const key = requireText(id, 'wiki entry ID').toLowerCase();
+    const matches = readWikiPages(this.root).filter(page => page.entry && (
+      page.id.toLowerCase() === key || page.id.toLowerCase() === `entries/${key}` ||
+      page.entry.aliases.some(alias => alias.toLowerCase() === key)
+    ));
+    if (matches.length > 1) throw new InputError(`Ambiguous Wiki entry ID: ${id}`);
+    const page = matches[0];
+    if (!page) return null;
+    const { links: _links, ...entry } = page;
+    return entry;
+  }
+
   build() {
     if (!existsSync(join(this.root, 'wiki'))) throw new NotFoundError('Missing wiki/ directory');
     const db = openDb(this.indexPath);
@@ -116,22 +148,28 @@ export class Wiki {
             page_id TEXT PRIMARY KEY, title TEXT, type TEXT, rel_path TEXT, snippet TEXT
           );
           CREATE TABLE IF NOT EXISTS page_sources (page_id TEXT PRIMARY KEY, sources TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS wiki_entries (
+            page_id TEXT PRIMARY KEY, status TEXT NOT NULL, metadata TEXT NOT NULL
+          );
           CREATE TABLE IF NOT EXISTS graph_edge (
             source_id TEXT NOT NULL, target_id TEXT NOT NULL, PRIMARY KEY (source_id, target_id)
           );
           DELETE FROM wiki_fts;
           DELETE FROM page_meta;
           DELETE FROM page_sources;
+          DELETE FROM wiki_entries;
           DELETE FROM graph_edge;
         `);
         const fts = db.prepare('INSERT INTO wiki_fts(page_id, title_tok, content_tok) VALUES (?, ?, ?)');
         const meta = db.prepare('INSERT INTO page_meta(page_id, title, type, rel_path, snippet) VALUES (?, ?, ?, ?, ?)');
         const source = db.prepare('INSERT INTO page_sources(page_id, sources) VALUES (?, ?)');
         const edge = db.prepare('INSERT INTO graph_edge(source_id, target_id) VALUES (?, ?)');
+        const entry = db.prepare('INSERT INTO wiki_entries(page_id, status, metadata) VALUES (?, ?, ?)');
         for (const page of pages) {
           fts.run(page.id, tokenizeWiki(page.title).join(' '), tokenizeWiki(page.body).join(' '));
           meta.run(page.id, page.title, page.type, page.path, page.snippet);
           source.run(page.id, JSON.stringify(page.sources));
+          if (page.entry) entry.run(page.id, page.entry.status, JSON.stringify(page.entry));
         }
         for (const { source, target } of edges) edge.run(source, target);
         return { pages: pages.length, edges: edges.length };
@@ -160,25 +198,35 @@ export class Wiki {
     const db = openDb(this.indexPath, true);
     try {
       db.exec('BEGIN');
+      const entries = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wiki_entries'").get();
+      const visibility = entries && !options.includeHistory
+        ? "AND page_id NOT IN (SELECT page_id FROM wiki_entries WHERE status <> 'active')"
+        : '';
       const seeds = db.prepare(`
         SELECT page_id AS id, -bm25(wiki_fts, 0.0, 5.0, 1.0) AS score
-        FROM wiki_fts WHERE wiki_fts MATCH ? ORDER BY score DESC, page_id LIMIT ?
+        FROM wiki_fts WHERE wiki_fts MATCH ? ${visibility} ORDER BY score DESC, page_id LIMIT ?
       `).all(expression, hop ? limit * 2 : limit) as Array<{ id: string; score: number }>;
       if (!seeds.length) return { results: [], links: [] };
-      return readHits(db, seeds, limit, hop, decay);
+      return readHits(db, seeds, limit, hop, decay, Boolean(entries), Boolean(options.includeHistory));
     } finally {
       db.close();
     }
   }
 }
 
-function readHits(db: DatabaseSync, seeds: { id: string; score: number }[], limit: number, hop: number, decay: number) {
+function readHits(db: DatabaseSync, seeds: { id: string; score: number }[], limit: number, hop: number, decay: number, hasEntries: boolean, includeHistory: boolean) {
   const hasSources = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='page_sources'").get();
   const rows = db.prepare(`SELECT m.page_id AS id, m.title, m.type, m.rel_path AS path, m.snippet,
-    ${hasSources ? "COALESCE(s.sources, '[]')" : "'[]'"} AS sources
-    FROM page_meta m ${hasSources ? 'LEFT JOIN page_sources s USING(page_id)' : ''}`)
-    .all() as (Omit<Page, 'sources'> & { sources: string })[];
-  const pages = new Map(rows.map(row => [row.id, { ...row, path: row.path.replaceAll('\\', '/'), sources: JSON.parse(row.sources) as string[] }]));
+    ${hasSources ? "COALESCE(s.sources, '[]')" : "'[]'"} AS sources,
+    ${hasEntries ? 'e.metadata' : 'NULL'} AS metadata
+    FROM page_meta m ${hasSources ? 'LEFT JOIN page_sources s USING(page_id)' : ''}
+    ${hasEntries ? 'LEFT JOIN wiki_entries e USING(page_id)' : ''}
+    ${hasEntries && !includeHistory ? "WHERE e.status IS NULL OR e.status = 'active'" : ''}`)
+    .all() as (Omit<Page, 'sources' | 'entry'> & { sources: string; metadata: string | null })[];
+  const pages = new Map(rows.map(({ metadata, ...row }) => [row.id, {
+    ...row, path: row.path.replaceAll('\\', '/'), sources: JSON.parse(row.sources) as string[],
+    ...(metadata ? { entry: JSON.parse(metadata) as WikiEntryMetadata } : {}),
+  }]));
   const graph = new UndirectedGraph();
   const outgoing = new Map<string, Set<string>>();
   for (const page of pages.values()) {

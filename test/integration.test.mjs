@@ -72,6 +72,28 @@ test('Wiki searches CRLF Chinese Markdown, follows links, and removes stale page
   assert.equal(wiki.search('回路压力', { hop: 1 }).results.length, 1);
 });
 
+test('managed Wiki entries resolve active scopes independently of search and preserve history', async t => {
+  const root = await temp(t);
+  const directory = join(root, 'wiki', 'entries');
+  await mkdir(directory, { recursive: true });
+  const entry = (title, mode, status, scope, aliases = []) => [
+    '---', `title: ${title}`, `mode: ${mode}`, `status: ${status}`, `scope: ${JSON.stringify(scope)}`,
+    'sources: [receipt-1]', `aliases: ${JSON.stringify(aliases)}`, '---',
+    'Calibration preflight. [[entries/retired]]',
+  ].join('\n');
+  await writeFile(join(directory, 'required.md'), entry('Calibration', 'constraint', 'active', ['skill:analyze'], ['legacy:spec:S-42']));
+  await writeFile(join(directory, 'retired.md'), entry('Old calibration', 'constraint', 'deprecated', ['project']));
+  await writeFile(join(directory, 'reference.md'), entry('Calibration notes', 'reference', 'active', ['project']));
+  const wiki = new Wiki(root);
+  assert.deepEqual(wiki.constraints(), []);
+  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'analyze')).map(page => page.id), ['entries/required']);
+  assert.equal(wiki.getEntry('legacy:spec:S-42').id, 'entries/required');
+  assert.equal(wiki.getEntry('retired').entry.status, 'deprecated');
+  wiki.build();
+  assert.equal(wiki.search('calibration', { hop: 1 }).results.some(hit => hit.id === 'entries/retired'), false);
+  assert.equal(wiki.search('calibration', { includeHistory: true }).results.some(hit => hit.id === 'entries/retired'), true);
+});
+
 test('Wiki ingest preserves source attribution and locked pages', async t => {
   const root = await temp(t);
   const source = join(root, 'notes.md');

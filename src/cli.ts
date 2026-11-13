@@ -19,6 +19,8 @@ const help = `Usage: agent-memory <command> [options]
   wiki build                               Index Markdown pages under wiki/
   wiki ingest <file.md|file.txt>            Generate and merge wiki pages
   wiki search <query>                      Search wiki pages (--hop 0)
+  wiki get <id>                            Read a Wiki entry, including history
+  wiki constraints                         Resolve active constraints (--skill, --task, --path)
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
   memory get|delete <id>                   Read or delete a memory
@@ -55,6 +57,10 @@ const options = {
   priority: { type: 'string' },
   port: { type: 'string' },
   mode: { type: 'string' },
+  skill: { type: 'string' },
+  task: { type: 'string' },
+  path: { type: 'string', multiple: true },
+  history: { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
 } as const;
 
@@ -91,7 +97,7 @@ async function main() {
   const db = values.db ?? join(root, '.agent-memory', 'memory.db');
   const openMemory = () => new MemoryStore(db, { namespace: values.namespace });
   const limit = values.limit === undefined ? undefined : Number(values.limit);
-  const wikiOptions = { limit, hop: values.hop === undefined ? undefined : Number(values.hop) };
+  const wikiOptions = { limit, hop: values.hop === undefined ? undefined : Number(values.hop), includeHistory: values.history };
   const memoryOptions = { limit, type: values.type, scene: values.scene, session: values.session };
   const print = (result: unknown) => process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 
@@ -150,6 +156,8 @@ async function main() {
     switch (action) {
       case 'build': return print(wiki.build());
       case 'search': return print(wiki.search(args.join(' '), wikiOptions));
+      case 'get': return print(wiki.getEntry(requireText(args[0], 'wiki entry ID')));
+      case 'constraints': return print(wiki.constraints({ skill: values.skill, task: values.task, paths: values.path }));
       case 'ingest': return print(await wiki.ingest(requireText(args[0], 'source file'), { llm: modelClient() }));
     }
   }

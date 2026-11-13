@@ -69,6 +69,10 @@ export async function ingestWiki(wiki: Wiki, source: string, options: WikiIngest
         const title = page.frontmatter.title;
         const path = typeof title === 'string' && slugify(title) ? pageRelPath(page.frontmatter.type, title) : file.path;
         if (structuralPages.has(file.path.toLowerCase()) || structuralPages.has(path.toLowerCase())) continue;
+        if (file.path.toLowerCase().startsWith('wiki/entries/') || path.toLowerCase().startsWith('wiki/entries/')) {
+          warnings.push(`Managed Wiki entries require the publishing workflow: ${file.path}`);
+          continue;
+        }
         const full = checkedPath(root, path);
         const candidate = buildPage({ ...page.frontmatter, sources: unionSources(readSources(file.content), [sourceName]) }, page.body);
         if (!original.has(path)) original.set(path, readIfPresent(full));
