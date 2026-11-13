@@ -269,14 +269,17 @@ export function recordSkillCompletion(wiki: Wiki, project: string, input: {
   }
 }
 
-export function readSkillCompletions(wiki: Wiki, project: string) {
+export function readSkillCompletions(wiki: Wiki, project: string, id?: string) {
   const path = ledgerPath(wiki);
   if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) return [];
   const db = openDb(path, true);
   try {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'skill_completions' AND type = 'table'").get()) return [];
-    return db.prepare('SELECT id, payload, recorded_at FROM skill_completions WHERE project = ? ORDER BY recorded_at, id')
-      .all(project).map(row => ({ id: String(row.id), receipt: {
+    const columns = 'SELECT id, payload, recorded_at FROM skill_completions WHERE project = ?';
+    const receipts = id === undefined
+      ? db.prepare(columns + ' ORDER BY recorded_at, id').all(project)
+      : db.prepare(columns + ' AND id = ?').all(project, id);
+    return receipts.map(row => ({ id: String(row.id), receipt: {
         ...object(JSON.parse(String(row.payload))), recorded_at: row.recorded_at,
       } }));
   } finally {

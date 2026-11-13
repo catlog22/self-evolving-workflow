@@ -145,7 +145,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 独立 Skill 通过执行入口明确记录 `succeeded`、`failed` 或 `cancelled`，生成包含执行 ID、实际 Skill 版本和证据引用的结束回执。两类回执进入同一沉淀入口。宿主 `Stop` 此时只作为会话监测信号。关联同一个 Skill 调用的 Session 回执和独立回执时，使用执行 ID 与证据锚点归并信号。沉淀和自进化 Skill 自身的执行事件排除在这一自动触发入口之外，避免递归触发。 [宿主 Stop 处理](/D:/maestro2/src/commands/hooks.ts:1360)
 
-独立 Skill 的宿主回调使用 `closeout skill <execution-id>`。入口先持久化结束回执，再进行提取，重试沿用原执行 ID。已经归属 Maestro Session 的调用通过 `--session <id>` 交给 Session 收尾，以免同一次执行产生两份候选。
+项目内的独立 Skill 可用 `maestro skills run <id> "<任务>" --json` 在 Codex 的只读模式下执行。入口固定 `skills/<id>/SKILL.md` 所在的 Git 提交和目录树，宿主按需打开包内 Markdown。配置 `MAESTRO_EVOLVE_CLI` 和 `MAESTRO_EVOLVE_PROJECT` 后，进程结束先用 `closeout skill --record-only` 提交回执，再异步调用 `closeout resume <receipt-id>`。回执保存任务、输出、宿主终态和已读取的文档哈希。模型失败后可以凭同一个回执重试，或用 `closeout scan` 补处理。已有宿主回调仍可直接调用 `closeout skill <execution-id>`。已经归属 Maestro Session 的执行交给 Session 收尾。
 
 | 层次 | 内容与去向 |
 | --- | --- |
@@ -269,6 +269,8 @@ A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` �
 ### 7.5 知识闭环的端到端验收
 
 将 `MAESTRO_REPLAY_CLI` 设为已构建的 Maestro JavaScript 入口。用 `npm run test:codex-replay` 验证真实 Codex 的 Skill 回放、应用与回滚，核对新增链接的读取条件和文档哈希。用 `npm run test:maestro-closeout` 在临时 Git 仓库执行预检命令，验证会话纠正、Run 重试、完成回执自动沉淀、重复投递、Wiki 发布和索引重建。后者使用本地模型测试端点固定提取结果，并覆盖临时网络故障产生零候选的场景。
+
+用 `npm run test:codex-standalone` 验证独立 Skill 的宿主结束回调。测试让真实 Codex 读取提交中的 Markdown，再用本地模型测试端点检查收尾取证和回执重试。测试也覆盖宿主失败产生零候选，以及已有 Session 归属的调用退出独立入口。
 
 端到端验收使用一个有实际用户纠正的场景。例如数据库迁移预检 Skill 漏传 `--dry-run`，补参后验证通过。结束回执触发沉淀，重复投递只处理一次。发布后，新 Session 能检索相关参考，并按原作用域加载迁移来的约束。自进化 Skill 生成补丁，旧版复现漏参，候选版首条命令即带齐参数，已有的成功用例继续通过。应用后重新调用，核对宿主加载新版，再验证回滚。
 

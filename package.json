@@ -41,6 +41,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:codex-replay": "npm run build && node test/codex-replay.mjs",
+    "test:codex-standalone": "npm run build && node test/codex-standalone.mjs",
     "test:maestro-closeout": "npm run build && node test/maestro-closeout.mjs",
     "prepack": "npm run build"
   },

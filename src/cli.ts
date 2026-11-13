@@ -37,7 +37,8 @@ const help = `Usage: agent-memory <command> [options]
   closeout harvest <receipt.json>          Extract Wiki candidates from a completion receipt (--project)
   closeout session <id>                    Harvest a committed Session receipt (--project, --receipt)
   closeout skill <execution-id>            Record and harvest a standalone Skill completion
-                                          (--skill, --skill-version, --status, --transcript, --project)
+                                          (--skill, --skill-version, --status, --transcript, --project, --record-only)
+  closeout resume <receipt-id>             Harvest an already recorded standalone Skill completion
   closeout scan [maestro-root]              Reconcile committed Session and standalone Skill receipts (--project)
   closeout show <receipt-id>                Show harvested candidates (--project)
   closeout publish <closeout-id> <candidate-id> <title>
@@ -92,6 +93,7 @@ const options = {
   receipt: { type: 'string' },
   'skill-version': { type: 'string' },
   status: { type: 'string' },
+  'record-only': { type: 'boolean' },
   evidence: { type: 'string', multiple: true },
   entry: { type: 'string' },
   closeout: { type: 'string' },
@@ -224,6 +226,12 @@ async function main() {
       wiki, requireText(args[0], 'closeout ID'), requireText(args[1], 'candidate ID'), args.slice(2).join(' '),
     ));
     const project = requireText(values.project, 'source project ID');
+    if (action === 'resume') {
+      const id = requireText(args[0], 'Skill completion receipt ID');
+      const saved = readSkillCompletions(wiki, project, id)[0];
+      if (!saved) throw new InputError('Standalone Skill completion receipt not found');
+      return print(await harvestCompletion(wiki, project, saved.receipt, modelClient));
+    }
     if (action === 'harvest') return print(await harvestCompletion(
       wiki, project, JSON.parse(readFileSync(requireText(args[0], 'receipt path'), 'utf8')), modelClient,
     ));
@@ -246,6 +254,7 @@ async function main() {
         status: requireText(values.status, 'Skill status'), messages: transcript, session: values.session,
       });
       if (!('receipt' in recorded)) return print(recorded);
+      if (values['record-only']) return print({ receipt: recorded.receipt.id });
       return print({ receipt: recorded.receipt.id, ...await harvestCompletion(wiki, project, recorded.receipt, modelClient) });
     }
     if (action === 'scan') {

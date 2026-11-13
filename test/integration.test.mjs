@@ -329,7 +329,11 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   ]));
   const args = ['closeout', 'skill', 'host-invocation-1', '--skill', 'db-migration',
     '--skill-version', 'git:abc123', '--status', 'failed', '--transcript', transcript];
-  await assert.rejects(invoke(args), /HTTP 503/);
+  assert.deepEqual(await invoke([...args, '--record-only']), await invoke([...args, '--record-only']));
+  const { receipt } = await invoke([...args, '--record-only']);
+  assert.equal(calls, 0);
+  await assert.rejects(invoke(['closeout', 'resume', 'skill-missing']), /receipt not found/);
+  await assert.rejects(invoke(['closeout', 'resume', receipt]), /HTTP 503/);
   const pending = await invoke(['closeout', 'scan']);
   assert.equal(pending.length, 1);
   assert.equal(pending[0].candidates.length, 1);
