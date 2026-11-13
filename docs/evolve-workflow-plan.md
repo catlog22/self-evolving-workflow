@@ -272,7 +272,7 @@ Swarm 在分派前保存每轮的 assignment 批次，恢复时沿用原起点�
 
 常规 `run next` 在分派时按绑定契约的 `consumes` 别名接收同一 Session 的封存产物，核对发布回执、类型、角色、schema 和字节摘要。`upstream_aliases` 将别名映射到 `upstream` 中的 Artifact ID，路径相对于 Session 目录。恢复时沿用原映射，封存时从 `input_refs` 记录产物来源。缺失的可选槽位由 Skill 自身处理。安装包样本用三次 `run next` 验证 `current-analysis` 和 `current-plan` 自动交接，同时覆盖篡改拒绝、请求重放、`plan --tdd` 引用、旧 `plan` Run 恢复和 `execute` 产物兼容性检查。 [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
-### 7.1 `analyze` 试迁任务
+### 7.1 `analyze` 试迁任务（已完成实现）
 
 试迁只对明确启用的 `analyze` / `maestro-analyze` 生效。两种命令名映射到同一个 Skill，原入口继续可用。先记录旧行为并完成新路径的端到端验收，再进入阶段 2 的编排入口合并。
 
@@ -287,7 +287,7 @@ Swarm 在分派前保存每轮的 assignment 批次，恢复时沿用原起点�
 | **A5 接通旧 Run 和失败恢复** | 用持久化绑定区分新旧协议，验证旧运行中和已封存样本、同请求重放、缺失原版本以及显式改版重试。保留旧目录和兼容解析器，允许对新分派关闭试迁。 | A4 |
 | **A6 验收并清理试迁入口** | 按第 7.4 节跑真实宿主、构建后 CLI 和安装包验收。确认新路径已经切断旧指导读取，移除试迁中的重复解析调用，保留历史兼容入口。 | A5 |
 
-A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` 仍走现有产物解析和校验。Session 目标与 Run 的位置参数各有来源，产物输入继续使用已封存的同 Session Artifact 引用。 [现有 `analyze` 契约](/D:/maestro2/prepare/analyze.md:4) · [现有分支和门禁](/D:/maestro2/workflows/analyze.md:36)
+A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` 仍走现有产物解析和校验。Session 目标与 Run 的位置参数各有来源，产物输入继续使用已封存的同 Session Artifact 引用。A1–A6 已落地：`skills/analyze/` 提供入口、准备说明、工作流和条件引用，绑定在创建事务中固定 Skill 提交、目录树和契约，`run skill-read` 记录入口与 Markdown 链接的字节证据，旧 Run 继续沿兼容分支恢复。安装包验收覆盖 `analyze → plan → execute`、重放、旧 Run 恢复、产物交接和绑定失效。 [现有 `analyze` 契约](/D:/maestro2/prepare/analyze.md:4) · [现有分支和门禁](/D:/maestro2/workflows/analyze.md:36) · [版本化 Skill 实现](/D:/evolve-maestro-runtime/skills/analyze/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs:245)
 
 ### 7.2 要移除的 Session/Run 读取
 
