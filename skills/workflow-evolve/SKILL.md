@@ -11,5 +11,6 @@ description: 回溯指定 Session，找出可归因到 Skill 的执行问题，�
    - `high` 用于已证实影响结果正确性或关键门禁的通用要求。在入口放一条短指令，供每次执行前读取。
    - `normal` 用于有明确触发条件、可重复出现的流程问题。用包内链接承载说明，并用 `--when "<触发条件>"` 标出何时读取。
    - `low` 用于可选技巧或小范围案例。放入独立参考文档，供主动检索。
-4. 将草稿保存为 JSON。准备一个由项目维护的宿主回放脚本和场景文件，运行 `agent-memory --root <project> evolve replay <draft.json> --runner <host-runner.mjs> --scenarios <cases.json>`。场景是 `{id,input,baseline}` 数组，至少覆盖一次原问题和一次既有成功流程。脚本从标准输入取得场景、入口和提交，通过真实宿主执行后返回 `{passed,loaded:[{path,sha256}]}`。命令用独立 Git worktree 对照旧版和候选版，核对宿主实际读取的内容，并返回回执 ID。
+4. 将草稿保存为 JSON。准备场景文件并运行 `agent-memory --root <project> evolve replay <draft.json> --runner <host-runner.mjs> --scenarios <cases.json>`。场景是 `{id,input,baseline}` 数组，至少覆盖一次原问题和一次既有成功流程。脚本从标准输入取得场景、入口和提交，通过真实宿主执行后返回 `{passed,loaded:[{path,sha256}]}`。命令用独立 Git worktree 对照旧版和候选版，核对宿主实际读取的内容，并返回回执 ID。
+   - 对 `skills/<id>/SKILL.md` 下可用文本结果验收的任务，可选用包内 [Codex 回放脚本](scripts/codex-replay.mjs)。将 `MAESTRO_REPLAY_CLI` 指向支持项目 Skill 绑定的 Maestro JavaScript 入口绝对路径。用 `input.task` 给宿主任务，用 `input.expected` 给回放脚本预期文本。Codex 通过本次回放的 MCP 工具按需读取绑定文档，脚本从 `run check` 获取实际文档哈希。需要工作区读写、产物检查或命令验收时，提供项目自己的脚本。
 5. 得到采用授权后，运行 `agent-memory --root <project> evolve apply <receipt-id>`，重新执行并核对宿主加载版本。用 `agent-memory --root <project> evolve rollback <receipt-id>` 恢复该次变更，保留 Git 历史。

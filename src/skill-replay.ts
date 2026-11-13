@@ -161,6 +161,7 @@ export function replaySkillAddition(root: string, data: unknown, options: { runn
   const newTree = join(scratch, 'candidate');
   let oldAdded = false;
   let newAdded = false;
+  let failure: unknown;
   try {
     git(root, ['read-tree', base], gitIndex);
     const files = draft.changes.map(change => {
@@ -196,11 +197,23 @@ export function replaySkillAddition(root: string, data: unknown, options: { runn
     if (!existsSync(path)) writeFileSync(path, content, { flag: 'wx' });
     else if (readFileSync(path, 'utf8') !== content) throw new InputError('Skill replay receipt differs');
     return { id, ...receipt };
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    if (newAdded) git(root, ['worktree', 'remove', '--force', newTree]);
-    if (oldAdded) git(root, ['worktree', 'remove', '--force', oldTree]);
-    rmSync(index, { force: true });
-    rmdirSync(scratch);
+    const cleanup = [
+      ...(newAdded ? [() => git(root, ['worktree', 'remove', '--force', newTree])] : []),
+      ...(oldAdded ? [() => git(root, ['worktree', 'remove', '--force', oldTree])] : []),
+      () => rmSync(index, { force: true }),
+      () => rmdirSync(scratch),
+    ];
+    const errors: string[] = [];
+    for (const remove of cleanup) {
+      try { remove(); } catch (error) { errors.push(String(error)); }
+    }
+    if (errors.length) {
+      throw new Error([...(failure ? [String(failure)] : []), ...errors].join('\n'), { cause: failure });
+    }
   }
 }
 

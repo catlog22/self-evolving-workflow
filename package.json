@@ -40,6 +40,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
+    "test:codex-replay": "npm run build && node test/codex-replay.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
