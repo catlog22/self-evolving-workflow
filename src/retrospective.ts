@@ -4,7 +4,7 @@ import { parseReceipt, readSessionTransitions } from './closeout.js';
 import { InputError, requireText } from './common.js';
 import { extractMemoryInputs, type ConversationMessage } from './memory.js';
 import type { LlmClient } from './upstream/llm.js';
-import { readTranscriptSnapshots } from './transcript-evidence.js';
+import { readCompletionTranscriptRefs, readTranscriptSnapshots } from './transcript-evidence.js';
 
 export interface SkillSignal {
   id: string;
@@ -110,8 +110,12 @@ export async function reviewSession(
   const runs = new Map<string, ReviewedRun>();
   const blocked = new Set<string>();
   const summarizedRuns = new Set<string>();
+  let completedRefs: string[] | undefined;
   for (const { receipt, result, id } of readSessionTransitions(directory)) {
     if (receipt.target_type === 'orchestration' && receipt.target_id === session && result.status === 'completed') {
+      if (result.evolve_transcript_refs !== undefined || Array.isArray(result.evolve_evidence)) {
+        completedRefs = readCompletionTranscriptRefs(result.evolve_transcript_refs);
+      }
       for (const message of parseReceipt(receipt).messages) {
         const run = /^run:(.+):summary$/.exec(message.id)?.[1];
         if (run && summarizedRuns.has(run)) continue;
@@ -174,7 +178,7 @@ export async function reviewSession(
       summarizedRuns.add(run);
     }
   }
-  for (const message of readTranscriptSnapshots(directory)) evidence.set(message.id, message);
+  for (const message of readTranscriptSnapshots(directory, completedRefs)) evidence.set(message.id, message);
   for (const message of options.transcript ?? []) {
     const id = `conversation:${session}#${requireText(message.id, 'message ID')}`;
     if (evidence.has(id)) throw new InputError(`Duplicate conversation message: ${message.id}`);

@@ -8,7 +8,7 @@ import type { LlmClient } from './upstream/llm.js';
 import type { Wiki } from './wiki.js';
 import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 import { unionSources } from './upstream/merge.js';
-import { readTranscriptSnapshots } from './transcript-evidence.js';
+import { readCompletionTranscriptRefs, readTranscriptSnapshots } from './transcript-evidence.js';
 import { applyWikiChange, proposeWikiChange } from './wiki-change.js';
 
 export interface Completion {
@@ -292,11 +292,7 @@ export async function harvestCompletion(wiki: Wiki, project: string, value: unkn
     const refs = object(receipt.result).evolve_transcript_refs;
     if (refs !== undefined) {
       if (!sessionDirectory) throw new InputError('Use closeout session to resolve anchored transcript evidence from the Maestro project');
-      if (!Array.isArray(refs) || refs.some(ref =>
-        typeof ref !== 'string' || !/^transcript:[^:\p{Cc}]+:[^:\p{Cc}]+:[^:\p{Cc}]+:[a-f0-9]{16}$/u.test(ref))) {
-        throw new InputError('Invalid Session completion transcript references');
-      }
-      completion.messages.push(...readTranscriptSnapshots(sessionDirectory, refs));
+      completion.messages.push(...readTranscriptSnapshots(sessionDirectory, readCompletionTranscriptRefs(refs)));
     }
   }
   return harvestResolvedCompletion(wiki, project, completion, model);

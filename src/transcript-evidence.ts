@@ -4,6 +4,15 @@ import { join } from 'node:path';
 import { InputError, requireText } from './common.js';
 import type { ConversationMessage } from './memory.js';
 
+export function readCompletionTranscriptRefs(refs: unknown): string[] {
+  if (refs === undefined) return [];
+  if (!Array.isArray(refs) || refs.some(ref =>
+    typeof ref !== 'string' || !/^transcript:[^:\p{Cc}]+:[^:\p{Cc}]+:[^:\p{Cc}]+:[a-f0-9]{16}$/u.test(ref))) {
+    throw new InputError('Invalid Session completion transcript references');
+  }
+  return refs;
+}
+
 export function readTranscriptSnapshots(sessionDirectory: string, refs?: readonly string[]): ConversationMessage[] {
   if (refs?.length === 0) return [];
   const selected = refs && new Set(refs);

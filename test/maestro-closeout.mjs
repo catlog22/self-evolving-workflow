@@ -21,6 +21,7 @@ const database = join(root, 'staging.json');
 const migrate = join(root, 'migrate.mjs');
 const original = '{"schema":1,"records":3}\n';
 const correction = 'User correction: run migration preflight against staging with --dry-run before attempting to apply.';
+const excludedQuote = 'Unselected evidence fragment from the same Session.';
 const method = 'Before attempting to apply a staging migration, run preflight with --dry-run and confirm the validation succeeds.';
 const harvests = new Map();
 let networkAttempts = 0;
@@ -33,6 +34,7 @@ const model = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const [{ content: system }, { content: prompt }] = JSON.parse(Buffer.concat(chunks).toString()).messages;
+    assert.ok(!prompt.includes(excludedQuote));
     const items = [];
     if (system.startsWith('Extract reusable work methods')) {
       const kind = prompt.includes('Temporary network error') ? 'transient' : 'preflight';
@@ -183,6 +185,10 @@ try {
     host_kind: 'fixture', host_session_id: 'migration', entry_id: 'correction', quote: correction,
   }));
   const { result: { ref } } = await flow('session', 'evidence', descriptor, '--session', session);
+  await writeFile(descriptor, JSON.stringify({
+    host_kind: 'fixture', host_session_id: 'migration', entry_id: 'unselected', quote: excludedQuote,
+  }));
+  await flow('session', 'evidence', descriptor, '--session', session);
   const fixed = await retry(session, first, 'Dry-run flag required.', ref);
   const verified = (await invoke(process.execPath, [migrate, database, '--dry-run'])).trim();
   assert.equal(verified, 'migration preflight verified: schema 1, records 3');

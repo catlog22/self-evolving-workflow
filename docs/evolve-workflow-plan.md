@@ -139,7 +139,7 @@ sources:
 
 Maestro Session 结束前固定本次可提取的证据范围和锚点，结束时使用同侧提交的完成回执记录这些引用。证据准备和提交路径只做确定性操作，模型提取在提交之后异步执行。现有 Maestro2 v3 完成事务写入文件型回执，完成后封存证据和候选侧写。Evolve 从已提交回执读取，并通过补扫恢复漏投事件。接入首版时，用完成回执携带证据引用并验证能回查，通过后再接入提取。 [Session 完成事务](/D:/maestro2/src/run/v3/mutation-engine.ts:1535) · [封存证据约束](/D:/maestro2/src/run/transcript-evidence.ts:201)
 
-用 `maestro session evidence <descriptor.json> --session <id> --json` 固定经选择的会话片段。它返回引用，重复提交同一片段会复用已有快照。把引用作为 `--evidence` 附在相关 Run 的状态变更上，Session 完成时收集并检查这些引用。回溯可以从同一证据定位 Run 及其 Skill 版本。
+用 `maestro session evidence <descriptor.json> --session <id> --json` 固定经选择的会话片段。它返回引用，重复提交同一片段会复用已有快照。把引用作为 `--evidence` 附在相关 Run 的状态变更上，Session 完成时收集并检查这些引用。已完成的 Session 有新式回执时，沉淀和回溯都按该回执选择快照。回溯可以从同一证据定位 Run 及其 Skill 版本。
 
 Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装的 Evolve JavaScript 入口，`MAESTRO_EVOLVE_PROJECT` 提供稳定项目 ID，`MAESTRO_EVOLVE_WIKI_ROOT` 可指定独立 Wiki 目录。完成事务把 Run 摘要及明确引用的会话快照锚点写入回执，后台进程按回执 ID 提取。模型失败或后台进程未启动时，可用 `agent-memory closeout scan <maestro-project> --project <id>` 补扫。用 `closeout show <receipt-id> --project <id>` 查看处理结果。
 
