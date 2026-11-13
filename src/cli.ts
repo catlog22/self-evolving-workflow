@@ -9,7 +9,10 @@ import { MemoryStore, type ConversationMessage } from './memory.js';
 import { parseScope, search, type SearchScope, type SearchSources } from './search.js';
 import type { LlmClient } from './upstream/llm.js';
 import { Wiki } from './wiki.js';
-import { harvestCompletion, publishReference, readCompletionReceipts } from './closeout.js';
+import {
+  harvestCompletion, publishReference, readCompletionReceipts,
+  readHarvest, readSkillCompletions, recordSkillCompletion,
+} from './closeout.js';
 import { reviewSession } from './retrospective.js';
 import { draftSkillAddition } from './skill-addition.js';
 import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
@@ -28,7 +31,11 @@ const help = `Usage: agent-memory <command> [options]
   wiki constraints                         Resolve active constraints (--skill, --task, --path)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
   closeout harvest <receipt.json>          Extract Wiki candidates from a completion receipt (--project)
-  closeout scan <maestro-root>              Reconcile committed Session receipts (--project)
+  closeout session <id>                    Harvest a committed Session receipt (--project, --receipt)
+  closeout skill <execution-id>            Record and harvest a standalone Skill completion
+                                          (--skill, --skill-version, --status, --transcript, --project)
+  closeout scan [maestro-root]              Reconcile committed Session and standalone Skill receipts (--project)
+  closeout show <receipt-id>                Show harvested candidates (--project)
   closeout publish <closeout-id> <candidate-id> <title>
                                           Publish a reviewed reference
   session review <id>                      Review Session signals (--transcript <messages.json>)
@@ -78,6 +85,9 @@ const options = {
   project: { type: 'string' },
   apply: { type: 'boolean' },
   transcript: { type: 'string' },
+  receipt: { type: 'string' },
+  'skill-version': { type: 'string' },
+  status: { type: 'string' },
   evidence: { type: 'string', multiple: true },
   when: { type: 'string' },
   runner: { type: 'string' },
@@ -191,14 +201,52 @@ async function main() {
       wiki, requireText(args[0], 'closeout ID'), requireText(args[1], 'candidate ID'), args.slice(2).join(' '),
     ));
     const project = requireText(values.project, 'source project ID');
-    const source = requireText(args[0], 'receipt path or Maestro root');
     if (action === 'harvest') return print(await harvestCompletion(
-      wiki, project, JSON.parse(readFileSync(source, 'utf8')), modelClient,
+      wiki, project, JSON.parse(readFileSync(requireText(args[0], 'receipt path'), 'utf8')), modelClient,
     ));
+    if (action === 'show') return print(readHarvest(wiki, project, requireText(args[0], 'completion receipt ID')));
+    if (action === 'session') {
+      const session = requireText(args[0], 'Session ID');
+      const receipts = [...readCompletionReceipts(root, session, values.receipt)];
+      if (receipts.length !== 1) {
+        throw new InputError(`Expected one committed completion receipt for ${session}, found ${receipts.length}`);
+      }
+      const [{ receipt, directory }] = receipts;
+      return print(await harvestCompletion(wiki, project, receipt, modelClient, directory));
+    }
+    if (action === 'skill') {
+      const transcript = values.transcript ? JSON.parse(readFileSync(values.transcript, 'utf8').replace(/^\uFEFF/, '')) : [];
+      if (!Array.isArray(transcript)) throw new InputError('Transcript must be a JSON message array');
+      const recorded = recordSkillCompletion(wiki, project, {
+        execution: requireText(args[0], 'Skill execution ID'),
+        skill: requireText(values.skill, 'Skill ID'), version: requireText(values['skill-version'], 'Skill version'),
+        status: requireText(values.status, 'Skill status'), messages: transcript, session: values.session,
+      });
+      if (!('receipt' in recorded)) return print(recorded);
+      return print({ receipt: recorded.receipt.id, ...await harvestCompletion(wiki, project, recorded.receipt, modelClient) });
+    }
     if (action === 'scan') {
-      const results = [];
-      for (const receipt of readCompletionReceipts(source)) {
-        results.push(await harvestCompletion(wiki, project, receipt, modelClient));
+      const results: Awaited<ReturnType<typeof harvestCompletion>>[] = [];
+      const errors: Array<{ receipt: string; error: string }> = [];
+      const sessionSource = args[0] ?? root;
+      const sessionReceipts = args[0] || existsSync(join(sessionSource, '.workflow', 'sessions'))
+        ? readCompletionReceipts(sessionSource) : [];
+      const consume = async (id: string, receipt: unknown, directory?: string) => {
+        try {
+          results.push(await harvestCompletion(wiki, project, receipt, modelClient, directory));
+        } catch (error) {
+          errors.push({ receipt: id, error: error instanceof Error ? error.message : String(error) });
+        }
+      };
+      for (const { receipt, directory } of sessionReceipts) {
+        await consume(requireText(receipt.transition_id, 'transition ID'), receipt, directory);
+      }
+      for (const { id, receipt } of readSkillCompletions(wiki, project)) {
+        await consume(id, receipt);
+      }
+      if (errors.length > 0) {
+        process.exitCode = 1;
+        return print({ results, errors });
       }
       return print(results);
     }

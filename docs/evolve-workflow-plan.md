@@ -137,7 +137,11 @@ sources:
 
 Maestro Session 结束前固定本次可提取的证据范围和锚点，结束时使用同侧提交的完成回执记录这些引用。证据准备和提交路径只做确定性操作，模型提取在提交之后异步执行。现有 Maestro2 v3 完成事务写入文件型回执，完成后封存证据和候选侧写。Evolve 从已提交回执读取，并通过补扫恢复漏投事件。接入首版时，用完成回执携带证据引用并验证能回查，通过后再接入提取。 [Session 完成事务](/D:/maestro2/src/run/v3/mutation-engine.ts:1535) · [封存证据约束](/D:/maestro2/src/run/transcript-evidence.ts:201)
 
+Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装的 Evolve JavaScript 入口，`MAESTRO_EVOLVE_PROJECT` 提供稳定项目 ID，`MAESTRO_EVOLVE_WIKI_ROOT` 可指定独立 Wiki 目录。完成事务把 Run 摘要及明确引用的会话快照锚点写入回执，后台进程按回执 ID 提取。模型失败或后台进程未启动时，可用 `agent-memory closeout scan <maestro-project> --project <id>` 补扫。用 `closeout show <receipt-id> --project <id>` 查看处理结果。
+
 独立 Skill 通过执行入口明确记录 `succeeded`、`failed` 或 `cancelled`，生成包含执行 ID、实际 Skill 版本和证据引用的结束回执。两类回执进入同一沉淀入口。宿主 `Stop` 此时只作为会话监测信号。关联同一个 Skill 调用的 Session 回执和独立回执时，使用执行 ID 与证据锚点归并信号。沉淀和自进化 Skill 自身的执行事件排除在这一自动触发入口之外，避免递归触发。 [宿主 Stop 处理](/D:/maestro2/src/commands/hooks.ts:1360)
+
+独立 Skill 的宿主回调使用 `closeout skill <execution-id>`。入口先持久化结束回执，再进行提取，重试沿用原执行 ID。已经归属 Maestro Session 的调用通过 `--session <id>` 交给 Session 收尾，以免同一次执行产生两份候选。
 
 | 层次 | 内容与去向 |
 | --- | --- |

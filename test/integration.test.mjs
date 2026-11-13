@@ -205,6 +205,52 @@ test('completion harvesting preserves evidence and records zero-candidate receip
   ]);
 });
 
+test('standalone Skill completion survives a failed harvest and is reconciled once', async t => {
+  let calls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks));
+    assert.match(body.messages[1].content, /Dry-run passed/);
+    if (++calls === 1) {
+      response.writeHead(503).end();
+      return;
+    }
+    const result = [{
+      memories: [{ content: 'Use dry-run before applying a migration.', source_message_ids: ['verified'] }],
+    }];
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }));
+  });
+  const root = await temp(t, () => new Promise(resolve => server.close(resolve)));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const env = {
+    ...process.env, AGENT_MEMORY_LLM_BASE_URL: `http://127.0.0.1:${server.address().port}/v1`,
+    AGENT_MEMORY_LLM_MODEL: 'fixture',
+  };
+  const invoke = async args => JSON.parse((await run(process.execPath,
+    [cli, '--root', root, ...args, '--project', 'fixture-project'], { env })).stdout);
+  const transcript = join(root, 'evidence.json');
+  await writeFile(transcript, JSON.stringify([
+    { id: 'verified', role: 'tool', timestamp: 0, content: 'Dry-run passed.' },
+  ]));
+  const args = ['closeout', 'skill', 'host-invocation-1', '--skill', 'db-migration',
+    '--skill-version', 'git:abc123', '--status', 'failed', '--transcript', transcript];
+  await assert.rejects(invoke(args), /HTTP 503/);
+  const pending = await invoke(['closeout', 'scan']);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].candidates.length, 1);
+  const repeated = await invoke(args);
+  assert.equal(repeated.id, pending[0].id);
+  assert.equal(repeated.replayed, true);
+  assert.deepEqual(await invoke(['closeout', 'show', repeated.receipt]), { id: repeated.id, candidates: pending[0].candidates });
+  assert.equal(calls, 2);
+  await assert.rejects(invoke([...args, '--status', 'cancelled']), /Skill completion changed/);
+  assert.deepEqual(await invoke([...args, '--session', 'maestro-1']), { ignored: 'session-owned', session: 'maestro-1' });
+  assert.deepEqual(await invoke([...args, '--skill', 'workflow-closeout']), { ignored: 'maintenance-skill' });
+});
+
 test('Session retrospective grounds Skill additions in its original evidence', async t => {
   const root = await temp(t);
   const sessionDirectory = join(root, '.workflow', 'sessions', 'review-1');

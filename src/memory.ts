@@ -245,11 +245,22 @@ export async function extractMemoryInputs(messages: ConversationMessage[], optio
 }): Promise<MemoryInput[]> {
   const session = requireText(options.session, 'session');
   if (!messages.length) return [];
+  const ids = validateConversationMessages(messages);
+  const raw = await options.llm.chat({
+    system: options.systemPrompt ?? getExtractMemoriesSystemPrompt(options.mode),
+    prompt: formatExtractionPrompt({ newMessages: messages }),
+    label: 'memory-extract',
+  });
+  return parseExtraction(raw, session, ids);
+}
+
+export function validateConversationMessages(messages: readonly ConversationMessage[]): Set<string> {
   const ids = new Set<string>();
   for (const message of messages) {
     const id = requireText(message?.id, 'message id');
     if (ids.has(id)) throw new InputError(`Duplicate message id: ${id}`);
     if (!['user', 'assistant', 'system', 'tool'].includes(message.role) ||
+        (typeof message.timestamp !== 'number' && typeof message.timestamp !== 'string') ||
         !Number.isFinite(new Date(message.timestamp).getTime())) {
       throw new InputError(`Invalid role or timestamp for message: ${id}`);
     }
@@ -257,12 +268,7 @@ export async function extractMemoryInputs(messages: ConversationMessage[], optio
     if (id !== message.id) throw new InputError('message id cannot have surrounding whitespace');
     ids.add(id);
   }
-  const raw = await options.llm.chat({
-    system: options.systemPrompt ?? getExtractMemoriesSystemPrompt(options.mode),
-    prompt: formatExtractionPrompt({ newMessages: messages }),
-    label: 'memory-extract',
-  });
-  return parseExtraction(raw, session, ids);
+  return ids;
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {
