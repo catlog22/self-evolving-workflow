@@ -4,7 +4,7 @@ import { basename, join, posix } from 'node:path';
 import { stringify } from 'yaml';
 import { InputError, requireText } from './common.js';
 import { parseFrontmatter } from './upstream/frontmatter.js';
-import { isRepositoryId, isWikiCategory, readWikiEntryMetadata, type WikiCategory, type WikiEntryMetadata } from './wiki-entry.js';
+import { isRepositoryId, isWikiCategory, readWikiEntryMetadata, splitLegacyKeywords, type WikiCategory, type WikiEntryMetadata } from './wiki-entry.js';
 import type { Wiki } from './wiki.js';
 
 interface LegacyEntry {
@@ -16,6 +16,7 @@ interface LegacyEntry {
   metadata: Record<string, unknown>;
   category?: WikiCategory;
   repositories?: unknown;
+  keywords?: string[];
 }
 
 const legacySpecFiles: Partial<Record<string, WikiCategory>> = {
@@ -56,6 +57,7 @@ function parseSpecs(source: string, origin: string): LegacyEntry[] {
       origin: `${origin}#L${line}`, oldId: attributes.sid || '', title, body, mode: 'constraint',
       metadata: { ...fileMetadata, ...attributes },
       category, repositories: entryRepositories?.trim() ? entryRepositories : fileRepositories,
+      keywords: splitLegacyKeywords(attributes.keywords),
     });
   }
   const remaining = document.body.replace(/<spec-entry\b\s*[^>]*>[\s\S]*?<\/spec-entry>/g, match => match.replace(/[^\r\n]/g, ' '));
@@ -186,11 +188,14 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
       ...(issues.length ? { migration_issues: issues } : {}),
     };
     const body = entry.body.trim() + (relations.length ? `\n\n${relations.join('\n')}` : '');
-    const content = `---\n${stringify(data)}---\n\n${body}\n`;
-    readWikiEntryMetadata(`wiki/entries/${id}.md`, { type: 'other', ...data });
+    const metadata = entry.keywords === undefined ? data : { ...data, keywords: entry.keywords };
+    const content = `---\n${stringify(metadata)}---\n\n${body}\n`;
+    readWikiEntryMetadata(`wiki/entries/${id}.md`, { type: 'other', ...metadata }, body);
     const path = join(destination, `${id}.md`);
     const existing = lstatSync(path, { throwIfNoEntry: false });
-    if (existing && (!existing.isFile() || readFileSync(path, 'utf8') !== content)) {
+    const previous = existing?.isFile() ? readFileSync(path, 'utf8') : undefined;
+    const unchangedLegacy = entry.keywords !== undefined && previous === `---\n${stringify(data)}---\n\n${body}\n`;
+    if (existing && previous !== content && !unchangedLegacy) {
       throw new InputError(`Migration would overwrite an existing entry: ${id}`);
     }
     return { id, origin: entry.origin, alias: key, status: effectiveStatus, path, content, existing: Boolean(existing), issues };

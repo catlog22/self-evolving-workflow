@@ -13,6 +13,7 @@ export interface WikiEntryMetadata {
   aliases: string[];
   categories?: WikiCategory[];
   repositories?: string[];
+  keywords?: string[];
 }
 
 export interface WikiContext {
@@ -21,6 +22,7 @@ export interface WikiContext {
   paths?: string[];
   categories?: WikiCategory[];
   repository?: string;
+  keyword?: string;
   includePathScoped?: boolean;
 }
 
@@ -39,7 +41,7 @@ export function isRepositoryId(value: unknown): value is string {
   return typeof value === 'string' && repositoryIdPattern.test(value);
 }
 
-export function readWikiEntryMetadata(path: string, frontmatter: PageFrontmatter): WikiEntryMetadata | undefined {
+export function readWikiEntryMetadata(path: string, frontmatter: PageFrontmatter, body: string): WikiEntryMetadata | undefined {
   if (!path.startsWith('wiki/entries/')) return undefined;
   if (!/^wiki\/entries\/[a-z0-9][a-z0-9_-]*\.md$/.test(path)) {
     throw new InputError(`Invalid stable Wiki entry path: ${path}`);
@@ -54,7 +56,8 @@ export function readWikiEntryMetadata(path: string, frontmatter: PageFrontmatter
   if (!scope.length || scope.some(item => item !== 'project' && !/^(?:skill|task|path):\S/.test(item))) {
     throw new InputError(`Invalid Wiki entry scope: ${path}`);
   }
-  if (!stringList(frontmatter.sources, 'sources', path).length) {
+  const sources = stringList(frontmatter.sources, 'sources', path);
+  if (!sources.length) {
     throw new InputError(`Wiki entry ${path} needs at least one source`);
   }
   const aliases = frontmatter.aliases === undefined ? [] : stringList(frontmatter.aliases, 'aliases', path);
@@ -62,13 +65,29 @@ export function readWikiEntryMetadata(path: string, frontmatter: PageFrontmatter
   if (categories && !categories.every(isWikiCategory)) throw new InputError(`Invalid Wiki entry category: ${path}`);
   const repositories = frontmatter.repositories === undefined ? undefined : stringList(frontmatter.repositories, 'repositories', path);
   if (repositories && !repositories.every(isRepositoryId)) throw new InputError(`Invalid Wiki repository ID: ${path}`);
-  return { mode, status, scope, aliases, ...(categories ? { categories } : {}), ...(repositories ? { repositories } : {}) };
+  const legacy = frontmatter.legacy as { keywords?: unknown; sid?: unknown } | undefined;
+  // 旧导入保存了结构化条目的属性和行号，按原格式补读关键词。
+  const structuredLegacy = sources.some(source => /^legacy:[^:]+:\.workflow\/specs\/[^#]+#L\d+$/.test(source)) &&
+    (typeof legacy?.sid === 'string' || typeof legacy?.keywords === 'string' ||
+      !/^\s*###\s+(?:\[[\w-]+\]\s+)?\[\d{4}-\d{2}-\d{2}/.test(body));
+  const keywords = frontmatter.keywords === undefined
+    ? structuredLegacy ? splitLegacyKeywords(legacy?.keywords) : undefined
+    : stringList(frontmatter.keywords, 'keywords', path).map(keyword => keyword.toLowerCase());
+  return { mode, status, scope, aliases, ...(categories ? { categories } : {}), ...(repositories ? { repositories } : {}),
+    ...(keywords ? { keywords: [...new Set(keywords)] } : {}) };
 }
 
-export function appliesToContext(entry: WikiEntryMetadata, context: WikiContext): boolean {
+export function splitLegacyKeywords(value: unknown): string[] {
+  return typeof value === 'string' ? value.split(',').map(keyword => keyword.trim().toLowerCase()).filter(Boolean) : [];
+}
+
+export function appliesToContext(entry: WikiEntryMetadata, context: WikiContext, body: string): boolean {
   if (entry.repositories && (!context.repository || !entry.repositories.includes(context.repository))) return false;
   const categories = context.categories;
-  if (entry.categories && categories?.length && !entry.categories.some(category => categories.includes(category))) return false;
+  const keyword = context.keyword?.toLowerCase();
+  const exact = keyword && entry.keywords?.includes(keyword);
+  if (keyword && !(entry.keywords ? exact : body.toLowerCase().includes(keyword))) return false;
+  if (entry.categories && categories?.length && !exact && !entry.categories.some(category => categories.includes(category))) return false;
   return entry.scope.some(scope => {
     if (scope === 'project') return true;
     if (scope.startsWith('skill:')) return scope.slice(6) === context.skill;

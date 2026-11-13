@@ -118,9 +118,9 @@ try {
   await mkdir(join(workflow, 'specs'), { recursive: true });
   await mkdir(join(workflow, 'knowhow'));
   await writeFile(join(workflow, 'specs', 'architecture-constraints.md'),
-    '<spec-entry sid="S-1" title="Use staging">\nUse staging for migration checks.\n</spec-entry>\n');
+    '<spec-entry sid="S-1" title="Use staging" keywords="migration">\nUse staging for migration checks.\n</spec-entry>\n');
   await writeFile(join(workflow, 'specs', 'coding-conventions.md'),
-    '<spec-entry sid="S-2" title="Preserve coding style">\nKeep the coding style of the file.\n</spec-entry>\n');
+    '<spec-entry sid="S-2" title="Preserve coding style" keywords="migration, style">\nKeep the coding style of the file.\n</spec-entry>\n');
   await writeFile(join(workflow, 'knowhow', 'K-1.md'), '---\ntitle: Inventory\n---\n\nRead the staging inventory.\n');
   const migrated = await agent('wiki', 'migrate', root, '--project', project, '--apply');
   assert.equal(migrated.length, 3);
@@ -134,6 +134,12 @@ try {
     assert.equal(next.length, 1);
     assert.ok(previous.content.includes(next[0].body.trim()));
   }
+  for (const keyword of ['MIGRATION', 'style', 'staging']) {
+    const previous = await cli(maestro, ['spec', 'load', '--category', 'arch', '--keyword', keyword, '--json'], env);
+    const next = await agent('wiki', 'constraints', '--skill', skill, '--category', 'arch', '--keyword', keyword);
+    assert.equal(previous.totalLoaded, next.length, keyword);
+    assert.ok(next.every(rule => previous.content.includes(rule.body.trim())));
+  }
   const pathRule = 'entries/path-check';
   const pathDraft = join(root, 'path-rule.json');
   await writeFile(pathDraft, JSON.stringify({ operation: 'create', entry: pathRule, mode: 'constraint',
@@ -142,14 +148,62 @@ try {
   const proposedPathRule = await agent('wiki', 'propose', pathDraft, '--evidence', 'fixture:path-rule');
   await agent('wiki', 'apply', proposedPathRule.id);
 
+  const currentId = '97bb0bb3-1ef1-4ea5-8afd-2b7ed12cf0bc';
+  const linkedId = 'cd7083c9-6e35-4509-99ad-79adb4ab6404';
+  const referenceId = '40b31580-3d30-467c-a847-93fc48371ca3';
+  const staleId = '74304ff3-7ae3-4269-a06b-f893605004c0';
+  function identity(path, id, name) {
+    return writeFile(join(path, '.workflow', 'repository.json'), JSON.stringify({
+      schema_version: 'repository-identity/1.0', repo_id: id, repo_name: name, created_at: '2026-11-01T00:00:00Z',
+    }));
+  }
+  await identity(root, currentId, 'consumer');
+  const sources = join(root, 'linked');
+  const producer = join(sources, 'producer');
+  const consumerRule = 'Only preflight this migration against a sanitized staging replica.';
+  const producerRule = 'Only the producer repository may use the upstream migration replica.';
+  await mkdir(join(producer, '.workflow', 'specs'), { recursive: true });
+  await identity(producer, linkedId, 'producer');
+  await writeFile(join(producer, '.workflow', 'specs', 'architecture-constraints.md'), [
+    `<spec-entry sid="S-1" title="Sanitized staging replica" keywords="replica" appliesToRepoIds="${currentId}">`, consumerRule, '</spec-entry>',
+    `<spec-entry sid="S-2" title="Upstream migration replica" appliesToRepoIds="${linkedId}">`, producerRule, '</spec-entry>', '',
+  ].join('\n'));
+  for (const [name, id] of [['reference', referenceId], ['stale', staleId]]) {
+    const source = join(sources, name);
+    await mkdir(join(source, '.workflow'), { recursive: true });
+    await mkdir(join(source, 'wiki', 'entries'), { recursive: true });
+    await identity(source, id, name);
+    await writeFile(join(source, 'wiki', 'entries', 'denied.md'), [
+      '---', 'title: Excluded constraint', 'mode: constraint', 'status: active', 'scope: [project]',
+      'categories: [arch]', 'sources: [fixture:denied]', '---', '', 'Never inject this rule.', '',
+    ].join('\n'));
+  }
+  const links = [
+    { name: 'producer', path: 'linked/producer', repo_id: linkedId, share: ['spec'] },
+    { name: 'reference', path: 'linked/reference', repo_id: referenceId, share: ['knowhow'] },
+    { name: 'stale', path: 'linked/stale', repo_id: 'bd80ed8c-6a01-4eeb-b46a-01f350719af0', share: ['spec'] },
+  ];
+  const configureLinks = linked => writeFile(join(workflow, 'config.json'), JSON.stringify({ workspaces: { linked } }));
+  await configureLinks(links);
+
   async function start(session) {
     const opened = await flow('session', 'open', 'Verify migration preflight', '--id', session, '--chain', skill, '--actor', 'fixture');
     const birth = await flow('run', 'next', '--session', session, '--actor', 'fixture',
       '--expected-orchestration-revision', String(opened.result.orchestration_revision));
-    assert.deepEqual(birth.result.wiki_constraints.map(item => item.id), [constraintId]);
-    assert.deepEqual(birth.result.wiki_categories, ['arch']);
+    assert.equal(birth.ok, true, JSON.stringify(birth));
     return birth.result;
   }
+
+  const unmigrated = await start('unmigrated-link');
+  assert.equal(unmigrated.wiki_constraints, undefined);
+  const unmigratedRules = await flow('run', 'wiki-constraints', unmigrated.run_id, '--session', 'unmigrated-link');
+  assert.equal(unmigratedRules.result.source, 'legacy');
+  assert.deepEqual(unmigratedRules.result.constraints, []);
+  const previousLinked = await cli(maestro, ['spec', 'load', '--category', 'arch', '--json'], env);
+  assert.ok(previousLinked.content.includes(consumerRule));
+  assert.ok(!previousLinked.content.includes(producerRule));
+  await agent('wiki', 'migrate', producer, '--wiki-root', producer, '--project', 'producer-fixture', '--apply');
+  const shared = await agent('wiki', 'get', 'producer-fixture:spec:S-1', '--wiki-root', producer);
 
   async function readSkill(id, run) {
     const read = await flow('run', 'skill-read', run.run_id, '--session', id);
@@ -197,15 +251,24 @@ try {
 
   const session = 'preflight';
   const first = await start(session);
+  assert.deepEqual(first.wiki_categories, ['arch']);
+  assert.deepEqual(first.wiki_constraints.map(item => item.id), [shared.id, constraintId]);
+  assert.deepEqual(first.wiki_constraints[0].source_repository, { alias: 'producer', id: linkedId });
+  assert.equal(first.wiki_constraints[0].body.trim(), consumerRule);
   const rules = async (run, ...options) => (await flow('run', 'wiki-constraints', run.run_id, '--session', session, ...options)).result;
   const initialRules = await rules(first, '--path', 'migrate.mjs');
   assert.equal(initialRules.source, 'wiki');
-  assert.deepEqual(initialRules.constraints.map(rule => rule.id).sort(), [constraintId, pathRule].sort());
+  assert.deepEqual(initialRules.constraints.map(rule => rule.id), [shared.id, constraintId, pathRule]);
   assert.deepEqual((await rules(first, '--category', 'coding', '--path', 'migrate.mjs')).constraints.map(rule => rule.id), [codingId]);
+  assert.deepEqual((await rules(first, '--keyword', 'MIGRATION')).constraints.map(rule => rule.id).sort(), [constraintId, codingId].sort());
+  assert.deepEqual((await rules(first, '--keyword', 'replica')).constraints.map(rule => rule.id), [shared.id]);
+  assert.deepEqual((await rules(first, '--keyword', 'staging')).constraints, []);
   await writeFile(pathDraft, JSON.stringify({ operation: 'retire', entry: pathRule }));
   const retiredPathRule = await agent('wiki', 'propose', pathDraft, '--evidence', 'fixture:update');
   await agent('wiki', 'apply', retiredPathRule.id);
+  await configureLinks(links.slice(1));
   assert.deepEqual(await rules(first, '--path', 'migrate.mjs'), initialRules);
+  assert.deepEqual((await rules(first, '--keyword', 'replica')).constraints.map(rule => rule.id), [shared.id]);
   await readSkill(session, first);
   await assert.rejects(invoke(process.execPath, [migrate, database]), /Dry-run flag required/);
   const descriptor = join(root, 'correction.json');
@@ -243,6 +306,7 @@ try {
   assert.equal((await agent('wiki', 'search', 'migration preflight')).results[0].id, published.id);
 
   const transient = await start('transient');
+  assert.deepEqual(transient.wiki_constraints.map(item => item.id), [constraintId]);
   await readSkill('transient', transient);
   await assert.rejects(invoke(process.execPath, ['-e',
     "fetch(process.argv[1]).then(r => { if (!r.ok) { console.error('HTTP ' + r.status); process.exitCode = 1; } })",

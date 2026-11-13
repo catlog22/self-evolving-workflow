@@ -193,7 +193,7 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   await mkdir(join(legacy, '.workflow', 'specs'), { recursive: true });
   await mkdir(join(legacy, '.workflow', 'knowhow'), { recursive: true });
   await writeFile(join(legacy, '.workflow', 'specs', 'runtime.md'), [
-    '<spec-entry title="Current" sid="S-1">', 'Check the current calibration.', '</spec-entry>',
+    '<spec-entry title="Current" sid="S-1" keywords="Sensor, calibration">', 'Check the current calibration.', '</spec-entry>',
     '<spec-entry title="Old" sid="S-2" status="deprecated" superseded-by="S-1">', 'Use the old calibration.', '</spec-entry>',
     '<spec-entry title="Disputed" confidence="contested">', 'Check the disputed calibration.', '</spec-entry>',
     '<spec-entry title="Gauge reference" sid="S-3" ref="knowhow/K-1.md">', 'Background on the gauge.', '</spec-entry>',
@@ -237,6 +237,17 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--category', 'arch'), []);
   assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--category', 'review', '--repository', repository), []);
   assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--category', 'coding')).map(rule => rule.title), ['Coding rules']);
+  const constrained = (category, keyword) => cliJson(root, 'wiki', 'constraints', '--category', category, '--keyword', keyword);
+  assert.deepEqual((await constrained('arch', 'SENSOR')).map(rule => rule.title), ['Current']);
+  assert.deepEqual((await constrained('coding', 'CALIBRATION')).map(rule => rule.title).sort(), ['Coding rules', 'Current']);
+  assert.deepEqual(await constrained('arch', 'current'), []);
+  assert.deepEqual(await constrained('arch', 'deterministic'), []);
+  const migratedCurrent = join(root, 'wiki', 'entries', `${preview.find(row => row.alias === 'legacy-project:spec:S-1').id}.md`);
+  const canonical = await readFile(migratedCurrent, 'utf8');
+  await writeFile(migratedCurrent, canonical.replace(/^keywords:\n(?:  - [^\n]+\n)+/m, ''));
+  assert.notEqual(await readFile(migratedCurrent, 'utf8'), canonical);
+  assert.deepEqual((await constrained('arch', 'sensor')).map(rule => rule.title), ['Current']);
+  assert.ok((await cliJson(root, ...args, '--apply')).every(row => row.existing));
 });
 
 test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {

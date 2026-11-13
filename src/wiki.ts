@@ -62,7 +62,7 @@ export function readWikiPages(root: string): PageFile[] {
       pages.push({
         id: path.slice(5, -3), title, type: frontmatter.type.toLowerCase(), path, snippet,
         sources: readSources(content), body,
-        ...(path.startsWith('wiki/entries/') ? { entry: readWikiEntryMetadata(path, frontmatter) } : {}),
+        ...(path.startsWith('wiki/entries/') ? { entry: readWikiEntryMetadata(path, frontmatter, body) } : {}),
         links: [...body.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(link => link[1].trim()),
       });
     }
@@ -115,7 +115,7 @@ export class Wiki {
   constraints(context: WikiContext = {}) {
     if (!existsSync(join(this.root, 'wiki'))) return [];
     return readWikiPages(this.root).filter(page =>
-      page.entry?.mode === 'constraint' && page.entry.status === 'active' && appliesToContext(page.entry, context)
+      page.entry?.mode === 'constraint' && page.entry.status === 'active' && appliesToContext(page.entry, context, page.body)
     ).map(({ links: _links, ...page }) => page);
   }
 

@@ -30,7 +30,7 @@ const help = `Usage: agent-memory <command> [options]
   wiki ingest <file.md|file.txt>            Generate and merge wiki pages
   wiki search <query>                      Search wiki pages (--hop 0)
   wiki get <id>                            Read a Wiki entry, including history
-  wiki constraints                         Resolve active constraints (--skill, --task, --path, --category, --repository)
+  wiki constraints                         Resolve active constraints (--skill, --task, --path, --category, --repository, --keyword)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
   wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
   wiki changes [change-id]                 Read change previews and application receipts (--entry)
@@ -88,6 +88,7 @@ const options = {
   skill: { type: 'string' },
   task: { type: 'string' },
   category: { type: 'string', multiple: true },
+  keyword: { type: 'string' },
   repository: { type: 'string' },
   'include-path-scoped': { type: 'boolean' },
   path: { type: 'string', multiple: true },
@@ -208,6 +209,7 @@ async function main() {
         if (categories && !categories.every(isWikiCategory)) throw new InputError('Unknown Wiki constraint category');
         if (repository !== undefined && !isRepositoryId(repository)) throw new InputError('Expected a persisted repository UUID');
         return print(wiki.constraints({ skill: values.skill, task: values.task, paths: values.path, categories, repository,
+          keyword: values.keyword,
           includePathScoped: values['include-path-scoped'] }));
       }
       case 'migrate': return print(migrateLegacyWiki(

@@ -113,12 +113,13 @@ interface ChangeDraft {
   scope?: unknown;
   categories?: unknown;
   repositories?: unknown;
+  keywords?: unknown;
   body?: string;
 }
 
 function parseDraft(value: unknown): ChangeDraft {
   const draft = object(value, 'Wiki change request');
-  const unknown = Object.keys(draft).filter(key => !['operation', 'entry', 'title', 'mode', 'scope', 'categories', 'repositories', 'body', 'review'].includes(key));
+  const unknown = Object.keys(draft).filter(key => !['operation', 'entry', 'title', 'mode', 'scope', 'categories', 'repositories', 'keywords', 'body', 'review'].includes(key));
   if (unknown.length) throw new InputError(`Unknown Wiki change field: ${unknown[0]}`);
   const { operation, mode } = draft;
   if (operation !== 'create' && operation !== 'update' && operation !== 'promote' && operation !== 'retire') {
@@ -126,7 +127,7 @@ function parseDraft(value: unknown): ChangeDraft {
   }
   if (mode !== undefined && mode !== 'constraint' && mode !== 'reference') throw new InputError('Invalid Wiki entry mode');
   if (mode !== undefined && operation !== 'create') throw new InputError('Use promote to change a reference into a constraint');
-  if (operation === 'retire' && ['title', 'scope', 'body', 'categories', 'repositories'].some(key => draft[key] !== undefined)) {
+  if (operation === 'retire' && ['title', 'scope', 'body', 'categories', 'repositories', 'keywords'].some(key => draft[key] !== undefined)) {
     throw new InputError('A retirement changes status and evidence only');
   }
   if (draft.scope !== undefined && !Array.isArray(draft.scope)) throw new InputError('Wiki scope must be a list');
@@ -137,6 +138,7 @@ function parseDraft(value: unknown): ChangeDraft {
     ...(draft.scope !== undefined ? { scope: draft.scope } : {}),
     ...(draft.categories !== undefined ? { categories: draft.categories } : {}),
     ...(draft.repositories !== undefined ? { repositories: draft.repositories } : {}),
+    ...(draft.keywords !== undefined ? { keywords: draft.keywords } : {}),
   };
 }
 
@@ -177,7 +179,7 @@ export function proposeWikiChange(wiki: Wiki, value: unknown, evidence: readonly
       if (draft.operation !== 'create' && before === null) throw new NotFoundError(`Wiki entry not found: ${draft.entry}`);
       if (original.frontmatter.locked === true) throw new InputError(`Wiki entry is locked: ${draft.entry}`);
       const rel = `wiki/${draft.entry}.md`;
-      const current = before === null || draft.operation === 'create' ? undefined : readWikiEntryMetadata(rel, original.frontmatter);
+      const current = before === null || draft.operation === 'create' ? undefined : readWikiEntryMetadata(rel, original.frontmatter, original.body);
       if (draft.operation === 'promote' && current?.mode !== 'reference') {
         throw new InputError('Only a reference can be promoted to a constraint');
       }
@@ -199,9 +201,10 @@ export function proposeWikiChange(wiki: Wiki, value: unknown, evidence: readonly
         scope: draft.scope ?? (operation === 'create' ? ['project'] : current?.scope),
         ...(draft.categories !== undefined ? { categories: draft.categories } : {}),
         ...(draft.repositories !== undefined ? { repositories: draft.repositories } : {}),
+        ...(draft.keywords !== undefined ? { keywords: draft.keywords } : {}),
         sources: unionSources(operation === 'create' ? [] : original.frontmatter.sources ?? [], sources),
       };
-      readWikiEntryMetadata(rel, { type: 'other', ...metadata });
+      readWikiEntryMetadata(rel, { type: 'other', ...metadata }, body);
       const after = `---\n${stringify(metadata)}---\n${body}`;
       const change: Change = {
         operation, entry: draft.entry, before: operation === 'create' ? null : before, after, sources,
