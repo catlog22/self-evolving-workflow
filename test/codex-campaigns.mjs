@@ -173,13 +173,13 @@ async function swarm(run, session) {
   }
   try {
     await reconnect();
-    await swarmIteration(run, session, (...args) => client.callTool(...args), reconnect);
+    await swarmCampaign(run, session, (...args) => client.callTool(...args), reconnect);
   } finally {
     await client?.close();
   }
 }
 
-async function swarmIteration(run, session, callTool, reconnect) {
+async function swarmCampaign(run, session, callTool, reconnect) {
   async function native(name, args) {
     const reply = await callTool({ name, arguments: { session_id: run.run_id, ...args } });
     assert.ok(!reply.isError, JSON.stringify(reply));
@@ -210,7 +210,11 @@ async function swarmIteration(run, session, callTool, reconnect) {
   for (const file of ['aco.py', 'pheromone.py', 'scoring.py']) writeFileSync(join(controller, file), bundled(`scripts/${file}`));
   const config = JSON.parse(bundled('specs/swarm-config-template.json'));
   config.swarm.n_ants = 2;
-  config.convergence.max_iterations = 1;
+  config.swarm.max_iterations = 2;
+  config.convergence.max_iterations = 2;
+  for (const name of ['entropy_floor', 'stagnation', 'target_score']) config.convergence[name].enabled = false;
+  config.scoring.mode = 'llm';
+  config.scoring.rubric = 'For each ant, award 0.8 if its conclusion identifies limit-b.mjs and cites line 1 of both files; otherwise award 0.2. Apply the same threshold to each ant.';
   config.task_space.nodes = ['limit-a.mjs', 'limit-b.mjs'];
   config.task_space.max_path_length = 2;
   config.ant_prompt.objective = 'Find the source file declaring the larger limit.';
@@ -219,102 +223,157 @@ async function swarmIteration(run, session, callTool, reconnect) {
     '-B', join(controller, 'aco.py'), '--session', state, '--run-dir', run.run_dir, ...args,
   ], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 15_000 }));
   assert.equal(aco('init').status, 'ok');
-  const { assignments } = aco('select', '--iter', '1');
-  assert.equal(assignments.length, 2);
-  await native('team_msg', { operation: 'log', from: 'coordinator', type: 'state_update',
-    data: { iteration: 1, n_ants: assignments.length, status: 'ants_running' } });
-  const tasks = [];
-  for (const { ant_id } of assignments) {
-    const task = await native('team_task', { operation: 'create', title: ant_id, owner: ant_id });
-    await native('team_task', { operation: 'update', task_id: task.id, owner: ant_id, status: 'assigned' });
-    await native('team_task', { operation: 'update', task_id: task.id, status: 'in_progress' });
-    tasks.push(task);
+  const readSkill = `Use maestro_run run_skill_read with session_id=${session}, run_id=${run.run_id}. Open the entry with these IDs, then use from=SKILL.md and link for each destination.`;
+  const allAnts = [];
+  let brief = run;
+  for (const iteration of [1, 2]) {
+    const result = await iterationWithScorer(iteration);
+    allAnts.push(...result.ants);
+    brief = result.brief;
   }
-  const callbacks = assignments.map(({ ant_id }, index) => ({
-    operation: 'log', from: ant_id, to: 'coordinator', type: 'task_complete', delivery_method: 'poll',
-    summary: `${ant_id} has a result`, data: {
-      iteration: 1, ant_id, task_id: tasks[index].id, artifact_path: `outputs/ant-1-${index + 1}.json`,
-    },
-  }));
-  const readSkill = `Use the maestro_run run_skill_read MCP tool with session_id=${session} and run_id=${run.run_id}. For the entry use only these IDs. For each link set from=SKILL.md and link to the destination.`;
-  const spawnAnts = assignments.map((assignment, index) => ({
-    operation: 'spawn_agent', tool: 'codex', mode: 'write', role: assignment.ant_id,
-    prompt: [
-      'Execute one Swarm ant assignment in this temporary workspace. The coordinator owns the Run and completion.',
-      readSkill,
-      'Read the bound Skill entry, then roles/ant/role.md and specs/ant-output-schema.md from its links.',
-      'This bounded fixture contains two one-line sources and has no prior wisdom or sibling tasks. Read both sources in one shell call. Use project-relative file:line evidence strings and set candidate_solution.summary to the winning filename.',
-      `Write the ant JSON as UTF-8 without a BOM to ${JSON.stringify(join(run.run_dir, callbacks[index].data.artifact_path))} and re-read it once.`,
-      `Immediately report completion with maestro_run team_msg using ${JSON.stringify({ ...callbacks[index], session_id: run.run_id })}. Return only a brief completion notice.`,
-      `Assignment: ${JSON.stringify(assignment)}`,
-    ].join(' '),
-  }));
-  const wait = { operation: 'wait', roles: assignments.map(assignment => assignment.ant_id), timeout_ms: 110_000 };
-  await host(session, run, [
-    ...entryLinks(...run.skill_required_links, 'references/mcp-coordination.md'),
-    { from: 'roles/coordinator/role.md', destination: 'commands/iterate.md' },
-  ], 'Dispatch both assignments first, then wait for the two roles. Return {} after these tool receipts.', {}, [...spawnAnts, wait], 'team_agent');
-  await reconnect();
-  await finishedMembers(assignments.map(assignment => assignment.ant_id));
-  const ants = callbacks.map(({ data }) => JSON.parse(readFileSync(join(run.run_dir, data.artifact_path), 'utf8')));
-  for (const [index, ant] of ants.entries()) {
-    assert.equal(ant.ant_id, assignments[index].ant_id);
-    assert.equal(ant.candidate_solution.summary, 'limit-b.mjs');
-    assert.ok(ant.evidence.some(anchor => typeof anchor === 'string' && /(?:^|[/\\])limit-b\.mjs:1$/.test(anchor)), JSON.stringify(ant.evidence));
-  }
-  const inbox = await native('team_msg', { operation: 'read_mailbox', role: 'coordinator' });
-  assert.equal(inbox.count, callbacks.length);
-  // Interrupt after acknowledging the inbox and before updating the controller.
-  await reconnect();
-  const brief = cli(session, 'run', 'brief', run.run_id);
-  assert.deepEqual(brief.skill_ref, run.skill_ref);
-  const dispatchState = await native('team_msg', { operation: 'get_state', role: 'coordinator' });
-  assert.equal(dispatchState.state.status, 'ants_running');
-  assert.equal((await native('team_msg', { operation: 'read_mailbox', role: 'coordinator' })).count, 0);
-  const history = await native('team_msg', { operation: 'list', to: 'coordinator', type: 'task_complete' });
-  assert.equal(history.total, callbacks.length);
-  assert.ok(history.messages.every(message => message.dispatch_status === 'delivered'));
-  assert.equal(new Set(history.messages.map(message => message.id)).size, callbacks.length);
-  assert.deepEqual(history.messages.map(message => message.data).sort((a, b) => a.ant_id.localeCompare(b.ant_id)),
-    callbacks.map(callback => callback.data).sort((a, b) => a.ant_id.localeCompare(b.ant_id)));
-  for (const { data } of history.messages) {
-    await native('team_task', { operation: 'update', task_id: data.task_id, status: 'pending_review' });
-    await native('team_task', { operation: 'update', task_id: data.task_id, status: 'done' });
-  }
-  const completed = await native('team_task', { operation: 'list', status: 'done' });
-  assert.deepEqual(completed.tasks.map(task => task.id).sort(), tasks.map(task => task.id).sort());
-  const updated = aco('update', '--iter', '1');
-  assert.equal(updated.status, 'ok');
-  assert.equal(updated.n_ants_processed, assignments.length);
-  assert.deepEqual(aco('update', '--iter', '1'), updated);
-  assert.equal(aco('converged').converged, true);
-  await native('team_msg', { operation: 'log', from: 'coordinator', type: 'state_update',
-    data: { iteration: 1, status: 'converged', best_score: updated.best_score } });
   const report = aco('report');
-  assert.equal(report.iterations_completed, 1);
+  assert.equal(report.iterations_completed, 2);
+  assert.deepEqual(report.convergence_curve.map(item => item.iteration), [1, 2]);
+  assert.equal(report.top_k.length, 4);
+  assert.ok(report.top_k.every(item => item.source === 'verified_llm'));
   save(run, 'swarm-report.json', report);
   const synthesis = await host(session, brief, [
     ...entryLinks(...brief.skill_required_links, 'roles/analyst/role.md'),
     { from: 'roles/coordinator/role.md', destination: 'commands/converge.md' },
-  ], 'Resume the completed iteration and synthesize the winner. Return {file, value, evidence, iteration, phase}. Take iteration and phase from the coordinator state returned by team_msg. Use the actual controller report and supplied source evidence.',
-  { report, source: 'limit-b.mjs:1 export const limit = 3;', ants }, [
+  ], 'Synthesize the winner. Return {file, value, evidence, iteration, phase}. Take iteration and phase from the coordinator state returned by team_msg. Use the controller report and the source evidence.',
+  { report, source: 'limit-b.mjs:1 export const limit = 3;', ants: allAnts }, [
     { operation: 'get_state', role: 'coordinator' },
     { operation: 'list', to: 'coordinator', type: 'task_complete' },
   ]);
   assert.equal(synthesis.file, 'limit-b.mjs');
   assert.equal(synthesis.value, 3);
-  assert.equal(synthesis.iteration, 1);
+  assert.equal(synthesis.iteration, 2);
   assert.equal(synthesis.phase, 'converged');
   assert.ok(JSON.stringify(synthesis.evidence).includes('limit-b.mjs:1'));
   writeFileSync(join(run.run_dir, 'outputs', 'best-solution.md'),
     `---\nkind: swarm-best-solution\nschema: swarm-best-solution/1.0\nrole: primary\n---\n# Swarm result\n\n${synthesis.file} declares limit ${synthesis.value}. Evidence ${JSON.stringify(synthesis.evidence)}.\n`);
-  const publication = seal(session, run, 'Swarm converged after a replayed update and verified the winning source',
-    ['references/mcp-coordination.md', 'roles/ant/role.md', 'specs/ant-output-schema.md']);
+  const publication = seal(session, run, 'Swarm converged after two verified scoring rounds',
+    ['references/mcp-coordination.md', 'roles/ant/role.md', 'roles/scorer/role.md', 'specs/ant-output-schema.md']);
   const artifacts = Object.values(publication.artifacts);
   assert.ok(artifacts.every(item => item.status === 'sealed'));
-  assert.deepEqual(artifacts.map(item => item.kind).sort(), ['swarm-ant-result', 'swarm-ant-result', 'swarm-best-solution', 'swarm-report']);
+  assert.deepEqual(artifacts.map(item => item.kind).sort(), [
+    ...Array(4).fill('swarm-ant-result'), 'swarm-best-solution', 'swarm-report',
+  ]);
   assert.equal(existsSync(join(root, '.workflow', '.team', run.run_id)), false);
-  console.log('A Codex coordinator dispatched two Codex workers through Maestro MCP. The persisted roster and callbacks supported recovery, and Maestro sealed four artifacts.');
+  console.log('Codex Swarm completed two recovered batches with independent scorer jobs and sealed six artifacts.');
+
+  async function dispatch(orders, links) {
+    const roles = orders.map(order => order.role);
+    await host(session, run, [...entryLinks(...run.skill_required_links, 'references/mcp-coordination.md'), ...links],
+      'Dispatch the supplied assignments first, then wait for the listed roles. Return {} after the tool receipts.', {},
+      [...orders, { operation: 'wait', roles, timeout_ms: 110_000 }], 'team_agent');
+    await reconnect();
+    return finishedMembers(roles);
+  }
+
+  async function iterationWithScorer(iteration) {
+    const iterationArg = String(iteration);
+    const selected = aco('select', '--iter', iterationArg);
+    const { assignments } = selected;
+    assert.equal(assignments.length, 2);
+    await native('team_msg', { operation: 'log', from: 'coordinator', type: 'state_update',
+      data: { iteration, n_ants: assignments.length, status: 'ants_running' } });
+    const tasks = [];
+    for (const { ant_id } of assignments) {
+      const task = await native('team_task', { operation: 'create', title: ant_id, owner: ant_id });
+      await native('team_task', { operation: 'update', task_id: task.id, owner: ant_id, status: 'assigned' });
+      await native('team_task', { operation: 'update', task_id: task.id, status: 'in_progress' });
+      tasks.push(task);
+    }
+    const callbacks = assignments.map(({ ant_id }, index) => ({
+      operation: 'log', from: ant_id, to: 'coordinator', type: 'task_complete', delivery_method: 'poll',
+      summary: `${ant_id} has a result`, data: {
+        iteration, ant_id, task_id: tasks[index].id, artifact_path: `outputs/ant-${iteration}-${index + 1}.json`,
+      },
+    }));
+    const spawnAnts = assignments.map((assignment, index) => ({
+      operation: 'spawn_agent', tool: 'codex', mode: 'write', role: assignment.ant_id,
+      prompt: [
+        'Execute one Swarm ant assignment in this temporary workspace. The coordinator owns the Run and completion.',
+        readSkill,
+        'Read the bound Skill entry, then roles/ant/role.md and specs/ant-output-schema.md from its links.',
+        'This bounded fixture contains two one-line sources and has no prior wisdom or sibling tasks. Read both sources in one shell call. Use project-relative file:line evidence strings and set candidate_solution.summary to the winning filename.',
+        `Write the ant JSON as UTF-8 without a BOM to ${JSON.stringify(join(run.run_dir, callbacks[index].data.artifact_path))} and re-read it once.`,
+        `Immediately report completion with maestro_run team_msg using ${JSON.stringify({ ...callbacks[index], session_id: run.run_id })}. Return only a brief completion notice.`,
+        `Assignment: ${JSON.stringify(assignment)}`,
+      ].join(' '),
+    }));
+    await dispatch(spawnAnts, [{ from: 'roles/coordinator/role.md', destination: 'commands/iterate.md' }]);
+    assert.deepEqual(aco('select', '--iter', iterationArg), selected);
+    const ants = callbacks.map(({ data }) => JSON.parse(readFileSync(join(run.run_dir, data.artifact_path), 'utf8')));
+    for (const [index, ant] of ants.entries()) {
+      assert.equal(ant.ant_id, assignments[index].ant_id);
+      assert.equal(ant.candidate_solution.summary, 'limit-b.mjs');
+      assert.ok(ant.evidence.some(anchor => typeof anchor === 'string' && /(?:^|[/\\])limit-b\.mjs:1$/.test(anchor)), JSON.stringify(ant.evidence));
+    }
+    const inbox = await native('team_msg', { operation: 'read_mailbox', role: 'coordinator' });
+    assert.equal(inbox.count, callbacks.length);
+    // Interrupt after acknowledging the inbox and before updating the controller.
+    await reconnect();
+    const brief = cli(session, 'run', 'brief', run.run_id);
+    assert.deepEqual(brief.skill_ref, run.skill_ref);
+    const dispatchState = await native('team_msg', { operation: 'get_state', role: 'coordinator' });
+    assert.equal(dispatchState.state.status, 'ants_running');
+    assert.equal(dispatchState.state.iteration, iteration);
+    assert.equal((await native('team_msg', { operation: 'read_mailbox', role: 'coordinator' })).count, 0);
+    const history = await native('team_msg', { operation: 'list', to: 'coordinator', type: 'task_complete' });
+    const current = history.messages.filter(message => message.data.iteration === iteration);
+    assert.equal(current.length, callbacks.length);
+    assert.ok(current.every(message => message.dispatch_status === 'delivered'));
+    assert.equal(new Set(current.map(message => message.id)).size, callbacks.length);
+    assert.deepEqual(current.map(message => message.data).sort((a, b) => a.ant_id.localeCompare(b.ant_id)),
+      callbacks.map(callback => callback.data).sort((a, b) => a.ant_id.localeCompare(b.ant_id)));
+    for (const { data } of current) {
+      await native('team_task', { operation: 'update', task_id: data.task_id, status: 'pending_review' });
+      await native('team_task', { operation: 'update', task_id: data.task_id, status: 'done' });
+    }
+    const completed = await native('team_task', { operation: 'list', status: 'done' });
+    assert.ok(tasks.every(task => completed.tasks.some(item => item.id === task.id)));
+    const scorer = `SCORE-${iteration}`;
+    const scoresPath = `work/team/scores/iter-${iteration}-scores.json`;
+    const scoreCallback = { operation: 'log', session_id: run.run_id, from: scorer, to: 'coordinator', type: 'scoring_complete',
+      delivery_method: 'poll', data: { iteration, artifact_path: scoresPath, n_ants_scored: ants.length } };
+    await native('team_msg', { operation: 'log', from: 'coordinator', type: 'state_update',
+      data: { status: 'scoring', iteration, scorer } });
+    await dispatch([{ operation: 'spawn_agent', tool: 'codex', mode: 'write', role: scorer, prompt: [
+      `Score iteration ${iteration} using the bound Skill. ${readSkill}`,
+      'Open roles/scorer/role.md and specs/ant-output-schema.md. Read the two ant artifacts in one shell call. Do not modify them.',
+      `Ant files: ${JSON.stringify(callbacks.map(item => join(run.run_dir, item.data.artifact_path)))}`,
+      `Scoring rubric: ${config.scoring.rubric} Fixed rubric ties are valid in this fixture.`,
+      `Write the complete llm score JSON with both IDs and each nonempty rationale, UTF-8 without BOM, to ${JSON.stringify(join(run.run_dir, scoresPath))}. Re-read it once.`,
+      `Immediately call maestro_run team_msg with ${JSON.stringify(scoreCallback)}, then return a brief completion notice.`,
+    ].join(' ') }], [{ from: 'roles/coordinator/role.md', destination: 'commands/iterate.md' }]);
+    const scorerState = await native('team_msg', { operation: 'get_state', role: 'coordinator' });
+    assert.equal(scorerState.state.status, 'scoring');
+    assert.equal(scorerState.state.scorer, scorer);
+    const scoreInbox = await native('team_msg', { operation: 'read_mailbox', role: 'coordinator' });
+    assert.equal(scoreInbox.count, 1);
+    assert.equal(scoreInbox.messages[0].from, scorer);
+    assert.equal(scoreInbox.messages[0].type, 'scoring_complete');
+    assert.deepEqual(scoreInbox.messages[0].data, scoreCallback.data);
+    const scores = JSON.parse(readFileSync(join(run.run_dir, scoresPath), 'utf8'));
+    assert.deepEqual(Object.keys(scores.scores).sort(), assignments.map(item => item.ant_id).sort());
+    assert.ok(Object.values(scores.scores).every(item => item.verified_score === 0.8 && item.rationale.trim()));
+    const updated = aco('update', '--iter', iterationArg);
+    assert.equal(updated.status, 'ok');
+    assert.equal(updated.n_ants_processed, assignments.length);
+    const trails = readFileSync(join(state, 'trails', `${iteration}.jsonl`), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(trails.length, assignments.length);
+    assert.ok(trails.every(trail => trail.source === 'verified_llm'));
+    assert.deepEqual(aco('update', '--iter', iterationArg), updated);
+    const convergence = aco('converged');
+    assert.equal(convergence.iteration, iteration);
+    assert.equal(convergence.converged, iteration === 2);
+    await native('team_msg', { operation: 'log', from: 'coordinator', type: 'state_update',
+      data: { iteration, status: convergence.converged ? 'converged' : 'iteration_complete', best_score: updated.best_score } });
+    console.log(`Swarm round ${iteration} recovered and committed both verified scores.`);
+    return { ants, brief };
+  }
 }
 
 try {
