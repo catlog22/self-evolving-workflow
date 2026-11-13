@@ -263,6 +263,63 @@ test('Session retrospective grounds Skill additions in its original evidence', a
   }), /Transcript evidence hash mismatch/);
 });
 
+test('Session review connects failure and retry receipts to the original Skill version', async t => {
+  const root = await temp(t);
+  const session = 'review-2';
+  const receipts = join(root, '.workflow', 'sessions', session, 'receipts');
+  await mkdir(join(receipts, 'transitions'), { recursive: true });
+  await mkdir(join(receipts, 'requests'));
+  const skillRef = {
+    skill_id: 'analyze', commit: 'a'.repeat(40), tree: 'b'.repeat(40),
+    package_path: 'skills/analyze', entry: 'SKILL.md',
+  };
+  const birth = { run_already_created: true, task: { command: 'analyze' }, status: 'running' };
+  const pathFor = revision => `${String(revision).padStart(12, '0')}-tr_${revision}.json`;
+  async function writeReceipt(revision, targetType, targetId, result, reason = 'Run started') {
+    const requestId = `req-${revision}`;
+    const filename = pathFor(revision);
+    await writeFile(join(receipts, 'transitions', filename), JSON.stringify({
+      schema_version: 'transition-receipt/2.0', session_id: session, activity_revision: revision,
+      request_id: requestId, transition_id: `tr_${revision}`, participant_id: 'actor',
+      target_type: targetType, target_id: targetId, revision_before: revision - 1, revision_after: revision,
+      recorded_at: `2026-11-13T01:0${revision}:00Z`, reason, result,
+    }));
+    await writeFile(join(receipts, 'requests', `${requestId}.json`), JSON.stringify({
+      schema_version: 'request-receipt/2.0', request_id: requestId, participant_id: 'actor',
+      payload_hash: `sha256:${'c'.repeat(64)}`, transition_receipt_ref: `receipts/transitions/${filename}`,
+    }));
+  }
+  await writeReceipt(1, 'orchestration', session, { ...birth, run_id: 'run-1', skill_ref: skillRef });
+  await writeReceipt(2, 'run', 'run-1', { run_id: 'run-1', status: 'blocked' }, 'Workflow link skipped.');
+  await writeReceipt(3, 'run', 'run-1', { run_id: 'run-1', status: 'failed' }, 'Required preflight missing.');
+  await writeReceipt(4, 'orchestration', session, { ...birth, run_id: 'run-2', retry_of_run_id: 'run-1' });
+  await writeReceipt(5, 'orchestration', session, {
+    operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-2', summary: 'Preflight re-run passed.',
+  });
+  const result = await reviewSession(root, session, { model: () => ({
+    async chat({ system, prompt }) {
+      assert.match(system, /Allowed types are correction, error, retry/);
+      assert.doesNotMatch(system, /work_fact/);
+      assert.match(prompt, /run-1 became blocked.*Workflow link skipped/);
+      assert.match(prompt, /run-1 became failed.*Required preflight missing/);
+      assert.match(prompt, /run-2 \(analyze\) retries run-1/);
+      assert.match(prompt, /run-2 completed.*Preflight re-run passed/);
+      return JSON.stringify([{ memories: [
+        { type: 'retry', content: 'Run was retried.', source_message_ids: ['receipt:tr_4#run:run-2'] },
+      ] }]);
+    },
+  }) });
+  assert.deepEqual(result.runs, [
+    { id: 'run-1', command: 'analyze', skillRef, retryOf: undefined, source: 'receipt:tr_1#run:run-1' },
+    { id: 'run-2', command: 'analyze', skillRef: undefined, retryOf: 'run-1', source: 'receipt:tr_4#run:run-2' },
+  ]);
+  assert.deepEqual(result.signals[0].runIds, ['run-1', 'run-2']);
+  await writeFile(join(receipts, 'requests', 'req-3.json'), '{}');
+  await assert.rejects(reviewSession(root, session, {
+    model: () => { throw new Error('Uncommitted evidence reached the model'); },
+  }), /Invalid Session request receipt/);
+});
+
 test('Wiki ingest preserves source attribution and locked pages', async t => {
   const root = await temp(t);
   const source = join(root, 'notes.md');

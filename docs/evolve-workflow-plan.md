@@ -163,7 +163,7 @@ Maestro Session 结束前固定本次可提取的证据范围和锚点，结束�
 
 ## 5. 自进化 Skill
 
-1. **封装 Session 回溯。** 用 `agent-memory session review <session-id>` 读取已提交回执和可核对的会话证据快照。必要时通过 `--transcript` 加入经授权的会话导出。工具复用 Memory L1 提取，只返回带来源引用的纠正、失败、重试和修复信号，供沉淀与自进化共同调用。
+1. **封装 Session 回溯。** 用 `agent-memory session review <session-id>` 读取 Run 状态与重试回执、Session 完成回执和可核对的会话证据快照。必要时通过 `--transcript` 加入经授权的会话导出。工具复用 Memory L1 提取，返回带来源引用的纠正、失败、重试和修复信号。回执可关联到 Run 时，返回对应 Run ID 与可取得的 Skill 版本，供沉淀与自进化共同调用。
 2. **生成附加内容。** 核对实际 Skill 版本、建议的优先级和证据，以 `agent-memory evolve draft` 生成附加文本或链接文档。高优先级在入口放一条执行前应读取的短指令。普通优先级从入口链接到包内说明，按条件读取。低优先级保存在独立参考文档中，供主动检索。草稿保留目标路径、基线哈希与证据，便于回放和审批。
 3. **真实回放。** `agent-memory evolve replay` 在两个独立 Git worktree 上调用同一宿主脚本，逐一传入相同的任务输入。场景包含可复现的旧版失败和既有成功流程。回执记录两版加载的文件与哈希。带链接的候选还要证明失败用例回放时读取了新增文档。
 4. **应用与回滚。** 确认采用后，`agent-memory evolve apply` 对比当前提交、Skill 工作树和回执，再快进到已验证的候选。重新调用确认宿主加载新版。应用关联证据、回放结果与新旧版本。紧接该候选的回滚由 `agent-memory evolve rollback` 创建 Git 反向提交；后续提交已经改变历史时，重新核对影响后再恢复。

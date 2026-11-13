@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { stringify } from 'yaml';
 import { InputError, openDb, requireText, transaction } from './common.js';
 import { extractMemoryInputs, type ConversationMessage } from './memory.js';
@@ -90,28 +90,53 @@ export function parseReceipt(value: unknown): Completion {
   return { id, session, timestamp, messages };
 }
 
-export function readCompletionReceipts(sourceRoot: string, sessionId?: string): unknown[] {
-  const sessions = join(sourceRoot, '.workflow', 'sessions');
-  const receipts: unknown[] = [];
-  for (const session of readdirSync(sessions, { withFileTypes: true })) {
-    if (!session.isDirectory() || (sessionId !== undefined && session.name !== sessionId)) continue;
-    const directory = join(sessions, session.name, 'receipts', 'transitions');
-    let names: string[];
-    try {
-      names = readdirSync(directory);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw error;
-    }
-    for (const name of names.sort()) {
-      if (!/^\d{12}-tr_[a-z0-9-]+\.json$/i.test(name)) continue;
-      const receipt = object(JSON.parse(readFileSync(join(directory, name), 'utf8')));
-      if (receipt.target_type !== 'orchestration') continue;
-      const result = object(receipt.result);
-      if (result.status === 'completed' && receipt.session_id === session.name) receipts.push(receipt);
-    }
+export function readSessionTransitions(directory: string) {
+  const receipts = join(directory, 'receipts');
+  const transitions = join(receipts, 'transitions');
+  const requests = join(receipts, 'requests');
+  for (const path of [receipts, transitions]) {
+    const info = lstatSync(path, { throwIfNoEntry: false });
+    if (!info) return [];
+    if (!info.isDirectory()) throw new InputError(`Invalid Session receipt directory: ${path}`);
   }
-  return receipts;
+  const session = basename(directory);
+  return readdirSync(transitions, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name)).flatMap(entry => {
+    const match = /^(\d{12})-(tr_[a-z0-9-]+)\.json$/i.exec(entry.name);
+    if (!match) return [];
+    if (!entry.isFile()) throw new InputError(`Invalid Session transition file: ${entry.name}`);
+    const receipt = object(JSON.parse(readFileSync(join(transitions, entry.name), 'utf8')));
+    const requestId = requireText(receipt.request_id, 'request ID');
+    const participant = requireText(receipt.participant_id, 'participant ID');
+    const before = receipt.revision_before;
+    if (receipt.schema_version !== 'transition-receipt/2.0' || receipt.session_id !== session ||
+        receipt.activity_revision !== Number(match[1]) || Number(match[1]) < 1 || receipt.transition_id !== match[2] ||
+        typeof before !== 'number' || !Number.isSafeInteger(before) || before < 0 || receipt.revision_after !== before + 1 ||
+        requestId !== receipt.request_id || /[\\/<>:"|?*\p{Cc}]/u.test(requestId) ||
+        /[. ]$/.test(requestId) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(requestId)) {
+      throw new InputError(`Session transition identity mismatch: ${entry.name}`);
+    }
+    const requestPath = join(requests, `${requestId}.json`);
+    if (!lstatSync(requests, { throwIfNoEntry: false })?.isDirectory() ||
+        !lstatSync(requestPath, { throwIfNoEntry: false })?.isFile()) {
+      throw new InputError(`Session transition has no matching request receipt: ${entry.name}`);
+    }
+    const request = object(JSON.parse(readFileSync(requestPath, 'utf8')));
+    if (request.schema_version !== 'request-receipt/2.0' || request.request_id !== requestId ||
+        request.participant_id !== participant || request.transition_receipt_ref !== `receipts/transitions/${entry.name}` ||
+        typeof request.payload_hash !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(request.payload_hash)) {
+      throw new InputError(`Invalid Session request receipt: ${requestId}`);
+    }
+    return [{ receipt, result: object(receipt.result), id: match[2] }];
+  });
+}
+
+export function readCompletionReceipts(sourceRoot: string): unknown[] {
+  const sessions = join(sourceRoot, '.workflow', 'sessions');
+  return readdirSync(sessions, { withFileTypes: true }).filter(session => session.isDirectory())
+    .flatMap(session => readSessionTransitions(join(sessions, session.name))
+      .filter(({ receipt, result }) => receipt.target_type === 'orchestration' &&
+        receipt.target_id === session.name && result.status === 'completed')
+      .map(({ receipt }) => receipt));
 }
 
 export async function harvestCompletion(wiki: Wiki, project: string, value: unknown, model: () => LlmClient) {
