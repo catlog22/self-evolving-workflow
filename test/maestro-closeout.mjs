@@ -8,11 +8,13 @@ import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { verifyEvolveHost } from './codex-evolve.mjs';
 
 const maestro = process.env.MAESTRO_REPLAY_CLI;
 assert.ok(maestro && isAbsolute(maestro), 'Set MAESTRO_REPLAY_CLI to the built Maestro JavaScript entry.');
 const memory = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const execute = promisify(execFile);
+const codexEvolve = process.argv.includes('--codex-evolve');
 const root = await mkdtemp(join(tmpdir(), 'evolve-maestro-closeout-'));
 const project = 'closeout-fixture';
 const skill = 'migration-preflight';
@@ -53,7 +55,14 @@ const model = createServer(async (request, response) => {
         assert.match(prompt, /became failed.*Dry-run flag required/);
         assert.match(prompt, /retries run-/);
         assert.match(prompt, /opened Skill documents: SKILL.md/);
-        items.push({ memories: [{ type: 'correction', content: correction, source_message_ids: [anchor] }] });
+        const failing = /\[(receipt:[^\]]+#run:[^\]]+)\][^\r\n]*became failed.*Dry-run flag required/.exec(prompt)?.[1];
+        const verified = /\[(receipt:[^\]]+#run:[^\]]+)\][^\r\n]*migration preflight verified: schema 1, records 3/.exec(prompt)?.[1];
+        assert.ok(failing && verified);
+        items.push({ memories: [
+          { type: 'correction', content: correction, source_message_ids: [anchor] },
+          { type: 'error', content: 'The staging migration check failed before the required flag was passed.', source_message_ids: [failing] },
+          { type: 'verified_fix', content: 'The staging database preflight verified its schema and record count after the flag was added.', source_message_ids: [verified] },
+        ] });
       }
     } else {
       assert.match(system, /^Compare a proposed Wiki method/);
@@ -66,9 +75,11 @@ const model = createServer(async (request, response) => {
   }
 });
 
-async function invoke(command, args, env) {
+async function invoke(command, args, env, input) {
   try {
-    return (await execute(command, args, { cwd: root, env, windowsHide: true, encoding: 'utf8' })).stdout;
+    const child = execute(command, args, { cwd: root, env, windowsHide: true, encoding: 'utf8' });
+    if (input !== undefined) child.child.stdin.end(input);
+    return (await child).stdout;
   } catch (error) {
     throw new Error(error.stderr?.trim() || error.stdout?.trim() || error.message, { cause: error });
   }
@@ -96,11 +107,14 @@ try {
 
   await mkdir(join(root, 'skills', skill), { recursive: true });
   const skillEntry = join(root, 'skills', skill, 'SKILL.md');
-  await writeFile(skillEntry, [
-    '---', `name: ${skill}`, 'description: Check the staging database migration.', 'wiki_categories: [arch]',
+  const baselineSkill = [
+    '---', `name: ${skill}`, 'description: Prepare a migration check or report migration tracker status.', 'wiki_categories: [arch]',
     'contract:', '  contract_version: 2.1', '  produces: []', '  consumes: []', '---',
-    '# Migration preflight', '', 'Use the staging database for migration preflight.', '',
-  ].join('\n'));
+    '# Migration preflight', '',
+    'For a staging migration preflight request, return exactly `migrate staging` unless applicable Skill guidance specifies a different command.',
+    'For a migration tracker status request, return exactly `migrate status`.', '',
+  ].join('\n');
+  await writeFile(skillEntry, baselineSkill);
   await writeFile(database, original);
   await writeFile(migrate, [
     "import { readFileSync } from 'node:fs';",
@@ -113,8 +127,11 @@ try {
     'console.log(`migration preflight verified: schema ${schema}, records ${records}`);',
   ].join('\n'));
   await git('init', '-q');
+  await git('config', 'user.name', 'Closeout fixture');
+  await git('config', 'user.email', 'fixture@example.invalid');
+  await git('config', 'core.autocrlf', 'false');
   await git('add', '--', 'skills', 'migrate.mjs', 'staging.json');
-  await git('-c', 'user.name=Closeout fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Preflight fixture');
+  await git('commit', '-qm', 'Preflight fixture');
   await mkdir(join(workflow, 'specs'), { recursive: true });
   await mkdir(join(workflow, 'knowhow'));
   await writeFile(join(workflow, 'specs', 'architecture-constraints.md'),
@@ -294,10 +311,6 @@ try {
   assert.deepEqual(signal.runIds, [first.run_id]);
   assert.deepEqual(signal.sources, [ref]);
   assert.equal(reviewed.runs.find(item => item.id === first.run_id).skillRef.skill_id, skill);
-  const draft = await agent('evolve', 'draft', skillEntry, 'Run the staging migration check with --dry-run.',
-    '--priority', 'normal', '--when', 'checking a staging migration', '--evidence', signal.sources[0]);
-  assert.equal(draft.changes.length, 2);
-  assert.match(draft.changes[0].content, /references\/learnings\//);
   const published = await agent('closeout', 'publish', harvest.id, harvest.candidates[0].id, 'Staging migration preflight');
   const reference = await agent('wiki', 'get', published.id);
   assert.equal(reference.entry.mode, 'reference');
@@ -317,6 +330,17 @@ try {
   assert.deepEqual(empty.candidates, []);
   assert.equal(harvests.get('transient'), 1);
   assert.deepEqual((await agent('session', 'review', 'transient')).signals, []);
+  if (codexEvolve) {
+    await verifyEvolveHost({
+      root, maestro, memory, env, origin, git, agent, invoke, skill, skillEntry, baselineSkill,
+      session, run: first, correctionAnchor: ref, transientSession: 'transient',
+    });
+  } else {
+    const draft = await agent('evolve', 'draft', skillEntry, 'Run the staging migration check with --dry-run.',
+      '--priority', 'normal', '--when', 'checking a staging migration', '--evidence', signal.sources[0]);
+    assert.equal(draft.changes.length, 2);
+    assert.match(draft.changes[0].content, /references\/learnings\//);
+  }
   const constraints = await agent('wiki', 'constraints', '--skill', skill, '--category', 'arch');
   assert.deepEqual(constraints.map(item => item.id), [constraintId]);
 

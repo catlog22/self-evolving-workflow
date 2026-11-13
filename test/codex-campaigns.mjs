@@ -19,7 +19,7 @@ const requireMaestro = createRequire(maestro);
 const { Client } = requireMaestro('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = requireMaestro('@modelcontextprotocol/sdk/client/stdio.js');
 const packages = ['maestro-odyssey', 'team-swarm'];
-const campaignNames = ['review', 'debug', 'swarm'];
+const campaignNames = ['review', 'debug', 'security', 'defensive', 'swarm'];
 const selected = new Set(process.argv.length > 2 ? process.argv.slice(2) : campaignNames);
 assert.ok([...selected].every(name => campaignNames.includes(name)), `Choose from ${campaignNames.join(', ')}`);
 const root = mkdtempSync(join(tmpdir(), 'evolve-codex-campaigns-'));
@@ -55,7 +55,7 @@ function start(session, command, objective = `Verify ${command}`) {
 }
 
 async function host(session, run, links, task, context, {
-  calls: expectedMessages = [], tool: teamTool = 'team_msg', debugPhase,
+  calls: expectedMessages = [], tool: teamTool = 'team_msg', debugPhase, requireEntry = true,
 } = {}) {
   const args = ['-a', 'never', 'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check',
     '--json', '--sandbox', 'read-only',
@@ -80,7 +80,7 @@ async function host(session, run, links, task, context, {
   args.push('-');
   const prompt = [
     'You are executing a bounded role in a Maestro campaign acceptance fixture.',
-    'First open the bound Skill with evolve_replay read_skill. For each document below use the specified from and destination arguments.',
+    'Before analyzing the task, call evolve_replay read_skill with no arguments. Do not produce an answer until that tool call succeeds. For each document below use the specified from and destination arguments.',
     JSON.stringify(links),
     debugPhase ? 'Use debug_fixture check for the requested Git and Node operations. The fixture owns the Maestro lifecycle and campaign artifacts. Return only the requested JSON.'
       : 'The fixture owns artifacts, script execution, CLI lifecycle and worker coordination. Return only the requested JSON.',
@@ -131,8 +131,8 @@ async function host(session, run, links, task, context, {
     const text = item.result?.content?.[0]?.text;
     return typeof text === 'string' ? [JSON.parse(text).path] : [];
   });
-  assert.ok(loaded.includes('SKILL.md'));
-  for (const { from, destination } of links) assert.ok(loaded.includes(posix.join(posix.dirname(from), destination)), destination);
+  if (requireEntry) assert.ok(loaded.includes('SKILL.md'), `Skill reads: ${JSON.stringify(loaded)}\nAnswer: ${result}`);
+  for (const { from, destination } of links) assert.ok(loaded.includes(posix.join(posix.dirname(from), destination)), `${destination}; reads=${JSON.stringify(loaded)} answer=${result}`);
   const calls = events.filter(event => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' &&
     event.item.server === 'maestro' && event.item.tool === teamTool).map(event => event.item);
   assert.equal(calls.length, expectedMessages.length);
@@ -201,6 +201,181 @@ async function odyssey(run, session) {
   assert.equal(artifact?.kind, 'session');
   assert.equal(artifact?.status, 'sealed');
   console.log('Codex resumed Odyssey review on its original Skill tree and sealed the typed session artifact.');
+}
+
+const securityFile = 'security-handler.mjs';
+const defensiveFile = 'defensive-decision.mjs';
+
+function securityFixture() {
+  writeFileSync(join(root, 'package.json'), JSON.stringify({
+    name: 'security-fixture', private: true, dependencies: { 'fixture-safe-lib': '1.0.0' },
+  }, null, 2) + '\n');
+  writeFileSync(join(root, 'package-lock.json'), JSON.stringify({
+    name: 'security-fixture', lockfileVersion: 3, requires: true,
+    packages: { '': { name: 'security-fixture', dependencies: { 'fixture-safe-lib': '1.0.0' } },
+      'node_modules/fixture-safe-lib': { version: '1.0.0', resolved: 'https://registry.invalid/fixture-safe-lib-1.0.0.tgz', integrity: 'sha512-fixture' } },
+  }, null, 2) + '\n');
+  writeFileSync(join(root, securityFile), [
+    "import { exec } from 'node:child_process';",
+    'export function checkHost(request) {',
+    "  const host = request.query.host;",
+    "  if (typeof host !== 'string') throw new TypeError('host required');",
+    "  return exec('ping ' + host);",
+    '}', '',
+  ].join('\n'));
+}
+
+function defensiveFixture() {
+  writeFileSync(join(root, defensiveFile), [
+    'export function approveOrder(order, readUsage) {',
+    '  let observedUsage;',
+    '  try {',
+    '    observedUsage = readUsage(order.accountId);',
+    '  } catch {',
+    '    observedUsage = 0;',
+    '  }',
+    '  return observedUsage + order.amount <= order.approvedLimit;',
+    '}', '',
+  ].join('\n'));
+}
+
+function auditLinks(run, mode) {
+  return [
+    ...entryLinks(...run.skill_required_links, `references/odyssey-${mode}.md`),
+    { from: `references/prepare/odyssey-${mode}.md`, destination: '../audit-artifacts.md' },
+  ];
+}
+
+function assertAuditReadOnly(files) {
+  const changed = git('diff', '--name-only', '--', ...files).toString().trim();
+  assert.equal(changed, '', `Audit changed source files: ${changed}`);
+}
+
+async function odysseySecurity(run, session) {
+  const source = readFileSync(join(root, securityFile), 'utf8');
+  const links = auditLinks(run, 'security');
+  const recon = await host(session, run, links, [
+    'Execute the Odyssey Security read-only workflow through S_SCAN on this isolated repository.',
+    'Do not run commands and do not modify any file. The fixture provided the complete source and package metadata.',
+    'Perform a quick tier audit with OWASP A01-A10 coverage and a dependency lockfile check.',
+    'Return exactly JSON shaped as {recon:{techStack,entryPoints,dataFlow},coverage:{owasp:[string],dependency:string},findings:[{category,title,severity,file,line,cwe,evidence,remediation}]}.' ,
+    'Every OWASP category must appear in coverage. Use no_evidence for categories without evidence. Keep the one proven injection finding tied to the supplied line.',
+  ].join(' '), { target: securityFile, tier: 'quick', source: `${securityFile}\n${source}`, packageJson: readFileSync(join(root, 'package.json'), 'utf8'), lockfile: readFileSync(join(root, 'package-lock.json'), 'utf8') });
+  assert.match(JSON.stringify(recon.recon.techStack), /node/i);
+  assert.ok(JSON.stringify(recon.recon.entryPoints).length > 2);
+  for (const category of ['A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A08', 'A09', 'A10']) {
+    assert.match(JSON.stringify(recon.coverage.owasp), new RegExp(category));
+  }
+  assert.match(recon.coverage.dependency, /clean|lockfile|no .*vulnerability|no evidence/i);
+  const injection = recon.findings.find(finding => /A03|injection/i.test(finding.category));
+  assert.ok(injection, JSON.stringify(recon));
+  assert.equal(injection.file, securityFile);
+  assert.ok([5, 6].includes(injection.line));
+  assert.match(injection.cwe, /CWE-78/);
+  assert.match(injection.evidence, /exec|host/i);
+  assert.match(injection.remediation, /spawn|shell|allowlist|validation/i);
+
+  const evidence = [
+    { _meta: { kind: 'evidence', schema: 'evidence/1.0', role: 'evidence', alias: 'security-evidence' },
+      phase: 'recon', target: securityFile, tier: 'quick' },
+    ...recon.findings.map(finding => ({ phase: 'scan', ...finding })),
+  ].map(item => JSON.stringify(item)).join('\n') + '\n';
+  writeFileSync(join(run.run_dir, 'outputs', 'evidence.ndjson'), evidence);
+  save(run, 'session.json', { _meta: { kind: 'security-audit-result', schema: 'security-audit-result/1.0', role: 'primary', alias: 'security-session' },
+    target: securityFile, tier: 'quick', scan_phases: ['owasp', 'dependency'], current_state: 'S_REPORT', findings: recon.findings });
+
+  const resumed = cli(session, 'run', 'brief', run.run_id);
+  assert.deepEqual(resumed.skill_ref, run.skill_ref);
+  const report = await host(session, resumed, links, [
+    'Resume the same Odyssey Security audit from the supplied checkpoint and produce S_REPORT.',
+    'Remain read-only. Use the supplied scan findings and source evidence, do not invent additional vulnerabilities.',
+    'Return exactly JSON shaped as {severityMatrix:[{ref,severity,file,line,category,remediation}],summary:{critical,high,medium,low},generalization:string,currentState:string}. Set currentState to END after completing the report and generalization steps.',
+    'The shell injection is at least HIGH. Keep the dependency check clean and state that no secret values were logged.',
+  ].join(' '), { checkpoint: readFileSync(join(run.run_dir, 'outputs', 'session.json'), 'utf8'), evidence, source }, { requireEntry: false });
+  assert.equal(report.currentState, 'END');
+  const reported = report.severityMatrix.find(finding => finding.file === securityFile);
+  assert.ok(reported);
+  assert.match(reported.severity, /critical|high/i);
+  assert.ok([5, 6].includes(reported.line));
+  assert.match(reported.remediation, /spawn|shell|allowlist|validation/i);
+  assert.ok(report.generalization.trim());
+  save(run, 'session.json', { _meta: { kind: 'security-audit-result', schema: 'security-audit-result/1.0', role: 'primary', alias: 'security-session' },
+    target: securityFile, tier: 'quick', scan_phases: ['owasp', 'dependency'], current_state: 'END', findings: recon.findings, report });
+  writeFileSync(join(run.run_dir, 'outputs', 'understanding.md'), `---\nkind: security-report\nschema: security-report/1.0\nrole: primary\nalias: security-understanding\n---\n\n# Security report\n\n${report.severityMatrix.map(finding => `- ${finding.ref}: ${finding.severity} ${finding.file}:${finding.line} — ${finding.remediation}`).join('\n')}\n\n${report.generalization}\n`);
+  const publication = seal(session, run, 'Completed a read-only quick security audit with OWASP and dependency coverage');
+  for (const [alias, kind] of Object.entries({ 'security-session': 'security-audit-result', 'security-evidence': 'evidence', 'security-understanding': 'security-report' })) {
+    const artifact = publication.artifacts[publication.aliases[alias]];
+    assert.equal(artifact?.kind, kind);
+    assert.equal(artifact?.status, 'sealed');
+  }
+  assertAuditReadOnly([securityFile, 'package.json', 'package-lock.json']);
+  console.log('Codex completed Odyssey Security recon, scan and report from the fixed Skill tree without source changes.');
+}
+
+async function odysseyDefensive(run, session) {
+  const source = readFileSync(join(root, defensiveFile), 'utf8');
+  const links = auditLinks(run, 'defensive');
+  const anchors = await host(session, run, links, [
+    'Execute the Odyssey Defensive read-only workflow through S_PROPAGATE on this isolated repository.',
+    'Do not run commands and do not modify any file. Use the complete source snapshot supplied by the fixture.',
+    'Use standard tier coverage and attempt all eight patterns P1 broad_catch, P2 exception_swallow, P3 default, P4 null_fallback, P5 auto_correct, P6 silent_convert, P7 dup_constraint, P8 dup_default.',
+    'Return exactly JSON shaped as {anchors:[{name,file,line,layer}],slice:[{criticalVar,chain}],coverage:[string],candidates:[{pattern,file,line,originalFailureType,stateTransform,sink,reachesCriticalSink,q4DownstreamAware,scores:{S,P,B,H},riskLevel,exceptionClass}]}.' ,
+    'The supplied function is an approval decision. A storage failure is unavailable usage and must fail closed. Identify the broad catch/default at the exact source line and follow it to the approval sink.',
+  ].join(' '), { target: defensiveFile, tier: 'standard', source: `${defensiveFile}\n${source}`, businessRule: 'Storage-unavailable usage must not authorize an order.' });
+  assert.ok(anchors.anchors.some(anchor => anchor.file === defensiveFile),
+    JSON.stringify(anchors));
+  assert.ok(anchors.slice.some(item => /observedUsage|approveOrder/.test(JSON.stringify(item)) && /approval decision|approvedLimit/.test(JSON.stringify(item))));
+  for (const pattern of ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8']) {
+    assert.ok(anchors.coverage.some(item => String(item).startsWith(pattern)), JSON.stringify(anchors.coverage));
+  }
+  const candidate = anchors.candidates.find(item => /broad|default|swallow/i.test(item.pattern));
+  assert.ok(candidate, JSON.stringify(anchors));
+  assert.equal(candidate.file, defensiveFile);
+  assert.ok([5, 6].includes(candidate.line));
+  assert.match(candidate.stateTransform, /Exception.*(Numeric|Default)|Missing.*Default/i);
+  assert.equal(candidate.reachesCriticalSink, true);
+  assert.equal(candidate.q4DownstreamAware, false);
+  for (const key of ['S', 'P', 'B', 'H']) assert.ok(Number(candidate.scores[key]) > 0);
+  assert.match(candidate.riskLevel, /critical|high/i);
+  assert.match(candidate.exceptionClass, /^[A-D]$/);
+
+  const evidence = [
+    { _meta: { kind: 'evidence', schema: 'evidence/1.0', role: 'evidence', alias: 'defensive-evidence' },
+      phase: 'anchor', target: defensiveFile, tier: 'standard' },
+    ...anchors.candidates.map(candidate => ({ phase: 'scan', ...candidate })),
+  ].map(item => JSON.stringify(item)).join('\n') + '\n';
+  writeFileSync(join(run.run_dir, 'outputs', 'evidence.ndjson'), evidence);
+  save(run, 'session.json', { _meta: { kind: 'defensive-audit-result', schema: 'defensive-audit-result/1.0', role: 'primary', alias: 'defensive-session' },
+    target: defensiveFile, tier: 'standard', current_state: 'S_REPORT', anchors: anchors.anchors, candidates: anchors.candidates });
+  const resumed = cli(session, 'run', 'brief', run.run_id);
+  assert.deepEqual(resumed.skill_ref, run.skill_ref);
+  const report = await host(session, resumed, links, [
+    'Resume the same Odyssey Defensive audit from the supplied checkpoint and produce S_REPORT.',
+    'Remain read-only. Preserve the local slice and all eight pattern coverage entries.',
+    'Return exactly JSON shaped as {propagation:[{findingRef,stateTransform,chain,sink,reachesCriticalSink,q4DownstreamAware}],riskMatrix:[{findingRef,riskLevel,scores:{S,P,B,H},exceptionClass,remediation}],summary:{critical,high,medium,low},generalization:string,currentState:string}. Set currentState to END after completing the report and generalization steps.',
+    'The report must explain why an unavailable usage read cannot become numeric zero in an approval decision, and must recommend fail-closed behavior.',
+  ].join(' '), { checkpoint: readFileSync(join(run.run_dir, 'outputs', 'session.json'), 'utf8'), evidence, source }, { requireEntry: false });
+  assert.equal(report.currentState, 'END');
+  const propagated = report.propagation.find(item => item.reachesCriticalSink === true);
+  assert.ok(propagated);
+  assert.equal(propagated.q4DownstreamAware, false);
+  assert.match(propagated.stateTransform, /Exception.*(Numeric|Default)|Missing.*Default/i);
+  const risk = report.riskMatrix.find(item => item.findingRef === propagated.findingRef) ?? report.riskMatrix[0];
+  assert.ok(risk);
+  assert.match(risk.riskLevel, /critical|high/i);
+  assert.match(risk.remediation, /fail.?closed|deny|unavailable|error/i);
+  assert.ok(report.generalization.trim());
+  save(run, 'session.json', { _meta: { kind: 'defensive-audit-result', schema: 'defensive-audit-result/1.0', role: 'primary', alias: 'defensive-session' },
+    target: defensiveFile, tier: 'standard', current_state: 'END', anchors: anchors.anchors, candidates: anchors.candidates, report });
+  writeFileSync(join(run.run_dir, 'outputs', 'understanding.md'), `---\nkind: defensive-report\nschema: defensive-report/1.0\nrole: primary\nalias: defensive-understanding\n---\n\n# Defensive report\n\n${report.riskMatrix.map(finding => `- ${finding.findingRef}: ${finding.riskLevel} — ${finding.remediation}`).join('\n')}\n\n${report.generalization}\n`);
+  const publication = seal(session, run, 'Completed a read-only defensive audit with local slicing and propagation scoring');
+  for (const [alias, kind] of Object.entries({ 'defensive-session': 'defensive-audit-result', 'defensive-evidence': 'evidence', 'defensive-understanding': 'defensive-report' })) {
+    const artifact = publication.artifacts[publication.aliases[alias]];
+    assert.equal(artifact?.kind, kind);
+    assert.equal(artifact?.status, 'sealed');
+  }
+  assertAuditReadOnly([defensiveFile]);
+  console.log('Codex completed Odyssey Defensive anchor, slice, propagation and report phases without source changes.');
 }
 
 const debugFile = 'debug-limits.mjs';
@@ -561,6 +736,8 @@ try {
   }));
   writeFileSync(join(root, 'limit-a.mjs'), 'export const limit = 2;\n');
   writeFileSync(join(root, 'limit-b.mjs'), 'export const limit = 3;\n');
+  securityFixture();
+  defensiveFixture();
   git('init', '-q');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Campaign fixture');
@@ -574,7 +751,7 @@ try {
   assert.equal(legacySwarm.skill_ref, undefined);
   assert.deepEqual(cli(undefined, 'skills', 'install', ...packages).skills, packages);
   assert.equal(cli(undefined, 'skills', 'install', ...packages).files_added, 0);
-  git('add', '--', 'skills');
+  git('add', '--', 'skills', securityFile, defensiveFile, 'package.json', 'package-lock.json');
   git('commit', '-qm', 'Bind shipped campaign Skills');
   const debugSource = selected.has('debug') ? debugFixture() : undefined;
   const commit = git('rev-parse', 'HEAD').toString().trim();
@@ -583,6 +760,10 @@ try {
     { name: 'review', session: 'bound-review', command: 'odyssey-review', runCampaign: odyssey },
     { name: 'debug', session: 'bound-debug', command: 'odyssey-debug', objective: debugIssue,
       runCampaign: (run, session) => odysseyDebug(run, session, debugSource) },
+    { name: 'security', session: 'bound-security', command: 'odyssey-security', objective: `Audit ${securityFile} in quick read-only mode`,
+      runCampaign: odysseySecurity },
+    { name: 'defensive', session: 'bound-defensive', command: 'odyssey-defensive', objective: `Audit ${defensiveFile} in standard read-only mode`,
+      runCampaign: odysseyDefensive },
     { name: 'swarm', session: 'bound-swarm', command: 'team-swarm', runCampaign: swarm },
   ].filter(item => selected.has(item.name));
   for (const campaign of campaigns) {
@@ -591,7 +772,8 @@ try {
     assert.equal(run.guidance, null);
     campaign.run = run;
   }
-  const workflows = ['odyssey-review', 'odyssey-debug'].map(mode => `skills/maestro-odyssey/references/${mode}.md`);
+  const workflows = ['odyssey-review', 'odyssey-debug', 'odyssey-security', 'odyssey-defensive']
+    .map(mode => `skills/maestro-odyssey/references/${mode}.md`);
   for (const workflow of workflows) writeFileSync(join(root, workflow), '# New default for later Runs\n');
   git('add', '--', ...workflows);
   git('commit', '-qm', 'Change Odyssey guidance after dispatch');

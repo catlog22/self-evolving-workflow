@@ -41,6 +41,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:codex-replay": "npm run build && node test/codex-replay.mjs",
+    "test:codex-evolve": "npm run build && node test/maestro-closeout.mjs --codex-evolve",
     "test:codex-standalone": "npm run build && node test/codex-standalone.mjs",
     "test:codex-chain": "node test/codex-chain.mjs",
     "test:codex-campaigns": "node test/codex-campaigns.mjs",
