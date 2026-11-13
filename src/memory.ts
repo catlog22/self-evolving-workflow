@@ -241,6 +241,7 @@ export async function extractMemoryInputs(messages: ConversationMessage[], optio
   llm: LlmClient;
   session: string;
   mode?: 'chat' | 'code';
+  instructions?: string;
 }): Promise<MemoryInput[]> {
   const session = requireText(options.session, 'session');
   if (!messages.length) return [];
@@ -257,7 +258,7 @@ export async function extractMemoryInputs(messages: ConversationMessage[], optio
     ids.add(id);
   }
   const raw = await options.llm.chat({
-    system: getExtractMemoriesSystemPrompt(options.mode),
+    system: [getExtractMemoriesSystemPrompt(options.mode), options.instructions].filter(Boolean).join('\n\n'),
     prompt: formatExtractionPrompt({ newMessages: messages }),
     label: 'memory-extract',
   });

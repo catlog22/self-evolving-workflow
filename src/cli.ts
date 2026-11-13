@@ -10,6 +10,8 @@ import { parseScope, search, type SearchScope, type SearchSources } from './sear
 import type { LlmClient } from './upstream/llm.js';
 import { Wiki } from './wiki.js';
 import { harvestCompletion, publishReference, readCompletionReceipts } from './closeout.js';
+import { reviewSession } from './retrospective.js';
+import { draftSkillAddition } from './skill-addition.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
 
 const help = `Usage: agent-memory <command> [options]
@@ -28,6 +30,8 @@ const help = `Usage: agent-memory <command> [options]
   closeout scan <maestro-root>              Reconcile committed Session receipts (--project)
   closeout publish <closeout-id> <candidate-id> <title>
                                           Publish a reviewed reference
+  session review <id>                      Review Session signals (--transcript <messages.json>)
+  evolve draft <SKILL.md> <instruction>    Draft a Skill addition (--priority high|normal|low, --evidence <ref>, --when)
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
   memory get|delete <id>                   Read or delete a memory
@@ -70,6 +74,9 @@ const options = {
   history: { type: 'boolean' },
   project: { type: 'string' },
   apply: { type: 'boolean' },
+  transcript: { type: 'string' },
+  evidence: { type: 'string', multiple: true },
+  when: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 } as const;
 
@@ -190,6 +197,24 @@ async function main() {
       }
       return print(results);
     }
+  }
+
+  if (command === 'session' && action === 'review') {
+    const transcript = values.transcript ? JSON.parse(readFileSync(values.transcript, 'utf8')) : undefined;
+    if (transcript !== undefined && !Array.isArray(transcript)) throw new InputError('Transcript must be a JSON message array');
+    return print(await reviewSession(root, requireText(args[0], 'Session ID'), { model: modelClient, transcript }));
+  }
+
+  if (command === 'evolve' && action === 'draft') {
+    const priority = values.priority;
+    if (priority !== 'high' && priority !== 'normal' && priority !== 'low') throw new InputError('Unknown Skill priority');
+    return print(draftSkillAddition({
+      entry: requireText(args[0], 'Skill entry path'),
+      priority,
+      instruction: args.slice(1).join(' '),
+      sources: values.evidence ?? [],
+      when: values.when,
+    }));
   }
   if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract'].includes(action)) {
     const memory = openMemory();

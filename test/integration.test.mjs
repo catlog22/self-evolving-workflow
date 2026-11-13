@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -8,7 +9,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CodeGraph, MemoryStore, Wiki, createSearchServer, search } from 'evolve-agent-memory';
+import { CodeGraph, MemoryStore, Wiki, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -155,6 +156,64 @@ test('completion harvesting preserves evidence and records zero-candidate receip
   assert.deepEqual(wiki.getEntry(published.id).sources, [
     'receipt:example:completion-1#check', 'receipt:example:completion-3#check',
   ]);
+});
+
+test('Session retrospective grounds Skill additions in its original evidence', async t => {
+  const root = await temp(t);
+  const sessionDirectory = join(root, '.workflow', 'sessions', 'review-1');
+  await mkdir(sessionDirectory, { recursive: true });
+  const snapshotDir = join(sessionDirectory, 'transcript-evidence');
+  await mkdir(snapshotDir);
+  const quote = 'The first check skipped the linked workflow.';
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const hash = digest(quote);
+  const locator = ['codex', 'host-1', 'tool-1'];
+  const snapshot = join(snapshotDir, `${hash}-${digest(locator.join('\0')).slice(0, 16)}.json`);
+  await writeFile(snapshot, JSON.stringify({
+    schema_version: 'transcript-evidence/1.0', sha256: hash, normalized_sha256: hash,
+    host_kind: locator[0], host_session_id: locator[1], entry_id: locator[2],
+    captured_at: '2026-11-13T01:00:00Z', quote,
+  }));
+  const message = {
+    id: 'correction', role: 'user', timestamp: '2026-11-13T02:00:00Z', content: 'Read the saved workflow before re-running the check.',
+  };
+  const signals = await reviewSession(root, 'review-1', {
+    transcript: [message],
+    model: () => ({
+      async chat({ system, prompt }) {
+        assert.match(system, /user corrections/);
+        assert.match(prompt, /Read the saved workflow/);
+        assert.match(prompt, /first check skipped the linked workflow/);
+        return JSON.stringify([{ memories: [
+          { content: message.content, type: 'correction', source_message_ids: ['conversation:review-1#correction'] },
+          { content: 'Guess an unobserved clause.', source_message_ids: ['absent'] },
+        ] }]);
+      },
+    }),
+  });
+  assert.equal(signals.evidence, 2);
+  assert.equal(signals.signals.length, 1);
+  assert.equal(signals.signals[0].kind, 'correction');
+  const entry = join(root, 'SKILL.md');
+  const baseline = '---\nname: example\n---\n\n# Example Skill\n';
+  await writeFile(entry, baseline);
+  const input = { entry, instruction: message.content, sources: signals.signals[0].sources };
+  const high = draftSkillAddition({ ...input, priority: 'high' });
+  assert.match(high.changes[0].content, /---\n\n<!-- evolve:learning:/);
+  assert.equal(high.changes.length, 1);
+  const normal = draftSkillAddition({ ...input, priority: 'normal', when: 'resuming a saved run' });
+  assert.equal(normal.changes.length, 2);
+  assert.match(normal.changes[0].content, /\]\(references\/learnings\//);
+  assert.match(normal.changes[0].content, /when resuming a saved run/);
+  assert.match(normal.changes[1].content, /conversation:review-1#correction/);
+  const low = draftSkillAddition({ ...input, priority: 'low' });
+  assert.equal(low.changes.length, 1);
+  assert.notEqual(low.changes[0].path, entry);
+  assert.equal(await readFile(entry, 'utf8'), baseline);
+  await writeFile(snapshot, (await readFile(snapshot, 'utf8')).replace(quote, 'A changed quote.'));
+  await assert.rejects(reviewSession(root, 'review-1', {
+    model: () => { throw new Error('Corrupted evidence reached the model'); },
+  }), /Transcript evidence hash mismatch/);
 });
 
 test('Wiki ingest preserves source attribution and locked pages', async t => {

@@ -8,7 +8,7 @@ import type { LlmClient } from './upstream/llm.js';
 import type { Wiki } from './wiki.js';
 import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 
-interface Completion {
+export interface Completion {
   id: string;
   session: string;
   timestamp: string;
@@ -26,6 +26,7 @@ function appendReferenceSources(wiki: Wiki, candidate: Candidate): boolean {
   if (!candidate.matched_entry) return false;
   const entry = wiki.getEntry(candidate.matched_entry);
   if (!entry || entry.entry?.mode !== 'reference' || entry.entry.status !== 'active' ||
+      !entry.entry.scope.includes('project') ||
       entry.body.trim() !== candidate.content.trim()) return false;
 
   const file = join(wiki.root, entry.path);
@@ -33,6 +34,7 @@ function appendReferenceSources(wiki: Wiki, candidate: Candidate): boolean {
   const original = readFileSync(file, 'utf8');
   const { frontmatter, body, hasFrontmatter } = parseFrontmatter(original);
   if (!hasFrontmatter || frontmatter.locked === true || frontmatter.mode !== 'reference' ||
+      !Array.isArray(frontmatter.scope) || !frontmatter.scope.includes('project') ||
       frontmatter.status !== 'active' || body.trim() !== candidate.content.trim()) return false;
   const sources = readSources(original);
   const merged = [...new Set([...sources, ...candidate.sources])];
@@ -53,7 +55,7 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function parseReceipt(value: unknown): Completion {
+export function parseReceipt(value: unknown): Completion {
   const receipt = object(value);
   if (receipt.schema_version === 'skill-completion/1.0') {
     if (!['succeeded', 'failed', 'cancelled'].includes(String(receipt.status)) || !Array.isArray(receipt.messages)) {
@@ -88,11 +90,11 @@ function parseReceipt(value: unknown): Completion {
   return { id, session, timestamp, messages };
 }
 
-export function readCompletionReceipts(sourceRoot: string): unknown[] {
+export function readCompletionReceipts(sourceRoot: string, sessionId?: string): unknown[] {
   const sessions = join(sourceRoot, '.workflow', 'sessions');
   const receipts: unknown[] = [];
   for (const session of readdirSync(sessions, { withFileTypes: true })) {
-    if (!session.isDirectory()) continue;
+    if (!session.isDirectory() || (sessionId !== undefined && session.name !== sessionId)) continue;
     const directory = join(sessions, session.name, 'receipts', 'transitions');
     let names: string[];
     try {
