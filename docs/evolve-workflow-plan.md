@@ -252,7 +252,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 安装包验收已覆盖七种 Odyssey 模式和 Swarm 的项目导入、分派和恢复。契约测试逐项比对八个命令的旧版与新绑定哈希。 [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs) · [契约测试](/D:/evolve-maestro-runtime/src/run/contract.test.ts)
 
-`npm run test:codex-campaigns` 用真实 Codex 验证 Odyssey Review 在 Git 版本变化后恢复原模式和文档，完成四维审查并封存 `review-session`。Swarm 的两个 ant 通过 Maestro MCP 向同一 v3 Run 回报。验收在邮箱确认后重启协调端连接，从消息历史核对两个任务与对应产物，再用同一 Git 提交中的 Python 控制器提交并重放迭代更新。analyst 通过 MCP 取回迭代状态和消息，Maestro 封存两个 ant 结果、汇总报告和主产物。样本由验收程序分派宿主进程，宿主自行分派与成员注册、其他 Odyssey 模式的完整执行仍需验收。 [真实宿主验收](/D:/evolve_workflow/test/codex-campaigns.mjs)
+`npm run test:codex-campaigns` 用真实 Codex 验证 Odyssey Review 在 Git 版本变化后恢复原模式和文档，完成四维审查并封存 `review-session`。Swarm 由 Codex 协调宿主通过 `team_agent` 分派两个 ant 并等待成员结束。两个 ant 用限定到本次 Run 的 MCP 读取原版 Role Markdown，写入产物并回报。重连后读取 broker 成员、任务及历史消息，再用同一 Git 提交中的 Python 控制器提交和重放迭代更新。analyst 通过 MCP 取回状态和消息，Maestro 封存两个 ant 结果、汇总报告和主产物。此样本由验收程序驱动 Python、analyst 和封存。宿主完整自驱、多轮及可选 scorer，和其余 Odyssey 模式的完整执行仍需验收。 [真实宿主验收](/D:/evolve_workflow/test/codex-campaigns.mjs) · [Swarm MCP 协调说明](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/references/mcp-coordination.md)
 
 统一 Maestro 入口以 Skill 包分发，入口按需链接意图分类、建链、Run 循环、自动执行和目标修订。Next 与 Ralph 的兼容入口委托该包。已有 Run 可通过旧解析入口读取迁移后的准备说明和分类目录。安装包同时分发元 Skill 及其契约和回放说明。 [统一 Maestro Skill](/D:/evolve-maestro-runtime/.claude/skills/maestro/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 

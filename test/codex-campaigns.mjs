@@ -6,6 +6,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { isDeepStrictEqual } from 'node:util';
 
 const maestro = process.env.MAESTRO_REPLAY_CLI;
 assert.ok(maestro && isAbsolute(maestro), 'Set MAESTRO_REPLAY_CLI to the built Maestro JavaScript entry.');
@@ -26,7 +28,7 @@ const teamEnv = {
   MAESTRO_PROJECT_ROOT: root,
   MAESTRO_REPO_ID: repoId,
   MAESTRO_HOME: env.MAESTRO_HOME,
-  MAESTRO_ENABLED_TOOLS: 'team_msg,team_task',
+  MAESTRO_ENABLED_TOOLS: 'team_msg,team_task,team_agent',
 };
 
 const git = (...args) => execFileSync('git', args, { cwd: root, windowsHide: true });
@@ -48,9 +50,10 @@ function start(session, command) {
   return cli(session, 'run', 'next', ...actor, '--expected-orchestration-revision', String(open.orchestration_revision));
 }
 
-async function host(session, run, links, task, context, expectedMessages = []) {
+async function host(session, run, links, task, context, expectedMessages = [], teamTool = 'team_msg') {
   const args = ['-a', 'never', 'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check',
     '--json', '--sandbox', 'read-only',
+    '-c', 'model_reasoning_effort="low"',
     '-c', `mcp_servers.evolve_replay.command=${JSON.stringify(process.execPath)}`,
     '-c', `mcp_servers.evolve_replay.args=${JSON.stringify([server, maestro, root, session, run.run_id])}`,
     '-c', 'mcp_servers.evolve_replay.required=true', '-c', 'mcp_servers.evolve_replay.default_tools_approval_mode="writes"'];
@@ -58,8 +61,9 @@ async function host(session, run, links, task, context, expectedMessages = []) {
     '-c', `mcp_servers.maestro.command=${JSON.stringify(process.execPath)}`,
     '-c', `mcp_servers.maestro.args=${JSON.stringify([maestroServer])}`,
     '-c', `mcp_servers.maestro.env={ ${Object.entries(teamEnv).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join(', ')} }`,
-    '-c', 'mcp_servers.maestro.required=true', '-c', 'mcp_servers.maestro.enabled_tools=["team_msg"]',
-    '-c', 'mcp_servers.maestro.tools.team_msg.approval_mode="approve"',
+    '-c', 'mcp_servers.maestro.required=true', '-c', `mcp_servers.maestro.enabled_tools=${JSON.stringify([teamTool])}`,
+    '-c', `mcp_servers.maestro.tools.${teamTool}.approval_mode="approve"`,
+    '-c', 'mcp_servers.maestro.tool_timeout_sec=130',
   );
   args.push('-');
   const prompt = [
@@ -68,7 +72,7 @@ async function host(session, run, links, task, context, expectedMessages = []) {
     JSON.stringify(links),
     'The fixture owns artifacts, script execution, CLI lifecycle and worker coordination. Return only the requested JSON.',
     ...(expectedMessages.length ? [
-      'Also call maestro team_msg with each of these exact argument objects, in order. The fixture has authorized these calls.',
+      `Also call maestro ${teamTool} with each of these exact argument objects. The fixture has authorized these calls.`,
       JSON.stringify(expectedMessages.map(message => ({ session_id: run.run_id, ...message }))),
     ] : []),
     task, JSON.stringify(context),
@@ -100,8 +104,11 @@ async function host(session, run, links, task, context, expectedMessages = []) {
   assert.ok(loaded.includes('SKILL.md'));
   for (const { from, destination } of links) assert.ok(loaded.includes(posix.join(posix.dirname(from), destination)), destination);
   const calls = events.filter(event => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' &&
-    event.item.server === 'maestro' && event.item.tool === 'team_msg').map(event => event.item);
-  assert.deepEqual(calls.map(item => item.arguments), expectedMessages.map(message => ({ session_id: run.run_id, ...message })));
+    event.item.server === 'maestro' && event.item.tool === teamTool).map(event => event.item);
+  assert.equal(calls.length, expectedMessages.length);
+  for (const message of expectedMessages) {
+    assert.ok(calls.some(item => isDeepStrictEqual(item.arguments, { session_id: run.run_id, ...message })), JSON.stringify(calls));
+  }
   for (const call of calls) {
     assert.equal(call.status, 'completed', JSON.stringify(call));
     assert.ok(call.result && !call.result.isError, JSON.stringify(call));
@@ -112,10 +119,11 @@ async function host(session, run, links, task, context, expectedMessages = []) {
 const entryLinks = (...destinations) => destinations.map(destination => ({ from: 'SKILL.md', destination }));
 const save = (run, file, value) => writeFileSync(join(run.run_dir, 'outputs', file), `${JSON.stringify(value, null, 2)}\n`);
 
-function seal(session, run, summary) {
+function seal(session, run, summary, extraReads = []) {
   const checked = cli(session, 'run', 'check', run.run_id, '--summary', summary);
   assert.equal(checked.completion_preflight.ready, true, JSON.stringify(checked.completion_preflight));
   assert.deepEqual(checked.skill_reads.missing, []);
+  for (const path of extraReads) assert.ok(checked.skill_reads.reads.some(read => read.path === path), path);
   for (const read of checked.skill_reads.reads) {
     assert.equal(read.sha256, hash(git('show', `${run.skill_ref.commit}:${run.skill_ref.package_path}/${read.path}`)));
   }
@@ -178,6 +186,22 @@ async function swarmIteration(run, session, callTool, reconnect) {
     return JSON.parse(reply.content[0].text);
   }
 
+  async function finishedMembers(roles) {
+    const deadline = Date.now() + 180_000;
+    for (;;) {
+      const { members } = await native('team_agent', { operation: 'members' });
+      const selected = members.filter(member => roles.includes(member.role));
+      const unsuccessful = selected.find(member => ['failed', 'cancelled'].includes(member.job_status));
+      if (unsuccessful) {
+        const history = join(env.MAESTRO_HOME, 'cli-history', `${unsuccessful.exec_id}.jsonl`);
+        throw new Error(`Swarm member ${unsuccessful.role} ${unsuccessful.job_status}\n${existsSync(history) ? readFileSync(history, 'utf8').slice(-3500) : ''}`);
+      }
+      if (selected.length === roles.length && selected.every(member => member.job_status === 'completed')) return selected;
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for Swarm members: ${JSON.stringify(selected)}`);
+      await delay(1_000);
+    }
+  }
+
   const controller = join(run.run_dir, 'work', 'controller');
   const state = join(run.run_dir, 'work', 'team');
   mkdirSync(controller, { recursive: true });
@@ -212,18 +236,31 @@ async function swarmIteration(run, session, callTool, reconnect) {
       iteration: 1, ant_id, task_id: tasks[index].id, artifact_path: `outputs/ant-1-${index + 1}.json`,
     },
   }));
-  const ants = await Promise.allSettled(assignments.map((assignment, index) => host(session, run,
-    entryLinks('roles/ant/role.md', 'specs/ant-output-schema.md'),
-    'Act as the assigned ant. Return the ant output JSON per its schema. Visit both nodes from the assigned start, cite the winning file at line 1, and set candidate_solution.summary to the winning filename.',
-    { assignment, sources: { 'limit-a.mjs': 'export const limit = 2;', 'limit-b.mjs': 'export const limit = 3;' } },
-    [callbacks[index]],
-  )));
+  const readSkill = `Use the maestro_run run_skill_read MCP tool with session_id=${session} and run_id=${run.run_id}. For the entry use only these IDs. For each link set from=SKILL.md and link to the destination.`;
+  const spawnAnts = assignments.map((assignment, index) => ({
+    operation: 'spawn_agent', tool: 'codex', mode: 'write', role: assignment.ant_id,
+    prompt: [
+      'Execute one Swarm ant assignment in this temporary workspace. The coordinator owns the Run and completion.',
+      readSkill,
+      'Read the bound Skill entry, then roles/ant/role.md and specs/ant-output-schema.md from its links.',
+      'This bounded fixture contains two one-line sources and has no prior wisdom or sibling tasks. Read both sources in one shell call. Use project-relative file:line evidence strings and set candidate_solution.summary to the winning filename.',
+      `Write the ant JSON as UTF-8 without a BOM to ${JSON.stringify(join(run.run_dir, callbacks[index].data.artifact_path))} and re-read it once.`,
+      `Immediately report completion with maestro_run team_msg using ${JSON.stringify({ ...callbacks[index], session_id: run.run_id })}. Return only a brief completion notice.`,
+      `Assignment: ${JSON.stringify(assignment)}`,
+    ].join(' '),
+  }));
+  const wait = { operation: 'wait', roles: assignments.map(assignment => assignment.ant_id), timeout_ms: 110_000 };
+  await host(session, run, [
+    ...entryLinks(...run.skill_required_links, 'references/mcp-coordination.md'),
+    { from: 'roles/coordinator/role.md', destination: 'commands/iterate.md' },
+  ], 'Dispatch both assignments first, then wait for the two roles. Return {} after these tool receipts.', {}, [...spawnAnts, wait], 'team_agent');
+  await reconnect();
+  await finishedMembers(assignments.map(assignment => assignment.ant_id));
+  const ants = callbacks.map(({ data }) => JSON.parse(readFileSync(join(run.run_dir, data.artifact_path), 'utf8')));
   for (const [index, ant] of ants.entries()) {
-    if (ant.status === 'rejected') throw ant.reason;
-    assert.equal(ant.value.ant_id, assignments[index].ant_id);
-    assert.equal(ant.value.candidate_solution.summary, 'limit-b.mjs');
-    assert.ok(ant.value.evidence.includes('limit-b.mjs:1'));
-    save(run, `ant-1-${index + 1}.json`, ant.value);
+    assert.equal(ant.ant_id, assignments[index].ant_id);
+    assert.equal(ant.candidate_solution.summary, 'limit-b.mjs');
+    assert.ok(ant.evidence.some(anchor => typeof anchor === 'string' && /(?:^|[/\\])limit-b\.mjs:1$/.test(anchor)), JSON.stringify(ant.evidence));
   }
   const inbox = await native('team_msg', { operation: 'read_mailbox', role: 'coordinator' });
   assert.equal(inbox.count, callbacks.length);
@@ -248,6 +285,7 @@ async function swarmIteration(run, session, callTool, reconnect) {
   assert.deepEqual(completed.tasks.map(task => task.id).sort(), tasks.map(task => task.id).sort());
   const updated = aco('update', '--iter', '1');
   assert.equal(updated.status, 'ok');
+  assert.equal(updated.n_ants_processed, assignments.length);
   assert.deepEqual(aco('update', '--iter', '1'), updated);
   assert.equal(aco('converged').converged, true);
   await native('team_msg', { operation: 'log', from: 'coordinator', type: 'state_update',
@@ -259,7 +297,7 @@ async function swarmIteration(run, session, callTool, reconnect) {
     ...entryLinks(...brief.skill_required_links, 'roles/analyst/role.md'),
     { from: 'roles/coordinator/role.md', destination: 'commands/converge.md' },
   ], 'Resume the completed iteration and synthesize the winner. Return {file, value, evidence, iteration, phase}. Take iteration and phase from the coordinator state returned by team_msg. Use the actual controller report and supplied source evidence.',
-  { report, source: 'limit-b.mjs:1 export const limit = 3;', ants: ants.map(item => item.value) }, [
+  { report, source: 'limit-b.mjs:1 export const limit = 3;', ants }, [
     { operation: 'get_state', role: 'coordinator' },
     { operation: 'list', to: 'coordinator', type: 'task_complete' },
   ]);
@@ -270,16 +308,23 @@ async function swarmIteration(run, session, callTool, reconnect) {
   assert.ok(JSON.stringify(synthesis.evidence).includes('limit-b.mjs:1'));
   writeFileSync(join(run.run_dir, 'outputs', 'best-solution.md'),
     `---\nkind: swarm-best-solution\nschema: swarm-best-solution/1.0\nrole: primary\n---\n# Swarm result\n\n${synthesis.file} declares limit ${synthesis.value}. Evidence ${JSON.stringify(synthesis.evidence)}.\n`);
-  const publication = seal(session, run, 'Swarm converged after a replayed update and verified the winning source');
+  const publication = seal(session, run, 'Swarm converged after a replayed update and verified the winning source',
+    ['references/mcp-coordination.md', 'roles/ant/role.md', 'specs/ant-output-schema.md']);
   const artifacts = Object.values(publication.artifacts);
   assert.ok(artifacts.every(item => item.status === 'sealed'));
   assert.deepEqual(artifacts.map(item => item.kind).sort(), ['swarm-ant-result', 'swarm-ant-result', 'swarm-best-solution', 'swarm-report']);
   assert.equal(existsSync(join(root, '.workflow', '.team', run.run_id)), false);
-  console.log('Codex ants sent two Run-scoped Maestro MCP callbacks. The resumed analyst recovered state and messages, and Maestro sealed four artifacts.');
+  console.log('A Codex coordinator dispatched two Codex workers through Maestro MCP. The persisted roster and callbacks supported recovery, and Maestro sealed four artifacts.');
 }
 
 try {
   mkdirSync(join(root, '.workflow'));
+  mkdirSync(join(root, '.maestro'));
+  writeFileSync(join(root, '.maestro', 'cli-tools.json'), JSON.stringify({
+    tools: { codex: { enabled: true, primaryModel: process.env.CODEX_REPLAY_MODEL || 'gpt-6-sol', reasoningEffort: 'low', tags: [], type: 'builtin' } },
+  }));
+  writeFileSync(join(root, 'limit-a.mjs'), 'export const limit = 2;\n');
+  writeFileSync(join(root, 'limit-b.mjs'), 'export const limit = 3;\n');
   git('init', '-q');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Campaign fixture');
