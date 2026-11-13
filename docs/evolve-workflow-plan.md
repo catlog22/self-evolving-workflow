@@ -207,7 +207,9 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 Odyssey 的七种模式已随 Skill 包分发。安装包验收覆盖 `odyssey-review` 的分派和恢复，兼容解析继续优先读取已有项目覆盖。Swarm 的角色、脚本和产物契约随包分发。同一轮更新重试复用原结果，更新回执提交后中断时可恢复派生状态。下一步用真实宿主验证两者的文档读取与恢复行为，再扩大固定版本的绑定范围。 [Odyssey 入口](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/specs/swarm-protocol.md)
 
-`plan` 和 `execute` 已把准备说明与流程移入各自的 Skill 包。项目提交这些包后，可通过 `MAESTRO_PROJECT_SKILLS=analyze,plan,execute` 启用固定版本读取。两步保留原契约哈希，旧 Run 用恢复包中的 `guidance_files` 找到兼容文件。安装验收覆盖三步交接、`plan --tdd` 引用、旧 `plan` Run 恢复，以及 `execute` 的产物兼容性检查。 [Plan Skill](/D:/evolve-maestro-runtime/skills/plan/SKILL.md) · [Execute Skill](/D:/evolve-maestro-runtime/skills/execute/SKILL.md)
+`plan` 和 `execute` 的准备说明与流程已归入各自的 Skill 包，两步沿用原契约哈希。项目从已安装的 CLI 运行 `maestro skills install --workflow-root <repo>`，将 `analyze`、`plan`、`execute` 导入 `skills/`。导入会保留不同于安装包的本地内容并报出冲突。把 Skill 包提交到 Git 后，通过 `MAESTRO_PROJECT_SKILLS=analyze,plan,execute` 启用。旧 Run 用恢复包中的 `guidance_files` 查找兼容文件。 [Plan Skill](/D:/evolve-maestro-runtime/skills/plan/SKILL.md) · [Execute Skill](/D:/evolve-maestro-runtime/skills/execute/SKILL.md)
+
+常规 `run next` 在分派时按绑定契约的 `consumes` 别名接收同一 Session 的封存产物，核对发布回执、类型、角色、schema 和字节摘要。`upstream_aliases` 将别名映射到 `upstream` 中的 Artifact ID，路径相对于 Session 目录。恢复时沿用原映射，封存时从 `input_refs` 记录产物来源。缺失的可选槽位由 Skill 自身处理。安装包样本用三次 `run next` 验证 `current-analysis` 和 `current-plan` 自动交接，同时覆盖篡改拒绝、请求重放、`plan --tdd` 引用、旧 `plan` Run 恢复和 `execute` 产物兼容性检查。 [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
 ### 7.1 `analyze` 试迁任务
 
