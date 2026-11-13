@@ -204,10 +204,15 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
     '---', 'appliesToRepoIds: []', '---', '# Scoped rules', '',
     '<spec-entry title="Scoped &lt;rule&gt;" sid="S-5">', 'Use a calibrated sensor.', '</spec-entry>',
   ].join('\n'));
+  const repository = 'cd7083c9-6e35-4509-99ad-79adb4ab6404';
+  await writeFile(join(legacy, '.workflow', 'specs', 'architecture-constraints.md'), [
+    '---', `appliesToRepoIds: [${repository}]`, '---', '# Architecture', '',
+    '<spec-entry title="Sensor boundary" sid="S-6" category="review">', 'Validate the sensor boundary.', '</spec-entry>',
+  ].join('\n'));
   await writeFile(join(legacy, '.workflow', 'knowhow', 'K-1.md'), '---\ntitle: Calibration tips\n---\n\nInspect the gauge.\n');
   const args = ['wiki', 'migrate', legacy, '--project', 'legacy-project'];
   const preview = await cliJson(root, ...args);
-  assert.equal(preview.length, 8);
+  assert.equal(preview.length, 9);
   const wiki = new Wiki(root);
   assert.deepEqual(wiki.constraints(), []);
   assert.deepEqual(await cliJson(root, ...args, '--apply'), preview);
@@ -226,6 +231,12 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   assert.equal(scoped.title, 'Scoped <rule>');
   assert.equal(scoped.entry.status, 'needs_review');
   assert.deepEqual(scoped.sources, ['legacy:legacy-project:.workflow/specs/scoped.md#L6']);
+  const arch = await cliJson(root, 'wiki', 'constraints', '--category', 'arch', '--repository', repository);
+  assert.deepEqual(arch.map(rule => rule.title), ['Sensor boundary']);
+  assert.deepEqual(arch[0].entry.repositories, [repository]);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--category', 'arch'), []);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--category', 'review', '--repository', repository), []);
+  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--category', 'coding')).map(rule => rule.title), ['Coding rules']);
 });
 
 test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {

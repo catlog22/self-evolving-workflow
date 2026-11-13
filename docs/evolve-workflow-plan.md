@@ -101,7 +101,7 @@ skills/
 
 Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重建。初始执行时按作用域解析约束，再按任务检索参考。生效约束的选择以作用域和状态为准，全文检索排名只用于参考条目的相关性排序。
 
-完成约束比对的项目可用 `MAESTRO_EVOLVE_CONSTRAINTS=1` 启用新读取入口。版本化 Skill 的新 Run 在分派时按 Skill ID 与命令名读取约束，将正文、适用范围和证据一并固定到启动包。恢复同一 Run 时沿用该快照。具体文件确定后，执行器用 `wiki constraints --path <project-relative-path>` 核对路径约束。
+完成约束比对的项目可用 `MAESTRO_EVOLVE_CONSTRAINTS=1` 启用新读取入口。版本化 Skill 的新 Run 在分派时按 Skill ID、命令名和当前仓库 UUID 固定候选约束，再按 Skill 的 `wiki_categories` 选出初始规则。有待确定文件的规则随 Run 保存，在文件确定后用 `maestro run wiki-constraints <run-id> --session <session-id> --path <file> --json` 筛选。恢复同一 Run 时沿用分派时的快照。`analyze` 和 `plan` 默认选择 `arch`，`execute` 默认选择 `coding`，涉及 UI 的任务可同时选择 `coding` 和 `ui`。已启用 Wiki 的 Run 即使得到空列表，也沿用该次查询结果。
 
 ### 条目格式
 
@@ -111,6 +111,7 @@ Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重�
 | `mode` | `constraint` 表示执行约束，`reference` 表示可参考的经验。 |
 | `status` | `active` 为当前版本，`deprecated` 供历史查询，`needs_review` 用于切换前尚待核实的条目。 |
 | `scope` | 适用项目范围。项目全局用 `project` 显式声明，局部可用 `skill:<id>`、`path:<glob>` 或 `task:<kind>`。列表中的范围是可独立命中的适用条件。缺少上下文的局部范围保持未命中。旧复合条件需要按原语义核对后再切换。 |
+| `categories`、`repositories` | 可选的附加范围。`categories` 对应旧规则的类别读取，`repositories` 使用持久化仓库 UUID。规则同时满足所声明的附加范围与 `scope`。 |
 | `sources` | 可回查的证据引用。任务证据指向完成回执与具体片段，迁移证据指向原项目、文件和条目锚点。 |
 | `tags`、`aliases` | 可选。前者用于主题或旧子类型，后者保留来源项目内的旧身份。 |
 
@@ -190,7 +191,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 第二遍解析旧引用、生命周期、适用范围和替代关系。保留旧别名，已有替代关系映射到新 ID，退役条目仍可按 ID 查历史。`category` 和关键词可保留为标签或旧选择器的输入，实际适用范围按旧调用行为映射。遇到 ID 冲突、作用域未知、旧约束互相冲突或引用断链时，保留原类型与证据并标记 `needs_review`，明确受影响的切换范围。疑似重复条目进入核对列表，正文逐条迁移。
 
-导入也覆盖旧加载器可直接读到的无结构规则文件。带 `ref` 的旧 Spec 导入为参考条目，保留 `spec` 旧 ID，并链接到目标 Knowhow。迁移预览列出缺失引用和待核对的作用域。在隔离 Wiki 中已用 Maestro2 项目基线核对 74 个稳定 ID、43 条活跃约束和 4 条索引链接，核对了一条退役条目的旧 ID 和替代关系在重建索引后仍可查询。43 条活跃约束的原正文均可在旧项目级加载结果中定位。旧加载结果还包含一条有冲突标记的约束，Wiki 将其置为待审查。旧 `arch` 分类调用在这些条目中读到 17 条，`coding` 读到 13 条。迁移后的 `project` 作用域会同时返回 43 条，因此仍需核对每个 Skill 的类别选择和关联仓库规则，再切换读取入口。 [迁移实现](/D:/evolve_workflow/src/wiki-migration.ts)
+导入也覆盖旧加载器可直接读到的无结构规则文件。带 `ref` 的旧 Spec 导入为参考条目，保留 `spec` 旧 ID，并链接到目标 Knowhow。迁移预览列出缺失引用和待核对的作用域。用隔离 Wiki 验证了 Maestro2 项目基线的 74 个稳定 ID、43 条活跃约束和 4 条索引链接。七类项目级查询逐条核对旧加载器返回的正文，`arch` 对应 17 条，`coding` 对应 13 条，`ui` 对应 4 条。结果以迁入且仍活跃的约束为范围。旧加载结果中的一条冲突约束在 Wiki 中待审查。已核对文件级仓库 UUID 的继承和排除，跨仓库共享、关键词筛选与个人规则的切换仍需按入口验证。 [迁移实现](/D:/evolve_workflow/src/wiki-migration.ts)
 
 ### 切换
 

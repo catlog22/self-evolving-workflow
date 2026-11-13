@@ -17,6 +17,7 @@ import { reviewSession } from './retrospective.js';
 import { draftSkillAddition } from './skill-addition.js';
 import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
+import { isRepositoryId, isWikiCategory } from './wiki-entry.js';
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
 
 const help = `Usage: agent-memory <command> [options]
@@ -29,7 +30,7 @@ const help = `Usage: agent-memory <command> [options]
   wiki ingest <file.md|file.txt>            Generate and merge wiki pages
   wiki search <query>                      Search wiki pages (--hop 0)
   wiki get <id>                            Read a Wiki entry, including history
-  wiki constraints                         Resolve active constraints (--skill, --task, --path)
+  wiki constraints                         Resolve active constraints (--skill, --task, --path, --category, --repository)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
   wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
   wiki changes [change-id]                 Read change previews and application receipts (--entry)
@@ -85,6 +86,9 @@ const options = {
   mode: { type: 'string' },
   skill: { type: 'string' },
   task: { type: 'string' },
+  category: { type: 'string', multiple: true },
+  repository: { type: 'string' },
+  'include-path-scoped': { type: 'boolean' },
   path: { type: 'string', multiple: true },
   history: { type: 'boolean' },
   project: { type: 'string' },
@@ -197,7 +201,14 @@ async function main() {
       case 'build': return print(wiki.build());
       case 'search': return print(wiki.search(args.join(' '), wikiOptions));
       case 'get': return print(wiki.getEntry(requireText(args[0], 'wiki entry ID')));
-      case 'constraints': return print(wiki.constraints({ skill: values.skill, task: values.task, paths: values.path }));
+      case 'constraints': {
+        const categories = values.category;
+        const repository = values.repository;
+        if (categories && !categories.every(isWikiCategory)) throw new InputError('Unknown Wiki constraint category');
+        if (repository !== undefined && !isRepositoryId(repository)) throw new InputError('Expected a persisted repository UUID');
+        return print(wiki.constraints({ skill: values.skill, task: values.task, paths: values.path, categories, repository,
+          includePathScoped: values['include-path-scoped'] }));
+      }
       case 'migrate': return print(migrateLegacyWiki(
         wiki, requireText(args[0], 'legacy project root'), requireText(values.project, 'legacy project ID'), values.apply,
       ));

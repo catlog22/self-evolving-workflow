@@ -83,6 +83,7 @@ try {
   const origin = `http://127.0.0.1:${model.address().port}`;
   const env = {
     ...process.env, MAESTRO_PROJECT_SKILLS: skill,
+    MAESTRO_HOME: join(root, '.maestro-home'),
     MAESTRO_EVOLVE_CONSTRAINTS: '1', MAESTRO_EVOLVE_CLI: memory,
     MAESTRO_EVOLVE_PROJECT: project, MAESTRO_EVOLVE_WIKI_ROOT: root,
     AGENT_MEMORY_LLM_BASE_URL: `${origin}/v1`, AGENT_MEMORY_LLM_MODEL: 'fixture',
@@ -96,7 +97,7 @@ try {
   await mkdir(join(root, 'skills', skill), { recursive: true });
   const skillEntry = join(root, 'skills', skill, 'SKILL.md');
   await writeFile(skillEntry, [
-    '---', `name: ${skill}`, 'description: Check the staging database migration.',
+    '---', `name: ${skill}`, 'description: Check the staging database migration.', 'wiki_categories: [arch]',
     'contract:', '  contract_version: 2.1', '  produces: []', '  consumes: []', '---',
     '# Migration preflight', '', 'Use the staging database for migration preflight.', '',
   ].join('\n'));
@@ -116,19 +117,37 @@ try {
   await git('-c', 'user.name=Closeout fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Preflight fixture');
   await mkdir(join(workflow, 'specs'), { recursive: true });
   await mkdir(join(workflow, 'knowhow'));
-  await writeFile(join(workflow, 'specs', 'runtime.md'),
+  await writeFile(join(workflow, 'specs', 'architecture-constraints.md'),
     '<spec-entry sid="S-1" title="Use staging">\nUse staging for migration checks.\n</spec-entry>\n');
+  await writeFile(join(workflow, 'specs', 'coding-conventions.md'),
+    '<spec-entry sid="S-2" title="Preserve coding style">\nKeep the coding style of the file.\n</spec-entry>\n');
   await writeFile(join(workflow, 'knowhow', 'K-1.md'), '---\ntitle: Inventory\n---\n\nRead the staging inventory.\n');
   const migrated = await agent('wiki', 'migrate', root, '--project', project, '--apply');
-  assert.equal(migrated.length, 2);
+  assert.equal(migrated.length, 3);
   assert.ok((await agent('wiki', 'migrate', root, '--project', project, '--apply')).every(item => item.existing));
   const constraintId = (await agent('wiki', 'get', `${project}:spec:S-1`)).id;
+  const codingId = (await agent('wiki', 'get', `${project}:spec:S-2`)).id;
+  for (const category of ['arch', 'coding']) {
+    const previous = await cli(maestro, ['spec', 'load', '--category', category, '--json'], env);
+    const next = await agent('wiki', 'constraints', '--skill', skill, '--category', category);
+    assert.equal(previous.totalLoaded, 1);
+    assert.equal(next.length, 1);
+    assert.ok(previous.content.includes(next[0].body.trim()));
+  }
+  const pathRule = 'entries/path-check';
+  const pathDraft = join(root, 'path-rule.json');
+  await writeFile(pathDraft, JSON.stringify({ operation: 'create', entry: pathRule, mode: 'constraint',
+    title: 'Validate migration scripts', body: 'Validate argument handling for the migration script.',
+    scope: ['path:*.mjs'], categories: ['arch'] }));
+  const proposedPathRule = await agent('wiki', 'propose', pathDraft, '--evidence', 'fixture:path-rule');
+  await agent('wiki', 'apply', proposedPathRule.id);
 
   async function start(session) {
     const opened = await flow('session', 'open', 'Verify migration preflight', '--id', session, '--chain', skill, '--actor', 'fixture');
     const birth = await flow('run', 'next', '--session', session, '--actor', 'fixture',
       '--expected-orchestration-revision', String(opened.result.orchestration_revision));
     assert.deepEqual(birth.result.wiki_constraints.map(item => item.id), [constraintId]);
+    assert.deepEqual(birth.result.wiki_categories, ['arch']);
     return birth.result;
   }
 
@@ -178,6 +197,15 @@ try {
 
   const session = 'preflight';
   const first = await start(session);
+  const rules = async (run, ...options) => (await flow('run', 'wiki-constraints', run.run_id, '--session', session, ...options)).result;
+  const initialRules = await rules(first, '--path', 'migrate.mjs');
+  assert.equal(initialRules.source, 'wiki');
+  assert.deepEqual(initialRules.constraints.map(rule => rule.id).sort(), [constraintId, pathRule].sort());
+  assert.deepEqual((await rules(first, '--category', 'coding', '--path', 'migrate.mjs')).constraints.map(rule => rule.id), [codingId]);
+  await writeFile(pathDraft, JSON.stringify({ operation: 'retire', entry: pathRule }));
+  const retiredPathRule = await agent('wiki', 'propose', pathDraft, '--evidence', 'fixture:update');
+  await agent('wiki', 'apply', retiredPathRule.id);
+  assert.deepEqual(await rules(first, '--path', 'migrate.mjs'), initialRules);
   await readSkill(session, first);
   await assert.rejects(invoke(process.execPath, [migrate, database]), /Dry-run flag required/);
   const descriptor = join(root, 'correction.json');
@@ -190,6 +218,7 @@ try {
   }));
   await flow('session', 'evidence', descriptor, '--session', session);
   const fixed = await retry(session, first, 'Dry-run flag required.', ref);
+  assert.deepEqual((await rules(fixed, '--path', 'migrate.mjs')).constraints.map(rule => rule.id), [constraintId]);
   const verified = (await invoke(process.execPath, [migrate, database, '--dry-run'])).trim();
   assert.equal(verified, 'migration preflight verified: schema 1, records 3');
   assert.equal(await readFile(database, 'utf8'), original);
@@ -224,12 +253,12 @@ try {
   assert.deepEqual(empty.candidates, []);
   assert.equal(harvests.get('transient'), 1);
   assert.deepEqual((await agent('session', 'review', 'transient')).signals, []);
-  const constraints = await agent('wiki', 'constraints', '--skill', skill);
+  const constraints = await agent('wiki', 'constraints', '--skill', skill, '--category', 'arch');
   assert.deepEqual(constraints.map(item => item.id), [constraintId]);
 
   await rm(join(root, 'index.db'));
   await agent('wiki', 'build');
-  assert.deepEqual(await agent('wiki', 'constraints', '--skill', skill), constraints);
+  assert.deepEqual(await agent('wiki', 'constraints', '--skill', skill, '--category', 'arch'), constraints);
   assert.deepEqual(await agent('wiki', 'get', published.id), reference);
   assert.equal((await agent('wiki', 'get', `${project}:spec:S-1`)).id, constraintId);
   assert.equal((await closeout('show', harvest.receipt)).id, harvest.id);

@@ -4,7 +4,7 @@ import { basename, join, posix } from 'node:path';
 import { stringify } from 'yaml';
 import { InputError, requireText } from './common.js';
 import { parseFrontmatter } from './upstream/frontmatter.js';
-import type { WikiEntryMetadata } from './wiki-entry.js';
+import { isRepositoryId, isWikiCategory, readWikiEntryMetadata, type WikiCategory, type WikiEntryMetadata } from './wiki-entry.js';
 import type { Wiki } from './wiki.js';
 
 interface LegacyEntry {
@@ -14,6 +14,21 @@ interface LegacyEntry {
   body: string;
   mode: WikiEntryMetadata['mode'];
   metadata: Record<string, unknown>;
+  category?: WikiCategory;
+  repositories?: unknown;
+}
+
+const legacySpecFiles: Partial<Record<string, WikiCategory>> = {
+  'coding-conventions.md': 'coding', 'architecture-constraints.md': 'arch', 'debug-notes.md': 'debug',
+  'test-conventions.md': 'test', 'review-standards.md': 'review', 'quality-rules.md': 'review',
+  'learnings.md': 'learning', 'ui-conventions.md': 'ui',
+};
+
+function legacyRepositories(raw: unknown): string[] | null | undefined {
+  if (raw === undefined) return undefined;
+  const list = typeof raw === 'string' ? raw.split(',').map(id => id.trim()).filter(Boolean) : raw;
+  if (!Array.isArray(list) || !list.length || !list.every(isRepositoryId)) return null;
+  return [...new Set(list)].sort();
 }
 
 function parseSpecs(source: string, origin: string): LegacyEntry[] {
@@ -24,7 +39,10 @@ function parseSpecs(source: string, origin: string): LegacyEntry[] {
   const firstLine = source.slice(0, source.length - document.body.length).split('\n').length;
   const matches = [...document.body.matchAll(/<spec-entry\b\s*([^>]*)>([\s\S]*?)<\/spec-entry>/g)];
   const specs = new Map<number, LegacyEntry>();
-  const fileMetadata = document.hasFrontmatter ? document.frontmatter : {};
+  const fileMetadata: Record<string, unknown> = document.hasFrontmatter ? document.frontmatter : {};
+  const category = legacySpecFiles[basename(origin)] ??
+    [fileMetadata.category, basename(origin, '.md')].find(isWikiCategory);
+  const fileRepositories = fileMetadata.appliesToRepoIds ?? fileMetadata['applies-to-repo-ids'];
   for (const match of matches) {
     const body = match[2].trim();
     const attributes = Object.fromEntries([...match[1].matchAll(/([\w-]+)="([^"]*)"/g)]
@@ -33,9 +51,11 @@ function parseSpecs(source: string, origin: string): LegacyEntry[] {
       [...(body.split(/\r?\n/, 1)[0] ?? '')].slice(0, 100).join('');
     if (!title || !body) throw new InputError(`Unrecognized Spec entry in ${origin}`);
     const line = firstLine + document.body.slice(0, match.index).split('\n').length - 1;
+    const entryRepositories = attributes.appliesToRepoIds ?? attributes['applies-to-repo-ids'];
     specs.set(line, {
       origin: `${origin}#L${line}`, oldId: attributes.sid || '', title, body, mode: 'constraint',
       metadata: { ...fileMetadata, ...attributes },
+      category, repositories: entryRepositories?.trim() ? entryRepositories : fileRepositories,
     });
   }
   const remaining = document.body.replace(/<spec-entry\b\s*[^>]*>[\s\S]*?<\/spec-entry>/g, match => match.replace(/[^\r\n]/g, ' '));
@@ -46,12 +66,18 @@ function parseSpecs(source: string, origin: string): LegacyEntry[] {
     const next = headings[index + 1]?.index ?? remaining.length;
     const body = remaining.slice(heading.index, next).trim();
     if (body === heading[0].trim()) continue;
-    specs.set(line, { origin: `${origin}#L${line}`, oldId: '', title: heading[1], body, mode: 'constraint', metadata: fileMetadata });
+    specs.set(line, {
+      origin: `${origin}#L${line}`, oldId: '', title: heading[1], body, mode: 'constraint', metadata: fileMetadata,
+      category, repositories: fileRepositories,
+    });
   }
   if (!specs.size && document.body.replace(/^#+\s+.*$/gm, '').replace(/^---+$/gm, '').trim()) {
     const title = typeof document.frontmatter.title === 'string' && document.frontmatter.title.trim()
       ? document.frontmatter.title.trim() : document.body.match(/^#\s+(.+)$/m)?.[1]?.trim() || basename(origin, '.md');
-    specs.set(firstLine, { origin, oldId: '', title, body: document.body, mode: 'constraint', metadata: fileMetadata });
+    specs.set(firstLine, {
+      origin, oldId: '', title, body: document.body, mode: 'constraint', metadata: fileMetadata,
+      category, repositories: fileRepositories,
+    });
   }
   return [...specs.entries()].sort(([left], [right]) => left - right).map(([, entry]) => entry);
 }
@@ -79,7 +105,8 @@ function collectLegacy(sourceRoot: string): LegacyEntry[] {
       if (source.startsWith('---') && !parsed.hasFrontmatter) throw new InputError(`Invalid Knowhow frontmatter: ${origin}`);
       const oldId = typeof parsed.frontmatter.id === 'string' ? parsed.frontmatter.id : basename(file.name, '.md');
       const title = parsed.frontmatter.title || parsed.body.match(/^#\s+(.+)$/m)?.[1] || oldId;
-      entries.push({ origin, oldId, title, body: parsed.body, mode: 'reference', metadata: parsed.frontmatter });
+      entries.push({ origin, oldId, title, body: parsed.body, mode: 'reference', metadata: parsed.frontmatter,
+        repositories: parsed.frontmatter.appliesToRepoIds ?? parsed.frontmatter['applies-to-repo-ids'] });
     }
   }
   return entries;
@@ -89,7 +116,7 @@ function statusFor(entry: LegacyEntry): WikiEntryMetadata['status'] {
   const status = entry.metadata.lifecycleStatus ?? entry.metadata['lifecycle-status'] ?? entry.metadata.status;
   if (status === 'deprecated' || status === 'superseded') return 'deprecated';
   if (entry.metadata['conflict-marker'] || entry.metadata.confidence === 'contested' ||
-      'appliesToRepoIds' in entry.metadata || 'applies-to-repo-ids' in entry.metadata ||
+      legacyRepositories(entry.repositories) === null ||
       (status && !['active', 'accepted'].includes(String(status)))) return 'needs_review';
   return 'active';
 }
@@ -138,6 +165,7 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
     }
     const effectiveStatus = issues.length && status === 'active' ? 'needs_review' : status;
     if (status === 'needs_review') issues.push('Review legacy lifecycle, conflict, or repository scope');
+    const repositories = legacyRepositories(entry.repositories);
     const sources = [`legacy:${project}:${entry.origin}`];
     for (const source of [
       entry.metadata.sourceRef, entry.metadata['source-ref'], entry.metadata.source,
@@ -150,6 +178,8 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
       mode: kind === 'spec' && typeof ref === 'string' && ref.trim() ? 'reference' : entry.mode,
       status: effectiveStatus,
       scope: ['project'],
+      ...(kind === 'spec' ? { categories: entry.category ? [entry.category] : [] } : {}),
+      ...(repositories ? { repositories } : {}),
       sources,
       aliases: [key],
       legacy: entry.metadata,
@@ -157,6 +187,7 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
     };
     const body = entry.body.trim() + (relations.length ? `\n\n${relations.join('\n')}` : '');
     const content = `---\n${stringify(data)}---\n\n${body}\n`;
+    readWikiEntryMetadata(`wiki/entries/${id}.md`, { type: 'other', ...data });
     const path = join(destination, `${id}.md`);
     const existing = lstatSync(path, { throwIfNoEntry: false });
     if (existing && (!existing.isFile() || readFileSync(path, 'utf8') !== content)) {

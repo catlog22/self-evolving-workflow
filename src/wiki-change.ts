@@ -111,12 +111,14 @@ interface ChangeDraft {
   title?: string;
   mode?: 'constraint' | 'reference';
   scope?: unknown;
+  categories?: unknown;
+  repositories?: unknown;
   body?: string;
 }
 
 function parseDraft(value: unknown): ChangeDraft {
   const draft = object(value, 'Wiki change request');
-  const unknown = Object.keys(draft).filter(key => !['operation', 'entry', 'title', 'mode', 'scope', 'body', 'review'].includes(key));
+  const unknown = Object.keys(draft).filter(key => !['operation', 'entry', 'title', 'mode', 'scope', 'categories', 'repositories', 'body', 'review'].includes(key));
   if (unknown.length) throw new InputError(`Unknown Wiki change field: ${unknown[0]}`);
   const { operation, mode } = draft;
   if (operation !== 'create' && operation !== 'update' && operation !== 'promote' && operation !== 'retire') {
@@ -124,7 +126,7 @@ function parseDraft(value: unknown): ChangeDraft {
   }
   if (mode !== undefined && mode !== 'constraint' && mode !== 'reference') throw new InputError('Invalid Wiki entry mode');
   if (mode !== undefined && operation !== 'create') throw new InputError('Use promote to change a reference into a constraint');
-  if (operation === 'retire' && (draft.title !== undefined || draft.scope !== undefined || draft.body !== undefined)) {
+  if (operation === 'retire' && ['title', 'scope', 'body', 'categories', 'repositories'].some(key => draft[key] !== undefined)) {
     throw new InputError('A retirement changes status and evidence only');
   }
   if (draft.scope !== undefined && !Array.isArray(draft.scope)) throw new InputError('Wiki scope must be a list');
@@ -133,6 +135,8 @@ function parseDraft(value: unknown): ChangeDraft {
     ...(draft.title !== undefined ? { title: requireText(draft.title, 'Wiki entry title') } : {}),
     ...(draft.body !== undefined ? { body: requireText(draft.body, 'Wiki entry body') } : {}),
     ...(draft.scope !== undefined ? { scope: draft.scope } : {}),
+    ...(draft.categories !== undefined ? { categories: draft.categories } : {}),
+    ...(draft.repositories !== undefined ? { repositories: draft.repositories } : {}),
   };
 }
 
@@ -193,6 +197,8 @@ export function proposeWikiChange(wiki: Wiki, value: unknown, evidence: readonly
         mode: operation === 'promote' ? 'constraint' : draft.mode ?? current?.mode,
         status: operation === 'retire' ? 'deprecated' : 'active',
         scope: draft.scope ?? (operation === 'create' ? ['project'] : current?.scope),
+        ...(draft.categories !== undefined ? { categories: draft.categories } : {}),
+        ...(draft.repositories !== undefined ? { repositories: draft.repositories } : {}),
         sources: unionSources(operation === 'create' ? [] : original.frontmatter.sources ?? [], sources),
       };
       readWikiEntryMetadata(rel, { type: 'other', ...metadata });
