@@ -133,6 +133,15 @@ export class Wiki {
     return entry;
   }
 
+  getEntryByExactBody(body: string) {
+    if (!existsSync(join(this.root, 'wiki'))) return null;
+    const normalized = body.trim().replace(/\s+/g, ' ');
+    const matches = readWikiPages(this.root).filter(page =>
+      page.entry?.status === 'active' && page.body.trim().replace(/\s+/g, ' ') === normalized
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   build() {
     if (!existsSync(join(this.root, 'wiki'))) throw new NotFoundError('Missing wiki/ directory');
     const db = openDb(this.indexPath);

@@ -117,6 +117,41 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   assert.equal(wiki.getEntry('legacy-project:knowhow:K-1').entry.mode, 'reference');
 });
 
+test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {
+  const root = await temp(t);
+  const { harvestCompletion, publishReference } = await import('../dist/closeout.js');
+  const wiki = new Wiki(root);
+  let calls = 0;
+  const model = () => ({
+    async chat() {
+      calls++;
+      return JSON.stringify([{ memories: [
+        { content: 'Check the preflight flag before migration.', source_message_ids: ['check'] },
+        { content: 'An unsupported claim.', source_message_ids: ['absent'] },
+      ] }]);
+    },
+  });
+  const receipt = {
+    schema_version: 'skill-completion/1.0',
+    id: 'completion-1',
+    execution_id: 'execution-1',
+    status: 'succeeded',
+    recorded_at: '2026-11-13T02:00:00Z',
+    messages: [{ id: 'check', role: 'tool', timestamp: '2026-11-13T01:00:00Z', content: 'Preflight passed.' }],
+  };
+  const first = await harvestCompletion(wiki, 'example', receipt, model);
+  assert.equal(first.candidates.length, 1);
+  assert.deepEqual(first.candidates[0].sources, ['receipt:example:completion-1#check']);
+  assert.deepEqual(await harvestCompletion(wiki, 'example', receipt, model), { ...first, replayed: true });
+  const empty = { ...receipt, id: 'completion-2', messages: [] };
+  assert.deepEqual((await harvestCompletion(wiki, 'example', empty, model)).candidates, []);
+  assert.equal((await harvestCompletion(wiki, 'example', empty, model)).replayed, true);
+  assert.equal(calls, 1);
+  const published = publishReference(wiki, first.id, first.candidates[0].id, 'Migration preflight');
+  assert.equal(wiki.getEntry(published.id).entry.mode, 'reference');
+  assert.deepEqual(publishReference(wiki, first.id, first.candidates[0].id, 'Migration preflight'), { ...published, replayed: true });
+});
+
 test('Wiki ingest preserves source attribution and locked pages', async t => {
   const root = await temp(t);
   const source = join(root, 'notes.md');

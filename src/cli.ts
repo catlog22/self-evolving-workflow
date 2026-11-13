@@ -9,6 +9,7 @@ import { MemoryStore, type ConversationMessage } from './memory.js';
 import { parseScope, search, type SearchScope, type SearchSources } from './search.js';
 import type { LlmClient } from './upstream/llm.js';
 import { Wiki } from './wiki.js';
+import { harvestCompletion, publishReference, readCompletionReceipts } from './closeout.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
 
 const help = `Usage: agent-memory <command> [options]
@@ -23,6 +24,10 @@ const help = `Usage: agent-memory <command> [options]
   wiki get <id>                            Read a Wiki entry, including history
   wiki constraints                         Resolve active constraints (--skill, --task, --path)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
+  closeout harvest <receipt.json>          Extract Wiki candidates from a completion receipt (--project)
+  closeout scan <maestro-root>              Reconcile committed Session receipts (--project)
+  closeout publish <closeout-id> <candidate-id> <title>
+                                          Publish a reviewed reference
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
   memory get|delete <id>                   Read or delete a memory
@@ -166,6 +171,24 @@ async function main() {
         wiki, requireText(args[0], 'legacy project root'), requireText(values.project, 'legacy project ID'), values.apply,
       ));
       case 'ingest': return print(await wiki.ingest(requireText(args[0], 'source file'), { llm: modelClient() }));
+    }
+  }
+
+  if (command === 'closeout') {
+    if (action === 'publish') return print(publishReference(
+      wiki, requireText(args[0], 'closeout ID'), requireText(args[1], 'candidate ID'), args.slice(2).join(' '),
+    ));
+    const project = requireText(values.project, 'source project ID');
+    const source = requireText(args[0], 'receipt path or Maestro root');
+    if (action === 'harvest') return print(await harvestCompletion(
+      wiki, project, JSON.parse(readFileSync(source, 'utf8')), modelClient,
+    ));
+    if (action === 'scan') {
+      const results = [];
+      for (const receipt of readCompletionReceipts(source)) {
+        results.push(await harvestCompletion(wiki, project, receipt, modelClient));
+      }
+      return print(results);
     }
   }
   if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract'].includes(action)) {
