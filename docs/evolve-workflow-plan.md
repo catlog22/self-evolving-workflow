@@ -256,6 +256,8 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 Swarm 在分派前保存每轮的 assignment 批次，恢复时沿用原起点和 ant ID。LLM 模式要求评分覆盖同一轮的全部已接受 ant 产物。scorer 失败时，协调端可显式选择整轮 fallback。控制器回执保存评分方式，重放会检查分派、产物和评分输入。 [控制器回归](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/scripts/test_aco.py)
 
+单独运行 `npm run test:codex-campaigns -- debug` 可验收 Odyssey Debug。Codex 通过本地测试 MCP 读取 Git 历史、验证失败复现并提出根因。在指导文件改版后，新的 Codex 进程从原绑定和 `S_FIX` 检查点读取上下文，通过固定文件的 MCP 工具提交修复。另一个进程读取真实 diff 并执行补充用例，最后由验收程序封存会话、追加式证据、探索结果和诊断报告。 [Debug 验收](/D:/evolve_workflow/test/codex-campaigns.mjs) · [产物元数据](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/references/prepare/odyssey-debug.md:103)
+
 统一 Maestro 入口以 Skill 包分发，入口按需链接意图分类、建链、Run 循环、自动执行和目标修订。Next 与 Ralph 的兼容入口委托该包。已有 Run 可通过旧解析入口读取迁移后的准备说明和分类目录。安装包同时分发元 Skill 及其契约和回放说明。 [统一 Maestro Skill](/D:/evolve-maestro-runtime/.claude/skills/maestro/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
 `plan` 和 `execute` 的准备说明与流程已归入各自的 Skill 包，两步沿用原契约哈希。项目从已安装的 CLI 运行 `maestro skills install --workflow-root <repo>`，将 `analyze`、`plan`、`execute` 导入 `skills/`。导入会保留不同于安装包的本地内容并报出冲突。把 Skill 包提交到 Git 后，通过 `MAESTRO_PROJECT_SKILLS=analyze,plan,execute` 启用。旧 Run 用恢复包中的 `guidance_files` 查找兼容文件。 [Plan Skill](/D:/evolve-maestro-runtime/skills/plan/SKILL.md) · [Execute Skill](/D:/evolve-maestro-runtime/skills/execute/SKILL.md)

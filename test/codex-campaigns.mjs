@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix } from 'node:path';
@@ -13,12 +13,16 @@ const maestro = process.env.MAESTRO_REPLAY_CLI;
 assert.ok(maestro && isAbsolute(maestro), 'Set MAESTRO_REPLAY_CLI to the built Maestro JavaScript entry.');
 const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? 'codex.exe' : 'codex');
 const server = fileURLToPath(new URL('../skills/workflow-evolve/scripts/read-skill-mcp.mjs', import.meta.url));
+const debugServer = fileURLToPath(new URL('./odyssey-debug-mcp.mjs', import.meta.url));
 const maestroServer = join(dirname(maestro), 'mcp', 'server.js');
 const requireMaestro = createRequire(maestro);
 const { Client } = requireMaestro('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = requireMaestro('@modelcontextprotocol/sdk/client/stdio.js');
-const root = mkdtempSync(join(tmpdir(), 'evolve-codex-campaigns-'));
 const packages = ['maestro-odyssey', 'team-swarm'];
+const campaignNames = ['review', 'debug', 'swarm'];
+const selected = new Set(process.argv.length > 2 ? process.argv.slice(2) : campaignNames);
+assert.ok([...selected].every(name => campaignNames.includes(name)), `Choose from ${campaignNames.join(', ')}`);
+const root = mkdtempSync(join(tmpdir(), 'evolve-codex-campaigns-'));
 const env = { ...process.env, MAESTRO_HOME: join(root, '.maestro-home'), MAESTRO_PLATFORM: 'codex' };
 for (const name of ['MAESTRO_PROJECT_SKILLS', 'MAESTRO_ANALYZE_SKILL', 'MAESTRO_EVOLVE_CLI', 'MAESTRO_EVOLVE_CONSTRAINTS',
   'MAESTRO_SESSION_ID', 'AGENT_MEMORY_LLM_API_KEY']) delete env[name];
@@ -45,12 +49,14 @@ function cli(session, ...args) {
   return value.result ?? value;
 }
 
-function start(session, command) {
-  const open = cli(undefined, 'session', 'open', `Verify ${command}`, '--id', session, '--chain', command, ...actor);
+function start(session, command, objective = `Verify ${command}`) {
+  const open = cli(undefined, 'session', 'open', objective, '--id', session, '--chain', command, ...actor);
   return cli(session, 'run', 'next', ...actor, '--expected-orchestration-revision', String(open.orchestration_revision));
 }
 
-async function host(session, run, links, task, context, expectedMessages = [], teamTool = 'team_msg') {
+async function host(session, run, links, task, context, {
+  calls: expectedMessages = [], tool: teamTool = 'team_msg', debugPhase,
+} = {}) {
   const args = ['-a', 'never', 'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check',
     '--json', '--sandbox', 'read-only',
     '-c', 'model_reasoning_effort="low"',
@@ -65,12 +71,19 @@ async function host(session, run, links, task, context, expectedMessages = [], t
     '-c', `mcp_servers.maestro.tools.${teamTool}.approval_mode="approve"`,
     '-c', 'mcp_servers.maestro.tool_timeout_sec=130',
   );
+  if (debugPhase) args.push(
+    '-c', `mcp_servers.debug_fixture.command=${JSON.stringify(process.execPath)}`,
+    '-c', `mcp_servers.debug_fixture.args=${JSON.stringify([debugServer, maestro, root, debugPhase, run.run_id])}`,
+    '-c', 'mcp_servers.debug_fixture.required=true',
+    ...(debugPhase === 'repair' ? ['-c', 'mcp_servers.debug_fixture.tools.replace_source.approval_mode="approve"'] : []),
+  );
   args.push('-');
   const prompt = [
     'You are executing a bounded role in a Maestro campaign acceptance fixture.',
     'First open the bound Skill with evolve_replay read_skill. For each document below use the specified from and destination arguments.',
     JSON.stringify(links),
-    'The fixture owns artifacts, script execution, CLI lifecycle and worker coordination. Return only the requested JSON.',
+    debugPhase ? 'Use debug_fixture check for the requested Git and Node operations. The fixture owns the Maestro lifecycle and campaign artifacts. Return only the requested JSON.'
+      : 'The fixture owns artifacts, script execution, CLI lifecycle and worker coordination. Return only the requested JSON.',
     ...(expectedMessages.length ? [
       `Also call maestro ${teamTool} with each of these exact argument objects. The fixture has authorized these calls.`,
       JSON.stringify(expectedMessages.map(message => ({ session_id: run.run_id, ...message }))),
@@ -78,16 +91,33 @@ async function host(session, run, links, task, context, expectedMessages = [], t
     task, JSON.stringify(context),
   ].join('\n');
   const output = await new Promise((resolve, reject) => {
-    const child = spawn(codex, args, { cwd: tmpdir(), env, windowsHide: true, signal: AbortSignal.timeout(160_000) });
+    const child = spawn(codex, args, { cwd: tmpdir(), env, windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-    child.on('error', reject);
-    child.stdin.on('error', reject);
+    const timer = setTimeout(() => {
+      child.kill();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      reject(new Error(`Codex host timed out for ${session}: ${stderr.trim().slice(-1500)}\n${stdout.trim().split(/\r?\n/).slice(-4).join('\n').slice(-2500)}`));
+    }, 160_000);
+    const fail = (error) => { clearTimeout(timer); reject(error); };
+    child.on('error', fail);
+    child.stdin.on('error', fail);
     child.on('close', code => {
+      clearTimeout(timer);
       if (code === 0) resolve(stdout);
       else reject(new Error(`Codex host exited with ${code} for ${session}: ${stderr.trim()}`));
+    });
+    child.on('exit', code => {
+      // A Windows grandchild can hold the pipe after Codex reports a successful turn.
+      if (code !== 0 || !stdout.includes('"type":"turn.completed"')) return;
+      clearTimeout(timer);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve(stdout);
     });
     child.stdin.end(prompt);
   });
@@ -113,7 +143,17 @@ async function host(session, run, links, task, context, expectedMessages = [], t
     assert.equal(call.status, 'completed', JSON.stringify(call));
     assert.ok(call.result && !call.result.isError, JSON.stringify(call));
   }
-  return JSON.parse(result.trim().replace(/^```(?:json)?\s*([\s\S]+?)\s*```$/i, '$1'));
+  const answer = JSON.parse(result.trim().replace(/^```(?:json)?\s*([\s\S]+?)\s*```$/i, '$1'));
+  if (!debugPhase) return answer;
+  const commands = events.flatMap(event => {
+    const item = event.item;
+    return event.type === 'item.completed' && item?.type === 'mcp_tool_call' && item.server === 'debug_fixture'
+      && item.tool === 'check' && item.status === 'completed' && !item.result?.isError
+      ? [JSON.parse(item.result.content[0].text)] : [];
+  });
+  const edits = events.filter(event => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call'
+    && event.item.server === 'debug_fixture' && event.item.tool === 'replace_source').map(event => event.item);
+  return { answer, commands, edits };
 }
 
 const entryLinks = (...destinations) => destinations.map(destination => ({ from: 'SKILL.md', destination }));
@@ -161,6 +201,143 @@ async function odyssey(run, session) {
   assert.equal(artifact?.kind, 'session');
   assert.equal(artifact?.status, 'sealed');
   console.log('Codex resumed Odyssey review on its original Skill tree and sealed the typed session artifact.');
+}
+
+const debugFile = 'debug-limits.mjs';
+const debugTest = 'debug-limits.test.mjs';
+const debugReview = 'debug-limits.review.mjs';
+const debugIssue = 'MAX_ITEMS=0 should disable items. Missing, blank and invalid values should keep the default of 10.';
+
+function debugFixture() {
+  writeFileSync(join(root, debugFile), [
+    'export function itemLimit(env) {',
+    '  return Number(env.MAX_ITEMS) || 10;',
+    '}', '',
+  ].join('\n'));
+  writeFileSync(join(root, debugTest), [
+    'import assert from "node:assert/strict";',
+    `import { itemLimit } from "./${debugFile}";`,
+    'for (const value of [undefined, "", " ", "missing"]) assert.equal(itemLimit({ MAX_ITEMS: value }), 10);',
+    'assert.equal(itemLimit({ MAX_ITEMS: "7" }), 7);',
+    'console.log("DEBUG_DEFAULTS_PASS");',
+    'assert.equal(itemLimit({ MAX_ITEMS: "0" }), 0, "DEBUG_ZERO_REGRESSION");',
+    'console.log("DEBUG_REPRO_PASS");', '',
+  ].join('\n'));
+  writeFileSync(join(root, debugReview), [
+    'import assert from "node:assert/strict";',
+    `import { itemLimit } from "./${debugFile}";`,
+    'for (const value of [" 0 ", "0.0", "00"]) assert.equal(itemLimit({ MAX_ITEMS: value }), 0);',
+    'assert.equal(itemLimit({ MAX_ITEMS: "  " }), 10);',
+    'assert.equal(itemLimit({ MAX_ITEMS: "3.5" }), 3.5);',
+    'console.log("DEBUG_REVIEW_PASS");', '',
+  ].join('\n'));
+  git('add', '--', debugFile, debugTest, debugReview);
+  git('commit', '-qm', 'Add a reproducible zero limit regression');
+  return git('rev-parse', 'HEAD').toString().trim();
+}
+
+function verifyDebugCommand(commands, name, code, marker) {
+  const command = commands.find(item => item.check === name && item.exitCode === code && item.output.includes(marker));
+  assert.ok(command, `Missing executed ${name} with exit ${code} and ${marker}: ${JSON.stringify(commands)}`);
+  return command;
+}
+
+async function odysseyDebug(run, session, sourceCommit) {
+  const links = [
+    ...entryLinks(...run.skill_required_links, 'references/odyssey-debug.codex.md'),
+    { from: 'references/odyssey-debug.codex.md', destination: 'odyssey-base-codex.md' },
+  ];
+  const diagnosis = await host(session, run, links, [
+    'Execute the archaeology, discovery and diagnosis phases of the loaded Odyssey Debug workflow on this small repository.',
+    'Call debug_fixture check once with check=archaeology and once with check=reproduce. Inspect the supplied source snapshot.',
+    'Test two plausible hypotheses about the bug. Use the actual command output for their disposition.',
+    'Return {rootCause, anchor, hypotheses}, where anchor is project-relative file:line and the hypotheses array has {hypothesis, result, observation}.',
+    'Use result confirmed for the single root cause and disproved for the other hypothesis.',
+  ].join(' '), { issue: debugIssue, filename: debugFile, source: readFileSync(join(root, debugFile), 'utf8') }, { debugPhase: 'diagnosis' });
+  const before = verifyDebugCommand(diagnosis.commands, 'reproduce', 1, 'DEBUG_ZERO_REGRESSION');
+  assert.ok(before.output.includes('DEBUG_DEFAULTS_PASS'));
+  verifyDebugCommand(diagnosis.commands, 'archaeology', 0, sourceCommit.slice(0, 7));
+  assert.match(diagnosis.answer.anchor, /^debug-limits\.mjs:2$/);
+  assert.deepEqual(diagnosis.answer.hypotheses.map(item => item.result).sort(), ['confirmed', 'disproved']);
+  assert.ok(diagnosis.answer.hypotheses.every(item => item.observation.trim()));
+  const meta = { kind: 'session', schema: 'session/1.0', role: 'primary', alias: 'debug-session' };
+  const checkpoint = { _meta: meta, issue: debugIssue, current_state: 'S_FIX', root_cause: diagnosis.answer,
+    phase_goals: [{ id: 'G1', status: 'done' }, { id: 'G2', status: 'done' }, { id: 'G3', status: 'pending' }] };
+  const evidencePath = join(run.run_dir, 'outputs', 'evidence.ndjson');
+  const initialEvidence = [
+    { _meta: { kind: 'evidence', schema: 'evidence/1.0', role: 'evidence', alias: 'debug-evidence' },
+      phase: 'archaeology', sha: sourceCommit, relevance: 'Introduced the original limit parser and failing reproduction' },
+    { phase: 'explore', category: 'call_chain', detail: `${debugFile}:2 converts MAX_ITEMS for itemLimit` },
+    ...diagnosis.answer.hypotheses.map(item => ({ phase: 'diagnosis', ...item, reproduction: before })),
+  ].map(item => JSON.stringify(item)).join('\n') + '\n';
+  writeFileSync(evidencePath, initialEvidence);
+  save(run, 'session.json', checkpoint);
+
+  const resumed = cli(session, 'run', 'brief', run.run_id);
+  assert.equal(resumed.task.command, 'odyssey-debug');
+  assert.deepEqual(resumed.skill_ref, run.skill_ref);
+  const repair = await host(session, resumed, links, [
+    'Call debug_fixture check with check=checkpoint to read the saved domain state and resume that phase.',
+    `Use debug_fixture replace_source to apply your fix. Pass before with the provided source and after with your completed implementation. Treat numeric zero including "0.0" as a valid limit.`,
+    'Call debug_fixture check with check=verify after editing. Return {resumedFrom, changedFile, verification} where verification is the observed final marker.',
+  ].join(' '), { issue: debugIssue, source: readFileSync(join(root, debugFile), 'utf8') }, { debugPhase: 'repair' });
+  assert.equal(repair.edits.filter(edit => edit.status === 'completed' && !edit.result?.isError).length, 1, JSON.stringify(repair.edits));
+  assert.equal(repair.answer.resumedFrom, 'S_FIX');
+  assert.equal(repair.answer.changedFile, debugFile, JSON.stringify(repair));
+  assert.equal(repair.answer.verification, 'DEBUG_REPRO_PASS');
+  verifyDebugCommand(repair.commands, 'checkpoint', 0, '"S_FIX"');
+  const after = verifyDebugCommand(repair.commands, 'verify', 0, 'DEBUG_REPRO_PASS');
+  const diff = git('diff', '--', debugFile).toString();
+  assert.ok(diff.includes(`a/${debugFile}`) && diff.includes(`b/${debugFile}`));
+  assert.equal(git('diff', '--name-only', 'HEAD').toString().trim(), debugFile);
+
+  const confirmed = await host(session, resumed, links, [
+    'Act as the independent review for the Odyssey Debug CONFIRM phase. Call debug_fixture check with check=diff and check=review.',
+    'Assess missing, blank, numeric zero and non-zero behavior.',
+    'Check for plausible siblings of this failure using text, semantic and structural checks in this small app.',
+    'Return {verdict, findings, regressionRisk, generalization}, with generalization an object with syntax, semantic, structural summaries.',
+    'Use verdict confirmed only if evidence supports it. findings contains actionable issues only.',
+  ].join(' '), { issue: debugIssue, filename: debugFile, source: readFileSync(join(root, debugFile), 'utf8') }, { debugPhase: 'review' });
+  verifyDebugCommand(confirmed.commands, 'diff', 0, `a/${debugFile}`);
+  const independentlyChecked = verifyDebugCommand(confirmed.commands, 'review', 0, 'DEBUG_REVIEW_PASS');
+  assert.equal(confirmed.answer.verdict, 'confirmed');
+  assert.deepEqual(confirmed.answer.findings, []);
+  for (const layer of ['syntax', 'semantic', 'structural']) assert.ok(confirmed.answer.generalization[layer].trim());
+  git('add', '--', debugFile);
+  git('commit', '-qm', 'Repair the zero limit in the debug fixture');
+  const fixCommit = git('rev-parse', 'HEAD').toString().trim();
+  const evidence = [
+    { phase: 'fix', commit: fixCommit, command: after },
+    { phase: 'confirmation', execution: independentlyChecked, verdict: confirmed.answer.verdict },
+    { phase: 'discovery', generalization: confirmed.answer.generalization },
+  ];
+  appendFileSync(evidencePath, `${evidence.map(item => JSON.stringify(item)).join('\n')}\n`);
+  assert.ok(readFileSync(evidencePath, 'utf8').startsWith(initialEvidence));
+  save(run, 'explore.json', {
+    _meta: { kind: 'exploration', schema: 'exploration/1.0', role: 'evidence', alias: 'debug-explore' },
+    call_chains: [diagnosis.answer.anchor], recent_changes: [sourceCommit], error_gaps: [],
+    similar_patterns: confirmed.answer.generalization, cli_tool: 'codex', timestamp: new Date().toISOString(),
+  });
+  save(run, 'session.json', { ...checkpoint, current_state: 'END', fix_commit: fixCommit,
+    phase_goals: checkpoint.phase_goals.map(item => ({ ...item, status: 'done' })),
+    confirmation: { test_result: repair.answer.verification, cli_review: confirmed.answer, overall: 'confirmed' } });
+  const sections = [
+    ['Issue & Scope', debugIssue], ['Archaeology', sourceCommit], ['Exploration', diagnosis.answer.anchor],
+    ['Hypotheses', diagnosis.answer.hypotheses.map(item => `${item.hypothesis} (${item.result})`).join('\n\n')],
+    ['Root Cause', diagnosis.answer.rootCause], ['Fix & Confirmation', `${fixCommit}\n\n${after.output.trim()}\n\n${independentlyChecked.output.trim()}`],
+    ['Generalization', Object.entries(confirmed.answer.generalization).map(([key, value]) => `${key} — ${value}`).join('\n\n')],
+    ['Discoveries', 'Independent review reported no actionable findings for this fixture.'], ['Learnings', 'The fixture has local execution evidence.'],
+  ];
+  writeFileSync(join(run.run_dir, 'outputs', 'understanding.md'),
+    `---\nkind: diagnosis-report\nschema: diagnosis-report/1.0\nrole: primary\nalias: debug-understanding\n---\n\n${sections.map(([title, body]) => `## ${title}\n\n${body}`).join('\n\n')}\n`);
+  const publication = seal(session, run, 'Reproduced the zero limit regression, repaired it and independently verified numeric zero variants');
+  for (const [alias, kind] of Object.entries({ 'debug-session': 'session', 'debug-evidence': 'evidence',
+    'debug-explore': 'exploration', 'debug-understanding': 'diagnosis-report' })) {
+    const artifact = publication.artifacts[publication.aliases[alias]];
+    assert.equal(artifact?.kind, kind);
+    assert.equal(artifact?.status, 'sealed');
+  }
+  console.log('Codex reproduced Odyssey Debug, resumed into an applied repair, ran an independent review, and sealed four artifacts.');
 }
 
 async function swarm(run, session) {
@@ -241,10 +418,10 @@ async function swarmCampaign(run, session, callTool, reconnect) {
     ...entryLinks(...brief.skill_required_links, 'roles/analyst/role.md'),
     { from: 'roles/coordinator/role.md', destination: 'commands/converge.md' },
   ], 'Synthesize the winner. Return {file, value, evidence, iteration, phase}. Take iteration and phase from the coordinator state returned by team_msg. Use the controller report and the source evidence.',
-  { report, source: 'limit-b.mjs:1 export const limit = 3;', ants: allAnts }, [
+  { report, source: 'limit-b.mjs:1 export const limit = 3;', ants: allAnts }, { calls: [
     { operation: 'get_state', role: 'coordinator' },
     { operation: 'list', to: 'coordinator', type: 'task_complete' },
-  ]);
+  ] });
   assert.equal(synthesis.file, 'limit-b.mjs');
   assert.equal(synthesis.value, 3);
   assert.equal(synthesis.iteration, 2);
@@ -266,7 +443,7 @@ async function swarmCampaign(run, session, callTool, reconnect) {
     const roles = orders.map(order => order.role);
     await host(session, run, [...entryLinks(...run.skill_required_links, 'references/mcp-coordination.md'), ...links],
       'Dispatch the supplied assignments first, then wait for the listed roles. Return {} after the tool receipts.', {},
-      [...orders, { operation: 'wait', roles, timeout_ms: 110_000 }], 'team_agent');
+      { calls: [...orders, { operation: 'wait', roles, timeout_ms: 110_000 }], tool: 'team_agent' });
     await reconnect();
     return finishedMembers(roles);
   }
@@ -399,25 +576,32 @@ try {
   assert.equal(cli(undefined, 'skills', 'install', ...packages).files_added, 0);
   git('add', '--', 'skills');
   git('commit', '-qm', 'Bind shipped campaign Skills');
+  const debugSource = selected.has('debug') ? debugFixture() : undefined;
   const commit = git('rev-parse', 'HEAD').toString().trim();
   env.MAESTRO_PROJECT_SKILLS = packages.join(',');
-  const review = start('bound-review', 'odyssey-review');
-  const colony = start('bound-swarm', 'team-swarm');
-  for (const run of [review, colony]) {
+  const campaigns = [
+    { name: 'review', session: 'bound-review', command: 'odyssey-review', runCampaign: odyssey },
+    { name: 'debug', session: 'bound-debug', command: 'odyssey-debug', objective: debugIssue,
+      runCampaign: (run, session) => odysseyDebug(run, session, debugSource) },
+    { name: 'swarm', session: 'bound-swarm', command: 'team-swarm', runCampaign: swarm },
+  ].filter(item => selected.has(item.name));
+  for (const campaign of campaigns) {
+    const run = start(campaign.session, campaign.command, campaign.objective);
     assert.equal(run.skill_ref.commit, commit);
     assert.equal(run.guidance, null);
+    campaign.run = run;
   }
-  const workflow = 'skills/maestro-odyssey/references/odyssey-review.md';
-  writeFileSync(join(root, workflow), '# New default for later Runs\n');
-  git('add', '--', workflow);
+  const workflows = ['odyssey-review', 'odyssey-debug'].map(mode => `skills/maestro-odyssey/references/${mode}.md`);
+  for (const workflow of workflows) writeFileSync(join(root, workflow), '# New default for later Runs\n');
+  git('add', '--', ...workflows);
   git('commit', '-qm', 'Change Odyssey guidance after dispatch');
   const oldReview = cli('historical-review', 'run', 'brief', historical.run_id);
   assert.equal(oldReview.task.command, 'odyssey-review');
   assert.deepEqual(oldReview.guidance, historical.guidance);
-  const results = await Promise.allSettled([odyssey(review, 'bound-review'), swarm(colony, 'bound-swarm')]);
+  const results = await Promise.allSettled(campaigns.map(item => item.runCampaign(item.run, item.session)));
   for (const result of results) if (result.status === 'rejected') console.error(result.reason);
   assert.ok(results.every(result => result.status === 'fulfilled'), 'Campaign acceptance failed');
 } finally {
   assert.match(realpathSync(root), /[\\/]evolve-codex-campaigns-[a-zA-Z0-9]+$/);
-  rmSync(root, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
