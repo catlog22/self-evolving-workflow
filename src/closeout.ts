@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { stringify } from 'yaml';
 import { InputError, openDb, requireText, transaction } from './common.js';
 import { extractMemoryInputs, type ConversationMessage } from './memory.js';
 import type { LlmClient } from './upstream/llm.js';
 import type { Wiki } from './wiki.js';
+import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 
 interface Completion {
   id: string;
@@ -19,6 +20,32 @@ interface Candidate {
   content: string;
   sources: string[];
   matched_entry: string | null;
+}
+
+function appendReferenceSources(wiki: Wiki, candidate: Candidate): boolean {
+  if (!candidate.matched_entry) return false;
+  const entry = wiki.getEntry(candidate.matched_entry);
+  if (!entry || entry.entry?.mode !== 'reference' || entry.entry.status !== 'active' ||
+      entry.body.trim() !== candidate.content.trim()) return false;
+
+  const file = join(wiki.root, entry.path);
+  if (!lstatSync(file).isFile()) throw new InputError(`Invalid Wiki entry file: ${entry.id}`);
+  const original = readFileSync(file, 'utf8');
+  const { frontmatter, body, hasFrontmatter } = parseFrontmatter(original);
+  if (!hasFrontmatter || frontmatter.locked === true || frontmatter.mode !== 'reference' ||
+      frontmatter.status !== 'active' || body.trim() !== candidate.content.trim()) return false;
+  const sources = readSources(original);
+  const merged = [...new Set([...sources, ...candidate.sources])];
+  if (merged.length === sources.length) return true;
+  const temporary = join(dirname(file), `.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, `---\n${stringify({ ...frontmatter, sources: merged })}---\n${body}`, { flag: 'wx' });
+    if (readFileSync(file, 'utf8') !== original) throw new InputError(`Wiki entry changed: ${entry.id}`);
+    renameSync(temporary, file);
+    return true;
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -121,12 +148,15 @@ export async function harvestCompletion(wiki: Wiki, project: string, value: unkn
         matched_entry: match?.id ?? null,
       });
     }
-    return transaction(db, () => {
+    const result = transaction(db, () => {
       const replay = previous();
       if (replay) return { id: identity, replayed: true, candidates: replay };
-      db.prepare('INSERT INTO closeouts VALUES (?, ?, ?)').run(identity, payloadHash, JSON.stringify(candidates));
-      return { id: identity, replayed: false, candidates };
+      const pending = candidates.filter(candidate => !appendReferenceSources(wiki, candidate));
+      if (pending.length !== candidates.length) wiki.build();
+      db.prepare('INSERT INTO closeouts VALUES (?, ?, ?)').run(identity, payloadHash, JSON.stringify(pending));
+      return { id: identity, replayed: false, candidates: pending };
     });
+    return result;
   } finally {
     db.close();
   }

@@ -150,6 +150,11 @@ test('completion harvesting preserves evidence and records zero-candidate receip
   const published = publishReference(wiki, first.id, first.candidates[0].id, 'Migration preflight');
   assert.equal(wiki.getEntry(published.id).entry.mode, 'reference');
   assert.deepEqual(publishReference(wiki, first.id, first.candidates[0].id, 'Migration preflight'), { ...published, replayed: true });
+  const corroboration = { ...receipt, id: 'completion-3' };
+  assert.deepEqual((await harvestCompletion(wiki, 'example', corroboration, model)).candidates, []);
+  assert.deepEqual(wiki.getEntry(published.id).sources, [
+    'receipt:example:completion-1#check', 'receipt:example:completion-3#check',
+  ]);
 });
 
 test('Wiki ingest preserves source attribution and locked pages', async t => {
