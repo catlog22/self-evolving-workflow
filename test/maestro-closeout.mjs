@@ -181,7 +181,7 @@ try {
   const links = [
     { name: 'producer', path: 'linked/producer', repo_id: linkedId, share: ['spec'] },
     { name: 'reference', path: 'linked/reference', repo_id: referenceId, share: ['knowhow'] },
-    { name: 'stale', path: 'linked/stale', repo_id: 'bd80ed8c-6a01-4eeb-b46a-01f350719af0', share: ['spec'] },
+    { name: 'stale', path: 'linked/stale', repo_id: 'bd80ed8c-6a01-4eeb-b46a-01f350719af0', share: ['spec', 'knowhow'] },
   ];
   const configureLinks = linked => writeFile(join(workflow, 'config.json'), JSON.stringify({ workspaces: { linked } }));
   await configureLinks(links);
@@ -327,6 +327,55 @@ try {
   assert.equal((await agent('wiki', 'get', `${project}:spec:S-1`)).id, constraintId);
   assert.equal((await closeout('show', harvest.receipt)).id, harvest.id);
 
+  const referenceSource = join(sources, 'reference');
+  await mkdir(join(referenceSource, '.workflow', 'knowhow'));
+  await writeFile(join(referenceSource, '.workflow', 'knowhow', 'K-1.md'), [
+    '---', 'title: Runbook for replica preflight', `appliesToRepoIds: [${currentId}]`, '---', '',
+    'Inspect the replica preflight checklist. [[entries/preflight-private]] [[entries/preflight-path]]', '',
+  ].join('\n'));
+  await agent('wiki', 'migrate', referenceSource, '--wiki-root', referenceSource, '--project', 'reference-fixture', '--apply');
+  const sharedRef = await agent('wiki', 'get', 'reference-fixture:knowhow:K-1', '--wiki-root', referenceSource);
+  const addReference = (source, id, title, extra = '') => writeFile(join(source, 'wiki', 'entries', `${id}.md`), [
+    '---', `title: ${title}`, 'mode: reference', 'status: active', 'sources: [fixture:preflight-reference]',
+    extra || 'scope: [project]', '---', '', 'Replica preflight note.', '',
+  ].join('\n'));
+  await addReference(referenceSource, 'preflight-private', 'Private preflight', `scope: [project]\nrepositories: [${linkedId}]`);
+  await addReference(referenceSource, 'preflight-path', 'Script preflight', 'scope: [path:*.mjs]');
+  await addReference(producer, 'preflight-denied', 'Constraint repository preflight');
+  await addReference(join(sources, 'stale'), 'preflight-mismatch', 'Stale identity preflight');
+  await writeFile(join(referenceSource, 'wiki', 'unmanaged.md'), '# Unmanaged preflight\n\nReplica preflight note.\n');
+  // 共享查询直接读取当前 Markdown。旧索引里的活跃条目退役后也不可见。
+  const retiredFile = join(referenceSource, 'wiki', 'entries', 'preflight-retired.md');
+  await addReference(referenceSource, 'preflight-retired', 'Retired preflight');
+  await agent('wiki', 'build', '--wiki-root', referenceSource);
+  await writeFile(retiredFile, (await readFile(retiredFile, 'utf8')).replace('status: active', 'status: deprecated'));
+  const sourceIndex = join(referenceSource, 'index.db');
+  const sourceIndexBytes = await readFile(sourceIndex);
+  await configureLinks(links);
+  const searchReferences = (...options) => flow('wiki', 'references', 'preflight', '--hop', '1', ...options);
+  const sharedResults = await searchReferences();
+  assert.deepEqual(sharedResults.groups.map(group => group.source_repository.alias), ['current', 'reference']);
+  assert.ok(sharedResults.groups[0].results.some(item => item.id === published.id));
+  const linkedResults = sharedResults.groups[1];
+  assert.equal(linkedResults.source_repository.id, referenceId);
+  assert.deepEqual(linkedResults.results.map(item => item.id), [sharedRef.id]);
+  assert.deepEqual(linkedResults.results[0].related, []);
+  assert.deepEqual(linkedResults.links, []);
+  const pathResults = (await searchReferences('--repo', referenceId, '--path', '.\\migrate.mjs')).groups[0];
+  assert.deepEqual(pathResults.results.map(item => item.id).sort(), [sharedRef.id, 'entries/preflight-path'].sort());
+  assert.deepEqual(pathResults.links, [{ source: sharedRef.path, target: 'wiki/entries/preflight-path.md' }]);
+  const openReference = (id, ...options) => flow('wiki', 'reference', id, '--repo', referenceId, ...options);
+  assert.deepEqual((await openReference('reference-fixture:knowhow:K-1')).entry, sharedRef);
+  assert.equal((await openReference('preflight-private')).entry, null);
+  assert.equal((await openReference('preflight-retired')).entry, null);
+  assert.equal((await openReference('preflight-path')).entry, null);
+  assert.equal((await openReference('preflight-path', '--path', 'migrate.mjs')).entry.id, 'entries/preflight-path');
+  assert.deepEqual(await readFile(sourceIndex), sourceIndexBytes);
+  await assert.rejects(searchReferences('--repo', linkedId), /does not grant read capability for knowhow/);
+  await configureLinks(links.filter(link => link.name !== 'reference'));
+  assert.deepEqual((await searchReferences()).groups.map(group => group.source_repository.alias), ['current']);
+  await assert.rejects(openReference(sharedRef.id), /Repository selector not found/);
+
   const global = env.MAESTRO_HOME;
   const collab = join(workflow, 'collab');
   const layerFixture = [
@@ -385,6 +434,7 @@ try {
   assert.deepEqual(visitor.wiki_constraints.map(rule => rule.body.trim()), ordered.slice(0, 3));
   console.log('Maestro preflight, evidence capture, Memory closeout, Wiki publication and index rebuild passed.');
   console.log('Wiki migration preserved global, linked, project, team and member rule order and isolation.');
+  console.log('Wiki reference search and open respected Knowhow sharing, active scope, graph visibility and revocation.');
 } finally {
   if (model.listening) await new Promise(resolve => model.close(resolve));
   assert.match(await realpath(root), /[\\/]evolve-maestro-closeout-[a-zA-Z0-9]+$/);

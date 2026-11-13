@@ -1,5 +1,5 @@
 // Adapts the TencentDB Agent Memory Wiki manager and per-wiki index (MIT).
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { UndirectedGraph } from 'graphology';
@@ -42,14 +42,14 @@ export interface WikiHit extends Page {
 
 export const structuralPages = new Set(['wiki/index.md', 'wiki/schema.md', 'wiki/purpose.md', 'wiki/log.md', 'wiki/overview.md']);
 
-export function readWikiPages(root: string): PageFile[] {
+export function readWikiPages(root: string, entriesOnly = false): PageFile[] {
   const pages: PageFile[] = [];
   function walk(dir: string, prefix: string) {
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const full = join(dir, entry.name);
       const path = `${prefix}/${entry.name}`;
-      if (entry.isDirectory() && entry.name !== 'media') walk(full, path);
+      if (!entriesOnly && entry.isDirectory() && entry.name !== 'media') walk(full, path);
       if (!entry.isFile() || !/\.md$/i.test(entry.name) || structuralPages.has(path.toLowerCase())) continue;
       const content = readFileSync(full, 'utf8').replace(/^\uFEFF/, '');
       const { frontmatter, body } = parseFrontmatter(content);
@@ -67,8 +67,29 @@ export function readWikiPages(root: string): PageFile[] {
       });
     }
   }
-  walk(join(root, 'wiki'), 'wiki');
+  if (entriesOnly) {
+    const wiki = lstatSync(join(root, 'wiki'), { throwIfNoEntry: false });
+    if (!wiki) return pages;
+    const entries = wiki.isDirectory() ? lstatSync(join(root, 'wiki', 'entries'), { throwIfNoEntry: false }) : undefined;
+    if (!wiki.isDirectory() || (entries && !entries.isDirectory())) throw new InputError('Expected a regular Wiki entries directory');
+    if (entries) walk(join(root, 'wiki', 'entries'), 'wiki/entries');
+  } else {
+    walk(join(root, 'wiki'), 'wiki');
+  }
   return pages;
+}
+
+function findEntry(pages: PageFile[], id: string) {
+  const key = requireText(id, 'wiki entry ID').toLowerCase();
+  const matches = pages.filter(page => page.entry && (
+    page.id.toLowerCase() === key || page.id.toLowerCase() === `entries/${key}` ||
+    page.entry.aliases.some(alias => alias.toLowerCase() === key)
+  ));
+  if (matches.length > 1) throw new InputError(`Ambiguous Wiki entry ID: ${id}`);
+  const page = matches[0];
+  if (!page) return null;
+  const { links: _links, ...entry } = page;
+  return entry;
 }
 
 function resolveEdges(pages: PageFile[]) {
@@ -121,16 +142,26 @@ export class Wiki {
 
   getEntry(id: string) {
     if (!existsSync(join(this.root, 'wiki'))) return null;
-    const key = requireText(id, 'wiki entry ID').toLowerCase();
-    const matches = readWikiPages(this.root).filter(page => page.entry && (
-      page.id.toLowerCase() === key || page.id.toLowerCase() === `entries/${key}` ||
-      page.entry.aliases.some(alias => alias.toLowerCase() === key)
-    ));
-    if (matches.length > 1) throw new InputError(`Ambiguous Wiki entry ID: ${id}`);
-    const page = matches[0];
-    if (!page) return null;
-    const { links: _links, ...entry } = page;
-    return entry;
+    return findEntry(readWikiPages(this.root), id);
+  }
+
+  private visibleReferences(context: WikiContext) {
+    return readWikiPages(this.root, true).filter(page => page.entry?.mode === 'reference' &&
+      page.entry.status === 'active' && appliesToContext(page.entry, context, page.body));
+  }
+
+  getReference(id: string, context: WikiContext = {}) {
+    return findEntry(this.visibleReferences(context), id);
+  }
+
+  references(query: string, context: WikiContext = {}, options: WikiSearchOptions = {}) {
+    const db = openDb(':memory:');
+    try {
+      transaction(db, () => indexPages(db, this.visibleReferences(context)));
+      return searchIndex(db, query, options);
+    } finally {
+      db.close();
+    }
   }
 
   getEntryByExactBody(body: string) {
@@ -150,81 +181,86 @@ export class Wiki {
     if (!existsSync(join(this.root, 'wiki'))) throw new NotFoundError('Missing wiki/ directory');
     const db = openDb(this.indexPath);
     try {
-      return transaction(db, () => {
-        const pages = readWikiPages(this.root);
-        const edges = resolveEdges(pages);
-        db.exec(`
-          CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
-            page_id UNINDEXED, title_tok, content_tok, tokenize='unicode61 remove_diacritics 0'
-          );
-          CREATE TABLE IF NOT EXISTS page_meta (
-            page_id TEXT PRIMARY KEY, title TEXT, type TEXT, rel_path TEXT, snippet TEXT
-          );
-          CREATE TABLE IF NOT EXISTS page_sources (page_id TEXT PRIMARY KEY, sources TEXT NOT NULL);
-          CREATE TABLE IF NOT EXISTS wiki_entries (
-            page_id TEXT PRIMARY KEY, status TEXT NOT NULL, metadata TEXT NOT NULL
-          );
-          CREATE TABLE IF NOT EXISTS graph_edge (
-            source_id TEXT NOT NULL, target_id TEXT NOT NULL, PRIMARY KEY (source_id, target_id)
-          );
-          DELETE FROM wiki_fts;
-          DELETE FROM page_meta;
-          DELETE FROM page_sources;
-          DELETE FROM wiki_entries;
-          DELETE FROM graph_edge;
-        `);
-        const fts = db.prepare('INSERT INTO wiki_fts(page_id, title_tok, content_tok) VALUES (?, ?, ?)');
-        const meta = db.prepare('INSERT INTO page_meta(page_id, title, type, rel_path, snippet) VALUES (?, ?, ?, ?, ?)');
-        const source = db.prepare('INSERT INTO page_sources(page_id, sources) VALUES (?, ?)');
-        const edge = db.prepare('INSERT INTO graph_edge(source_id, target_id) VALUES (?, ?)');
-        const entry = db.prepare('INSERT INTO wiki_entries(page_id, status, metadata) VALUES (?, ?, ?)');
-        for (const page of pages) {
-          fts.run(page.id, tokenizeWiki(page.title).join(' '), tokenizeWiki(page.body).join(' '));
-          meta.run(page.id, page.title, page.type, page.path, page.snippet);
-          source.run(page.id, JSON.stringify(page.sources));
-          if (page.entry) entry.run(page.id, page.entry.status, JSON.stringify(page.entry));
-        }
-        for (const { source, target } of edges) edge.run(source, target);
-        return { pages: pages.length, edges: edges.length };
-      });
+      return transaction(db, () => indexPages(db, readWikiPages(this.root)));
     } finally {
       db.close();
     }
   }
 
-  search(query: string, options: WikiSearchOptions = {}): {
-    results: WikiHit[];
-    links: Array<{ source: string; target: string }>;
-  } {
-    const tokens = [...new Set(tokenizeWiki(requireText(query, 'query')))];
-    const limit = searchLimit(options.limit);
-    const { hop = 0, decay = 0.5 } = options;
-    if (!Number.isInteger(hop) || hop < 0 || hop > 5) {
-      throw new InputError('hop must be an integer between 0 and 5');
-    }
-    if (!Number.isFinite(decay) || decay <= 0 || decay > 1) {
-      throw new InputError('decay must be greater than 0 and at most 1');
-    }
+  search(query: string, options: WikiSearchOptions = {}) {
     if (!existsSync(this.indexPath)) throw new NotFoundError('Wiki index missing. Run wiki build first.');
-    if (!tokens.length) return { results: [], links: [] };
-    const expression = tokens.map(token => '"' + token.replaceAll('"', '""') + '"*').join(' OR ');
     const db = openDb(this.indexPath, true);
     try {
       db.exec('BEGIN');
-      const entries = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wiki_entries'").get();
-      const visibility = entries && !options.includeHistory
-        ? "AND page_id NOT IN (SELECT page_id FROM wiki_entries WHERE status <> 'active')"
-        : '';
-      const seeds = db.prepare(`
-        SELECT page_id AS id, -bm25(wiki_fts, 0.0, 5.0, 1.0) AS score
-        FROM wiki_fts WHERE wiki_fts MATCH ? ${visibility} ORDER BY score DESC, page_id LIMIT ?
-      `).all(expression, hop ? limit * 2 : limit) as Array<{ id: string; score: number }>;
-      if (!seeds.length) return { results: [], links: [] };
-      return readHits(db, seeds, limit, hop, decay, Boolean(entries), Boolean(options.includeHistory));
+      return searchIndex(db, query, options);
     } finally {
       db.close();
     }
   }
+}
+
+function indexPages(db: DatabaseSync, pages: PageFile[]) {
+  const edges = resolveEdges(pages);
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
+      page_id UNINDEXED, title_tok, content_tok, tokenize='unicode61 remove_diacritics 0'
+    );
+    CREATE TABLE IF NOT EXISTS page_meta (
+      page_id TEXT PRIMARY KEY, title TEXT, type TEXT, rel_path TEXT, snippet TEXT
+    );
+    CREATE TABLE IF NOT EXISTS page_sources (page_id TEXT PRIMARY KEY, sources TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS wiki_entries (
+      page_id TEXT PRIMARY KEY, status TEXT NOT NULL, metadata TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS graph_edge (
+      source_id TEXT NOT NULL, target_id TEXT NOT NULL, PRIMARY KEY (source_id, target_id)
+    );
+    DELETE FROM wiki_fts;
+    DELETE FROM page_meta;
+    DELETE FROM page_sources;
+    DELETE FROM wiki_entries;
+    DELETE FROM graph_edge;
+  `);
+  const fts = db.prepare('INSERT INTO wiki_fts(page_id, title_tok, content_tok) VALUES (?, ?, ?)');
+  const meta = db.prepare('INSERT INTO page_meta(page_id, title, type, rel_path, snippet) VALUES (?, ?, ?, ?, ?)');
+  const source = db.prepare('INSERT INTO page_sources(page_id, sources) VALUES (?, ?)');
+  const edge = db.prepare('INSERT INTO graph_edge(source_id, target_id) VALUES (?, ?)');
+  const entry = db.prepare('INSERT INTO wiki_entries(page_id, status, metadata) VALUES (?, ?, ?)');
+  for (const page of pages) {
+    fts.run(page.id, tokenizeWiki(page.title).join(' '), tokenizeWiki(page.body).join(' '));
+    meta.run(page.id, page.title, page.type, page.path, page.snippet);
+    source.run(page.id, JSON.stringify(page.sources));
+    if (page.entry) entry.run(page.id, page.entry.status, JSON.stringify(page.entry));
+  }
+  for (const { source, target } of edges) edge.run(source, target);
+  return { pages: pages.length, edges: edges.length };
+}
+
+function searchIndex(db: DatabaseSync, query: string, options: WikiSearchOptions): {
+  results: WikiHit[];
+  links: Array<{ source: string; target: string }>;
+} {
+  const tokens = [...new Set(tokenizeWiki(requireText(query, 'query')))];
+  const limit = searchLimit(options.limit);
+  const { hop = 0, decay = 0.5 } = options;
+  if (!Number.isInteger(hop) || hop < 0 || hop > 5) {
+    throw new InputError('hop must be an integer between 0 and 5');
+  }
+  if (!Number.isFinite(decay) || decay <= 0 || decay > 1) {
+    throw new InputError('decay must be greater than 0 and at most 1');
+  }
+  if (!tokens.length) return { results: [], links: [] };
+  const expression = tokens.map(token => '"' + token.replaceAll('"', '""') + '"*').join(' OR ');
+  const entries = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wiki_entries'").get();
+  const visibility = entries && !options.includeHistory
+    ? "AND page_id NOT IN (SELECT page_id FROM wiki_entries WHERE status <> 'active')"
+    : '';
+  const seeds = db.prepare(`
+    SELECT page_id AS id, -bm25(wiki_fts, 0.0, 5.0, 1.0) AS score
+    FROM wiki_fts WHERE wiki_fts MATCH ? ${visibility} ORDER BY score DESC, page_id LIMIT ?
+  `).all(expression, hop ? limit * 2 : limit) as Array<{ id: string; score: number }>;
+  if (!seeds.length) return { results: [], links: [] };
+  return readHits(db, seeds, limit, hop, decay, Boolean(entries), Boolean(options.includeHistory));
 }
 
 function readHits(db: DatabaseSync, seeds: { id: string; score: number }[], limit: number, hop: number, decay: number, hasEntries: boolean, includeHistory: boolean) {

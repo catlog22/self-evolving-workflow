@@ -99,6 +99,8 @@ skills/
 
 Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重建。初始执行时按作用域解析约束，再按任务检索参考。生效约束的选择以作用域和状态为准，全文检索排名只用于参考条目的相关性排序。
 
+配置 Evolve 后，用 `maestro wiki references "<主题>" --json` 查询项目和有权访问的共享 Wiki。结果按仓库返回，保留条目 ID、来源和可见条目之间的关系。用 `maestro wiki reference <id> --repo <仓库 UUID 或别名> --json` 打开指定条目。两次调用可带相同的 `--skill`、`--task` 和 `--path`。参考查询读取当时适用的活跃条目，约束查询仍从 Run 快照读取。 [Wiki 命令](/D:/evolve-maestro-runtime/src/commands/wiki.ts)
+
 完成约束比对的项目可用 `MAESTRO_EVOLVE_CONSTRAINTS=1` 启用新读取入口。版本化 Skill 的新 Run 在分派时按 Skill ID、命令名和当前仓库 UUID 固定候选约束，再按 Skill 的 `wiki_categories` 选出初始规则。有待确定文件的规则随 Run 保存，在文件确定后用 `maestro run wiki-constraints <run-id> --session <session-id> --path <file> --json` 筛选。恢复同一 Run 时沿用分派时的快照。`analyze` 和 `plan` 默认选择 `arch`，`execute` 默认选择 `coding`，涉及 UI 的任务可同时选择 `coding` 和 `ui`。已启用 Wiki 的 Run 即使得到空列表，也沿用该次查询结果。
 
 ### 条目格式
@@ -219,7 +221,9 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 选一组项目基线任务，将原入口和新入口的约束集合逐条比对，覆盖项目全局、局部适用、已退役和冲突条目。完成迁移核对的范围切到新 Wiki 读取与更新，旧文件保留为可回查档案。受影响的范围在依赖核对完成前沿用旧入口。切换前保留来源快照和 ID 映射，便于查回旧条目或回退读取入口。
 
-新 Run 复用 `workspaces.linked` 的 `share: [spec]` 权限。已迁移的共享源从该仓库自己的 `wiki/entries/` 读取，规则按消费方 UUID 筛选。快照用 `source_repository` 记录来源别名和可取得的 UUID。撤销共享影响后续分派，已启动的 Run 沿用原快照。验收覆盖缓存身份失效、仅分享 Knowhow、跨仓库适用范围和撤销后的恢复。共享参考检索仍待接入。 [共享约束装载](/D:/evolve-maestro-runtime/src/run/v3/evolve-closeout.ts)
+新 Run 复用 `workspaces.linked` 的 `share: [spec]` 权限。已迁移的共享源从该仓库自己的 `wiki/entries/` 读取，规则按消费方 UUID 筛选。快照用 `source_repository` 记录来源别名和可取得的 UUID。撤销共享影响后续分派，已启动的 Run 沿用原快照。验收覆盖缓存身份失效、仅分享 Knowhow、跨仓库适用范围和撤销后的恢复。 [共享约束装载](/D:/evolve-maestro-runtime/src/run/v3/evolve-closeout.ts)
+
+共享参考复用 `share: [knowhow]`，每次搜索和打开都检查当前授权。检索在已过滤的 Markdown 上复用 MemoryKnowledge 全文检索和图谱遍历，免去共享库索引过期带来的范围误判。撤销共享后，搜索结果与原仓库引用随即失效。旧 Knowhow 文件在导入前沿用旧检索入口。 [双 CLI 共享验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
 用 `agent-memory --root <project> wiki migrate <source> --project <id> --scope <scope>` 预览各层迁移，确认后加 `--apply`。全局层的 `<source>` 为 `MAESTRO_HOME`，团队与个人层为 Maestro 项目根目录，个人迁移另传 `--uid <member-uid>`。各目录沿用同一 Wiki 格式。
 
