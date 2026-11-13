@@ -196,18 +196,36 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
     '<spec-entry title="Current" sid="S-1">', 'Check the current calibration.', '</spec-entry>',
     '<spec-entry title="Old" sid="S-2" status="deprecated" superseded-by="S-1">', 'Use the old calibration.', '</spec-entry>',
     '<spec-entry title="Disputed" confidence="contested">', 'Check the disputed calibration.', '</spec-entry>',
+    '<spec-entry title="Gauge reference" sid="S-3" ref="knowhow/K-1.md">', 'Background on the gauge.', '</spec-entry>',
+    '<spec-entry title="Missing reference" sid="S-4" ref="knowhow/missing.md">', 'Missing background.', '</spec-entry>',
+  ].join('\n'));
+  await writeFile(join(legacy, '.workflow', 'specs', 'coding.md'), '# Coding rules\n\nKeep calibration checks deterministic.\n');
+  await writeFile(join(legacy, '.workflow', 'specs', 'scoped.md'), [
+    '---', 'appliesToRepoIds: []', '---', '# Scoped rules', '',
+    '<spec-entry title="Scoped &lt;rule&gt;" sid="S-5">', 'Use a calibrated sensor.', '</spec-entry>',
   ].join('\n'));
   await writeFile(join(legacy, '.workflow', 'knowhow', 'K-1.md'), '---\ntitle: Calibration tips\n---\n\nInspect the gauge.\n');
   const args = ['wiki', 'migrate', legacy, '--project', 'legacy-project'];
   const preview = await cliJson(root, ...args);
-  assert.equal(preview.length, 4);
+  assert.equal(preview.length, 8);
   const wiki = new Wiki(root);
   assert.deepEqual(wiki.constraints(), []);
   assert.deepEqual(await cliJson(root, ...args, '--apply'), preview);
   assert.ok((await cliJson(root, ...args, '--apply')).every(row => row.existing));
-  assert.deepEqual(wiki.constraints().map(row => row.title), ['Current']);
+  assert.deepEqual(wiki.constraints().map(row => row.title).sort(), ['Coding rules', 'Current']);
   assert.match(wiki.getEntry('legacy-project:spec:S-2').body, /Superseding entry/);
-  assert.equal(wiki.getEntry('legacy-project:knowhow:K-1').entry.mode, 'reference');
+  const knowhow = wiki.getEntry('legacy-project:knowhow:K-1');
+  assert.equal(knowhow.entry.mode, 'reference');
+  const linked = wiki.getEntry('legacy-project:spec:S-3');
+  assert.equal(linked.entry.mode, 'reference');
+  assert.ok(linked.body.includes(`[[${knowhow.id}|Legacy reference]]`));
+  const missing = preview.find(row => row.alias === 'legacy-project:spec:S-4');
+  assert.equal(missing.status, 'needs_review');
+  assert.deepEqual(missing.issues, ['Unresolved legacy reference']);
+  const scoped = wiki.getEntry('legacy-project:spec:S-5');
+  assert.equal(scoped.title, 'Scoped <rule>');
+  assert.equal(scoped.entry.status, 'needs_review');
+  assert.deepEqual(scoped.sources, ['legacy:legacy-project:.workflow/specs/scoped.md#L6']);
 });
 
 test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {

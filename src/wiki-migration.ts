@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, posix } from 'node:path';
 import { stringify } from 'yaml';
 import { InputError, requireText } from './common.js';
 import { parseFrontmatter } from './upstream/frontmatter.js';
@@ -17,35 +17,56 @@ interface LegacyEntry {
 }
 
 function parseSpecs(source: string, origin: string): LegacyEntry[] {
-  const matches = [...source.matchAll(/<spec-entry\b\s*([^>]*)>([\s\S]*?)<\/spec-entry>/g)];
+  const document = parseFrontmatter(source);
+  if (source.startsWith('---\n') || source.startsWith('---\r\n')) {
+    if (!document.hasFrontmatter) throw new InputError(`Invalid Spec frontmatter: ${origin}`);
+  }
+  const firstLine = source.slice(0, source.length - document.body.length).split('\n').length;
+  const matches = [...document.body.matchAll(/<spec-entry\b\s*([^>]*)>([\s\S]*?)<\/spec-entry>/g)];
   const specs = new Map<number, LegacyEntry>();
+  const fileMetadata = document.hasFrontmatter ? document.frontmatter : {};
   for (const match of matches) {
     const body = match[2].trim();
-    const metadata = Object.fromEntries([...match[1].matchAll(/([\w-]+)="([^"]*)"/g)]
-      .map(([, key, value]) => [key, value.replaceAll('&quot;', '"').replaceAll('&amp;', '&')]));
-    const title = metadata.title || body.match(/^#{2,6}\s+(.+)$/m)?.[1] ||
+    const attributes = Object.fromEntries([...match[1].matchAll(/([\w-]+)="([^"]*)"/g)]
+      .map(([, key, value]) => [key, value.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')]));
+    const title = attributes.title || body.match(/^#{2,6}\s+(.+)$/m)?.[1] ||
       [...(body.split(/\r?\n/, 1)[0] ?? '')].slice(0, 100).join('');
     if (!title || !body) throw new InputError(`Unrecognized Spec entry in ${origin}`);
-    const line = source.slice(0, match.index).split('\n').length;
-    specs.set(line, { origin: `${origin}#L${line}`, oldId: metadata.sid || '', title, body, mode: 'constraint', metadata });
+    const line = firstLine + document.body.slice(0, match.index).split('\n').length - 1;
+    specs.set(line, {
+      origin: `${origin}#L${line}`, oldId: attributes.sid || '', title, body, mode: 'constraint',
+      metadata: { ...fileMetadata, ...attributes },
+    });
   }
-  const remaining = source.replace(/<spec-entry\b\s*[^>]*>[\s\S]*?<\/spec-entry>/g, match => match.replace(/[^\r\n]/g, ' '));
+  const remaining = document.body.replace(/<spec-entry\b\s*[^>]*>[\s\S]*?<\/spec-entry>/g, match => match.replace(/[^\r\n]/g, ' '));
   if (/<\/?spec-entry\b/.test(remaining)) throw new InputError(`Unclosed Spec entry in ${origin}`);
   const headings = [...remaining.matchAll(/^###\s+(?:\[[\w-]+\]\s+)?\[\d{4}-\d{2}-\d{2}(?:[ \t][\d:]+)?\][ \t]*([^\r\n]+)\r?$/gm)];
   for (const [index, heading] of headings.entries()) {
-    const line = remaining.slice(0, heading.index).split('\n').length;
+    const line = firstLine + remaining.slice(0, heading.index).split('\n').length - 1;
     const next = headings[index + 1]?.index ?? remaining.length;
     const body = remaining.slice(heading.index, next).trim();
     if (body === heading[0].trim()) continue;
-    specs.set(line, { origin: `${origin}#L${line}`, oldId: '', title: heading[1], body, mode: 'constraint', metadata: {} });
+    specs.set(line, { origin: `${origin}#L${line}`, oldId: '', title: heading[1], body, mode: 'constraint', metadata: fileMetadata });
+  }
+  if (!specs.size && document.body.replace(/^#+\s+.*$/gm, '').replace(/^---+$/gm, '').trim()) {
+    const title = typeof document.frontmatter.title === 'string' && document.frontmatter.title.trim()
+      ? document.frontmatter.title.trim() : document.body.match(/^#\s+(.+)$/m)?.[1]?.trim() || basename(origin, '.md');
+    specs.set(firstLine, { origin, oldId: '', title, body: document.body, mode: 'constraint', metadata: fileMetadata });
   }
   return [...specs.entries()].sort(([left], [right]) => left - right).map(([, entry]) => entry);
 }
 
 function collectLegacy(sourceRoot: string): LegacyEntry[] {
   const entries: LegacyEntry[] = [];
+  const workflow = join(sourceRoot, '.workflow');
+  if (!lstatSync(workflow, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new InputError(`Legacy project has no regular .workflow directory: ${workflow}`);
+  }
   for (const folder of ['specs', 'knowhow'] as const) {
-    const directory = join(sourceRoot, '.workflow', folder);
+    const directory = join(workflow, folder);
+    const info = lstatSync(directory, { throwIfNoEntry: false });
+    if (!info) continue;
+    if (!info.isDirectory()) throw new InputError(`Invalid legacy knowledge directory: ${directory}`);
     for (const file of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       if (!file.isFile() || !file.name.endsWith('.md')) continue;
       const source = readFileSync(join(directory, file.name), 'utf8').replace(/^\uFEFF/, '');
@@ -67,9 +88,8 @@ function collectLegacy(sourceRoot: string): LegacyEntry[] {
 function statusFor(entry: LegacyEntry): WikiEntryMetadata['status'] {
   const status = entry.metadata.lifecycleStatus ?? entry.metadata['lifecycle-status'] ?? entry.metadata.status;
   if (status === 'deprecated' || status === 'superseded') return 'deprecated';
-  const applicability = entry.metadata.appliesToRepoIds ?? entry.metadata['applies-to-repo-ids'];
   if (entry.metadata['conflict-marker'] || entry.metadata.confidence === 'contested' ||
-      Boolean(Array.isArray(applicability) ? applicability.length : applicability) ||
+      'appliesToRepoIds' in entry.metadata || 'applies-to-repo-ids' in entry.metadata ||
       (status && !['active', 'accepted'].includes(String(status)))) return 'needs_review';
   return 'active';
 }
@@ -84,6 +104,7 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
   }
   const sources = collectLegacy(sourceRoot);
   const oldIds = new Map<string, string>();
+  const knowhowPaths = new Map<string, string>();
   const writes = sources.map(entry => {
     const kind = entry.mode === 'constraint' ? 'spec' : 'knowhow';
     const key = `${project}:${kind}:${entry.oldId || entry.origin}`;
@@ -93,12 +114,30 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
       if (oldIds.has(oldKey)) throw new InputError(`Duplicate legacy Wiki ID: ${entry.oldId}`);
       oldIds.set(oldKey, id);
     }
+    if (kind === 'knowhow') knowhowPaths.set(entry.origin.slice('.workflow/'.length).toLowerCase(), id);
     return { entry, id, key, kind, status: statusFor(entry) };
   });
   const planned = writes.map(({ entry, id, key, kind, status }) => {
-    const raw = entry.metadata.supersededBy ?? entry.metadata['superseded-by'];
-    const replacement = typeof raw === 'string' ? oldIds.get(`${kind}:${raw.toLowerCase()}`) : undefined;
-    const effectiveStatus = raw && !replacement && status === 'active' ? 'needs_review' : status;
+    const relations: string[] = [];
+    const issues: string[] = [];
+    for (const [field, label] of [
+      [entry.metadata.supersededBy ?? entry.metadata['superseded-by'], 'Superseding entry'],
+      [entry.metadata.supersedes, 'Earlier entry'],
+    ] as const) {
+      if (field === undefined) continue;
+      const target = typeof field === 'string' ? oldIds.get(`${kind}:${field.toLowerCase()}`) : undefined;
+      if (target && target !== id) relations.push(`[[entries/${target}|${label}]]`);
+      else issues.push(`Unresolved ${label.toLowerCase()}`);
+    }
+    const ref = entry.metadata.ref;
+    if (kind === 'spec' && ref !== undefined) {
+      const refPath = typeof ref === 'string' ? posix.normalize(ref.replaceAll('\\', '/')).toLowerCase() : '';
+      const target = knowhowPaths.get(refPath);
+      if (target) relations.push(`[[entries/${target}|Legacy reference]]`);
+      else issues.push('Unresolved legacy reference');
+    }
+    const effectiveStatus = issues.length && status === 'active' ? 'needs_review' : status;
+    if (status === 'needs_review') issues.push('Review legacy lifecycle, conflict, or repository scope');
     const sources = [`legacy:${project}:${entry.origin}`];
     for (const source of [
       entry.metadata.sourceRef, entry.metadata['source-ref'], entry.metadata.source,
@@ -108,21 +147,22 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
     }
     const data = {
       title: entry.title,
-      mode: entry.mode,
+      mode: kind === 'spec' && typeof ref === 'string' && ref.trim() ? 'reference' : entry.mode,
       status: effectiveStatus,
       scope: ['project'],
       sources,
       aliases: [key],
       legacy: entry.metadata,
+      ...(issues.length ? { migration_issues: issues } : {}),
     };
-    const body = entry.body.trim() + (replacement ? `\n\n[[entries/${replacement}|Superseding entry]]` : '');
+    const body = entry.body.trim() + (relations.length ? `\n\n${relations.join('\n')}` : '');
     const content = `---\n${stringify(data)}---\n\n${body}\n`;
     const path = join(destination, `${id}.md`);
     const existing = lstatSync(path, { throwIfNoEntry: false });
     if (existing && (!existing.isFile() || readFileSync(path, 'utf8') !== content)) {
       throw new InputError(`Migration would overwrite an existing entry: ${id}`);
     }
-    return { id, origin: entry.origin, alias: key, status: effectiveStatus, path, content, existing: Boolean(existing) };
+    return { id, origin: entry.origin, alias: key, status: effectiveStatus, path, content, existing: Boolean(existing), issues };
   });
   if (apply && planned.length) {
     mkdirSync(destination, { recursive: true });
@@ -131,5 +171,7 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
     }
     wiki.build();
   }
-  return planned.map(({ id, origin, alias, status, existing }) => ({ id, origin, alias, status, existing }));
+  return planned.map(({ id, origin, alias, status, existing, issues }) => ({
+    id, origin, alias, status, existing, ...(issues.length ? { issues } : {}),
+  }));
 }
