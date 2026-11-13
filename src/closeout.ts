@@ -206,6 +206,10 @@ function closeoutId(project: string, receipt: string): string {
   return createHash('sha256').update(JSON.stringify([project, receipt])).digest('hex');
 }
 
+function skillCompletionId(project: string, execution: string) {
+  return `skill-${closeoutId(project, execution)}`;
+}
+
 function ledgerPath(wiki: Wiki): string {
   return join(wiki.root, '.agent-memory', 'closeout.db');
 }
@@ -244,7 +248,7 @@ export function recordSkillCompletion(wiki: Wiki, project: string, input: {
   if (input.session !== undefined) return { ignored: 'session-owned' as const, session: requireText(input.session, 'Session ID') };
   validateConversationMessages(input.messages);
   const messages = input.messages.map(({ id, role, timestamp, content }) => ({ id, role, timestamp, content }));
-  const id = `skill-${closeoutId(project, execution)}`;
+  const id = skillCompletionId(project, execution);
   const payload = {
     schema_version: 'skill-completion/1.0', id, execution_id: execution, skill_id: skill,
     skill_version: version, status: input.status, messages,
@@ -285,6 +289,17 @@ export function readSkillCompletions(wiki: Wiki, project: string, id?: string) {
   } finally {
     db.close();
   }
+}
+
+export function readSkillExecution(wiki: Wiki, project: string, execution: string) {
+  const id = skillCompletionId(project, execution);
+  const saved = readSkillCompletions(wiki, project, id)[0];
+  if (!saved) throw new NotFoundError('Standalone Skill completion receipt not found');
+  const completion = parseReceipt(saved.receipt);
+  if (completion.id !== id || completion.session !== execution || !completion.skill) {
+    throw new InputError('Standalone Skill receipt does not match the recorded execution');
+  }
+  return { ...completion, skill: completion.skill };
 }
 
 export async function harvestCompletion(wiki: Wiki, project: string, value: unknown, model: () => LlmClient,

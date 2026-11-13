@@ -25,7 +25,14 @@ const endpoint = createServer(async (request, response) => {
   const prompt = body.messages[1].content;
   calls++;
   let memories = [];
-  if (/status (?:failed|cancelled)/.test(prompt)) {
+  if (body.messages[0].content.includes('Review the execution timeline')) {
+    const source = /receipt:standalone-fixture:skill-[a-f0-9]{64}#outcome/.exec(prompt)?.[0];
+    if (!source || !prompt.includes('Codex exited with')) {
+      response.writeHead(400).end('Skill review did not include the failed host outcome');
+      return;
+    }
+    memories = [{ type: 'error', content: 'The Skill host exited before completing the task.', source_message_ids: [source] }];
+  } else if (/status (?:failed|cancelled)/.test(prompt)) {
     assert.match(prompt, /Codex exited with/);
   } else {
     if (!prompt.includes(finalText) || !prompt.includes('references/preflight.md') || !prompt.includes('status succeeded')) {
@@ -111,7 +118,15 @@ try {
     });
   assert.deepEqual((await waitForHarvest(failed.closeout.receipt)).candidates, []);
   assert.equal(calls, 2);
-  console.log('Codex standalone Skill loaded its committed documents. The host recorded success and failure and excluded Session-owned work.');
+  const review = JSON.parse(await invoke(process.execPath, [
+    memory, '--root', root, 'evolve', 'review', failed.execution, '--project', project,
+  ], env));
+  assert.equal(review.receipt, failed.closeout.receipt);
+  assert.deepEqual(review.skill, { id: skill, version: `git:${failed.skill.commit}:${failed.skill.tree}`, status: 'failed' });
+  assert.equal(review.signals[0].kind, 'error');
+  assert.deepEqual(review.signals[0].sources, [`receipt:${project}:${failed.closeout.receipt}#outcome`]);
+  assert.equal(calls, 3);
+  console.log('Codex standalone Skill loaded its committed documents. The host recorded success and failure and exposed the failure for retrospective review.');
 } finally {
   if (endpoint.listening) await new Promise(resolve => endpoint.close(resolve));
   assert.match(await realpath(root), /[\\/]evolve-codex-standalone-[a-zA-Z0-9]+$/);

@@ -13,7 +13,7 @@ import {
   harvestCompletion, publishReference, readCloseoutCandidate, readCompletionReceipts,
   readHarvest, readSkillCompletions, recordSkillCompletion,
 } from './closeout.js';
-import { reviewSession } from './retrospective.js';
+import { reviewSession, reviewSkillExecution } from './retrospective.js';
 import { draftSkillAddition } from './skill-addition.js';
 import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
@@ -45,6 +45,7 @@ const help = `Usage: agent-memory <command> [options]
   closeout publish <closeout-id> <candidate-id> <title>
                                           Publish a reviewed reference
   session review <id>                      Review Session signals (--transcript <messages.json>)
+  evolve review <execution-id>             Review a standalone Skill receipt (--project <id>)
   evolve draft <SKILL.md> <instruction>    Draft a Skill addition (--priority high|normal|low, --evidence <ref>, --when)
   evolve replay <draft.json>               Compare baseline and candidate (--runner <script>, --scenarios <json>)
   evolve apply|rollback <receipt-id>       Apply a validated version or revert it
@@ -299,6 +300,12 @@ async function main() {
     const transcript = values.transcript ? JSON.parse(readFileSync(values.transcript, 'utf8')) : undefined;
     if (transcript !== undefined && !Array.isArray(transcript)) throw new InputError('Transcript must be a JSON message array');
     return print(await reviewSession(root, requireText(args[0], 'Session ID'), { model: modelClient, transcript }));
+  }
+
+  if (command === 'evolve' && action === 'review') {
+    return print(await reviewSkillExecution(
+      wiki, requireText(values.project, 'source project ID'), requireText(args[0], 'Skill execution ID'), modelClient,
+    ));
   }
 
   if (command === 'evolve' && action === 'draft') {

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { InputError, requireText } from './common.js';
-import { draftSkillAddition } from './skill-addition.js';
+import { draftSkillAddition, learningDocument, learningIndex } from './skill-addition.js';
 
 interface Scenario {
   id: string;
@@ -71,8 +71,12 @@ function loadDraft(root: string, data: unknown) {
     sources: draft.sources.map(source => requireText(source, 'evidence reference')),
     when: draft.when === undefined ? undefined : requireText(draft.when, 'learning trigger'),
   });
-  if (regenerated.id !== draft.id || regenerated.baseline.sha256 !== baseline.sha256 ||
-      JSON.stringify(regenerated.changes) !== JSON.stringify(draft.changes)) {
+  const sameChanges = JSON.stringify(regenerated.changes) === JSON.stringify(draft.changes);
+  // 旧草稿可能只包含参考文档，回放时补齐入口与索引。
+  const legacyLowChanges = regenerated.priority === 'low' && JSON.stringify(draft.changes) === JSON.stringify(
+    regenerated.changes.filter(change => change.path === resolve(dirname(entry), learningDocument(regenerated.id))),
+  );
+  if (regenerated.id !== draft.id || regenerated.baseline.sha256 !== baseline.sha256 || (!sameChanges && !legacyLowChanges)) {
     throw new InputError('Skill draft or its baseline changed');
   }
   return { draft: regenerated, entryPath };
@@ -177,12 +181,13 @@ export function replaySkillAddition(root: string, data: unknown, options: { runn
     oldAdded = true;
     git(root, ['worktree', 'add', '--detach', newTree, candidate]);
     newAdded = true;
-    const expectedLearning = files.find(file => file !== entryPath) ?? entryPath;
+    const expectedReads = draft.priority === 'high' ? [entryPath] : [`${packagePath}/${learningDocument(draft.id)}`];
+    if (draft.priority === 'low') expectedReads.push(`${packagePath}/${learningIndex}`);
     const observations = scenarios.map(scenario => {
       const baseline = runScenario(oldTree, base, runner, entryPath, scenario);
       const proposed = runScenario(newTree, candidate, runner, entryPath, scenario);
       if (baseline.passed !== scenario.baseline || !proposed.passed ||
-          (!scenario.baseline && !proposed.loaded.some(item => item.path === expectedLearning))) {
+          (!scenario.baseline && !expectedReads.every(path => proposed.loaded.some(item => item.path === path)))) {
         throw new InputError(`Skill replay failed: ${scenario.id}`);
       }
       return { id: scenario.id, inputSha256: sha256(JSON.stringify(scenario.input)), baseline, candidate: proposed };

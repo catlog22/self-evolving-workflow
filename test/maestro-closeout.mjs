@@ -47,7 +47,7 @@ const model = createServer(async (request, response) => {
         assert.ok(anchor && summary);
         items.push({ memories: [{ type: 'work_method', content: method, source_message_ids: [anchor, summary] }] });
       }
-    } else if (system.startsWith('Review a Session timeline')) {
+    } else if (system.startsWith('Review the execution timeline')) {
       const anchor = /\[(transcript:[^\]]+:correction:[a-f0-9]{16})\]/.exec(prompt)?.[1];
       if (anchor) {
         assert.match(prompt, /became failed.*Dry-run flag required/);

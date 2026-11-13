@@ -1,7 +1,7 @@
 export { CodeGraph } from './code.js';
 export { Wiki, type WikiHit, type WikiSearchOptions } from './wiki.js';
 export type { WikiContext, WikiEntryMetadata } from './wiki-entry.js';
-export { reviewSession, type ReviewedRun, type SkillSignal } from './retrospective.js';
+export { reviewSession, reviewSkillExecution, type ReviewedRun, type SkillSignal } from './retrospective.js';
 export { draftSkillAddition, type SkillPriority } from './skill-addition.js';
 export type { WikiIngestOptions } from './wiki-ingest.js';
 export { MemoryStore, type MemoryInput, type MemoryRecord, type MemorySearchOptions, type MemoryStoreOptions, type ConversationMessage } from './memory.js';

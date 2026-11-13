@@ -5,6 +5,26 @@ import { InputError, requireText } from './common.js';
 
 export type SkillPriority = 'high' | 'normal' | 'low';
 
+export const learningIndex = 'references/learnings/index.md';
+
+export function learningDocument(id: string) {
+  return `references/learnings/${id}.md`;
+}
+
+function readOptionalDocument(path: string) {
+  const info = lstatSync(path, { throwIfNoEntry: false });
+  if (info && !info.isFile()) throw new InputError(`Expected a regular Skill Markdown file: ${path}`);
+  return info ? readFileSync(path, 'utf8') : undefined;
+}
+
+function appendBlock(baseline: string, marker: string, block: string) {
+  if (!baseline.includes(marker)) return `${baseline.trimEnd()}\n\n${block}\n`;
+  if (!baseline.replace(/\r\n/g, '\n').includes(block)) {
+    throw new InputError('Existing Skill learning block differs from this draft');
+  }
+  return baseline;
+}
+
 export function draftSkillAddition(input: {
   entry: string;
   priority: SkillPriority;
@@ -29,21 +49,41 @@ export function draftSkillAddition(input: {
   const id = createHash('sha256').update(JSON.stringify([input.priority, instruction, sources, when])).digest('hex').slice(0, 20);
   const start = `<!-- evolve:learning:${id} -->`;
   const end = '<!-- /evolve:learning -->';
-  const relative = `references/learnings/${id}.md`;
+  const relative = learningDocument(id);
   const details = `# Skill learning\n\n${when ? `When: ${when}\n\n` : ''}${instruction}\n\n## Evidence\n\n${sources.map(source => `- ${source}`).join('\n')}\n`;
-  const changes = input.priority === 'high' ? [] : [{ path: resolve(dirname(entry), relative), content: details }];
-  if (input.priority !== 'low') {
+  const packageRoot = dirname(entry);
+  const changes: Array<{ path: string; content: string }> = [];
+  if (input.priority !== 'high') {
+    for (const directory of ['references', 'references/learnings']) {
+      const info = lstatSync(resolve(packageRoot, directory), { throwIfNoEntry: false });
+      if (info && !info.isDirectory()) throw new InputError(`Expected a regular Skill reference directory: ${directory}`);
+    }
+    const path = resolve(packageRoot, relative);
+    const existing = readOptionalDocument(path);
+    if (existing !== undefined && existing.replace(/\r\n/g, '\n') !== details) {
+      throw new InputError(`Existing Skill learning document differs from this draft: ${relative}`);
+    }
+    changes.push({ path, content: details });
+  }
+  if (input.priority === 'low') {
+    const indexPath = resolve(packageRoot, learningIndex);
+    const index = readOptionalDocument(indexPath) ?? '# Optional Skill references\n';
+    const title = [...(when ?? instruction).split(/\r?\n/, 1)[0]].slice(0, 100).join('').replace(/[&<>()[\]\\`*_]/g, '\\$&');
+    const indexContent = appendBlock(index, start, `${start}\n- [${title}](./${id}.md)\n${end}`);
+    const indexMarker = '<!-- evolve:learning:index -->';
+    const entryContent = appendBlock(baseline, indexMarker,
+      `${indexMarker}\n[Optional Skill references](${learningIndex}) for tasks that explicitly need additional examples or troubleshooting.\n${end}`);
+    if (indexContent !== index) changes.push({ path: indexPath, content: indexContent });
+    if (entryContent !== baseline) changes.unshift({ path: entry, content: entryContent });
+  } else {
     const body = input.priority === 'high' ? instruction
       : `[Read the workflow learning](${relative}) when ${when ?? 'the documented conditions apply'}.`;
-    const addition = `${start}\n${body}\n${end}\n`;
-    if (baseline.includes(start) && !baseline.includes(addition.trim())) {
-      throw new InputError('Existing Skill learning block differs from this draft');
+    const addition = `${start}\n${body}\n${end}`;
+    let content = appendBlock(baseline, start, addition);
+    if (input.priority === 'high' && content !== baseline) {
+      const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(baseline)?.[0] ?? '';
+      content = `${frontmatter}\n${addition}\n\n${baseline.slice(frontmatter.length)}`;
     }
-    const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(baseline)?.[0] ?? '';
-    const content = baseline.includes(start) ? baseline
-      : input.priority === 'high'
-        ? frontmatter + '\n' + addition + '\n' + baseline.slice(frontmatter.length)
-        : baseline.trimEnd() + '\n\n' + addition;
     changes.unshift({ path: entry, content });
   }
   return {

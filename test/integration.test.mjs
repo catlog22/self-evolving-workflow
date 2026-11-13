@@ -333,6 +333,17 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks));
     assert.match(body.messages[1].content, /Dry-run passed/);
+    if (body.messages[0].content.includes('Review the execution timeline')) {
+      const source = /receipt:fixture-project:skill-[a-f0-9]{64}#verified/.exec(body.messages[1].content)?.[0];
+      assert.ok(source);
+      const result = [{ memories: [
+        { type: 'verified_fix', content: 'Dry-run passed.', source_message_ids: [source] },
+        { type: 'error', content: 'An unsourced claim.', source_message_ids: ['absent'] },
+      ] }];
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }));
+      return;
+    }
     if (++calls === 1) {
       response.writeHead(503).end();
       return;
@@ -371,6 +382,14 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   assert.equal(repeated.replayed, true);
   assert.deepEqual(await invoke(['closeout', 'show', repeated.receipt]), { id: repeated.id, candidates: pending[0].candidates });
   assert.equal(calls, 2);
+  const review = await invoke(['evolve', 'review', 'host-invocation-1']);
+  assert.deepEqual(review.skill, { id: 'db-migration', version: 'git:abc123', status: 'failed' });
+  assert.equal(review.receipt, receipt);
+  assert.equal(review.evidence, 1);
+  assert.deepEqual(review.signals.map(({ kind, sources, runIds }) => [kind, sources, runIds]), [
+    ['verified_fix', [`receipt:fixture-project:${receipt}#verified`], []],
+  ]);
+  await assert.rejects(invoke(['evolve', 'review', 'missing-execution']), /receipt not found/);
   await assert.rejects(invoke([...args, '--status', 'cancelled']), /Skill completion changed/);
   assert.deepEqual(await invoke([...args, '--session', 'maestro-1']), { ignored: 'session-owned', session: 'maestro-1' });
   assert.deepEqual(await invoke([...args, '--skill', 'workflow-closeout']), { ignored: 'maintenance-skill' });
@@ -425,9 +444,23 @@ test('Session retrospective grounds Skill additions in its original evidence', a
   assert.match(normal.changes[0].content, /when resuming a saved run/);
   assert.match(normal.changes[1].content, /conversation:review-1#correction/);
   const low = draftSkillAddition({ ...input, priority: 'low' });
-  assert.equal(low.changes.length, 1);
-  assert.notEqual(low.changes[0].path, entry);
+  const [lowEntry, lowDocument, lowIndex] = low.changes;
+  assert.equal(lowEntry.path, entry);
+  assert.match(lowEntry.content, /\]\(references\/learnings\/index\.md\)/);
+  assert.doesNotMatch(lowEntry.content, new RegExp(low.id));
+  assert.match(lowIndex.content, new RegExp(`\\]\\(\\./${low.id}\\.md\\)`));
+  assert.match(lowDocument.content, /conversation:review-1#correction/);
   assert.equal(await readFile(entry, 'utf8'), baseline);
+  await mkdir(join(root, 'references', 'learnings'), { recursive: true });
+  for (const { path, content } of low.changes) await writeFile(path, content.replace(/\n/g, '\r\n'));
+  assert.deepEqual(draftSkillAddition({ ...input, priority: 'low' }).changes, [lowDocument]);
+  const nextLow = draftSkillAddition({ ...input, priority: 'low', instruction: 'Record the next useful case.' });
+  assert.equal(nextLow.changes.length, 2);
+  assert.equal(nextLow.changes[1].path, lowIndex.path);
+  assert.ok(nextLow.changes[1].content.includes(`./${low.id}.md`));
+  assert.ok(nextLow.changes[1].content.includes(`./${nextLow.id}.md`));
+  await writeFile(lowDocument.path, 'An unrelated existing document.');
+  assert.throws(() => draftSkillAddition({ ...input, priority: 'low' }), /Existing Skill learning document differs/);
   await writeFile(snapshot, (await readFile(snapshot, 'utf8')).replace(quote, 'A changed quote.'));
   await assert.rejects(reviewSession(root, 'review-1', {
     model: () => { throw new Error('Corrupted evidence reached the model'); },
