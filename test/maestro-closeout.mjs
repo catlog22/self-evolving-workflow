@@ -326,7 +326,65 @@ try {
   assert.deepEqual(await agent('wiki', 'get', published.id), reference);
   assert.equal((await agent('wiki', 'get', `${project}:spec:S-1`)).id, constraintId);
   assert.equal((await closeout('show', harvest.receipt)).id, harvest.id);
+
+  const global = env.MAESTRO_HOME;
+  const collab = join(workflow, 'collab');
+  const layerFixture = [
+    { scope: 'global', body: 'Check the signed global baseline.', source: global, wiki: global, legacy: join(global, 'specs') },
+    { scope: 'team', body: 'Check the shared staging window.', source: root, wiki: collab, legacy: join(collab, 'specs') },
+    ...['alice', 'alice-2'].map(uid => ({ scope: 'personal', uid, body: `Check the ${uid} migration profile.`,
+      source: root, wiki: join(collab, 'personal', uid), legacy: join(collab, 'specs', uid) })),
+  ];
+  await mkdir(join(collab, 'members'), { recursive: true });
+  const membership = async (uid, domain) => writeFile(join(collab, 'members', `${uid}.json`), JSON.stringify({
+    uid, name: uid, email: `alice@${domain}`, host: 'fixture', role: 'member', joinedAt: '2026-11-01T00:00:00Z',
+  }));
+  await membership('alice', 'example.invalid');
+  await membership('alice-2', 'other.invalid');
+  await git('config', 'user.name', 'Fixture Alice');
+  await git('config', 'user.email', 'alice@example.invalid');
+  for (const { scope, body, legacy } of layerFixture) {
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, 'architecture-constraints.md'), [
+      '---', 'category: arch', '---', `<spec-entry sid="S-1" title="${scope} check">`, body, '</spec-entry>', '',
+    ].join('\n'));
+  }
+  await configureLinks(links);
+  const beforeLayers = await cli(maestro, ['spec', 'load', '--category', 'arch', '--json'], env);
+  const ordered = [layerFixture[0].body, consumerRule, 'Use staging for migration checks.', layerFixture[1].body, layerFixture[2].body];
+  assert.equal(beforeLayers.totalLoaded, ordered.length);
+  const order = ordered.map(body => beforeLayers.content.indexOf(body));
+  assert.ok(order.every(at => at >= 0));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.ok(!beforeLayers.content.includes(layerFixture[3].body));
+  assert.equal((await start('unmigrated-layers')).wiki_constraints, undefined);
+  await assert.rejects(agent('wiki', 'migrate', root, '--scope', 'personal', '--uid', '../alice', '--project', project), /valid member UID/);
+  const layerIds = new Set();
+  for (const { scope, uid, source, wiki } of layerFixture) {
+    const args = ['wiki', 'migrate', source, '--scope', scope, '--project', project, ...(uid ? ['--uid', uid] : [])];
+    const [preview] = await agent(...args);
+    assert.equal(preview.existing, false);
+    assert.deepEqual(await agent(...args, '--apply'), [preview]);
+    assert.ok((await agent(...args, '--apply')).every(item => item.existing));
+    assert.ok(await readFile(join(wiki, 'wiki', 'entries', `${preview.id}.md`), 'utf8'));
+    layerIds.add(preview.id);
+  }
+  assert.equal(layerIds.size, 4);
+  const firstMember = await start('alice-rule-snapshot');
+  assert.deepEqual(firstMember.wiki_constraints.map(rule => rule.body.trim()), ordered);
+  assert.deepEqual(firstMember.wiki_constraints.map(rule => rule.source_layer), [
+    { kind: 'global' }, undefined, undefined, { kind: 'team' }, { kind: 'personal', uid: 'alice' },
+  ]);
+  await git('config', 'user.email', 'alice@other.invalid');
+  const secondMember = await start('second-member-rules');
+  assert.deepEqual(secondMember.wiki_constraints.map(rule => rule.body.trim()), [...ordered.slice(0, -1), layerFixture[3].body]);
+  const memberHistory = await flow('run', 'wiki-constraints', firstMember.run_id, '--session', 'alice-rule-snapshot');
+  assert.deepEqual(memberHistory.result.constraints, firstMember.wiki_constraints);
+  await git('config', 'user.email', 'visitor@example.invalid');
+  const visitor = await start('visitor-rules');
+  assert.deepEqual(visitor.wiki_constraints.map(rule => rule.body.trim()), ordered.slice(0, 3));
   console.log('Maestro preflight, evidence capture, Memory closeout, Wiki publication and index rebuild passed.');
+  console.log('Wiki migration preserved global, linked, project, team and member rule order and isolation.');
 } finally {
   if (model.listening) await new Promise(resolve => model.close(resolve));
   assert.match(await realpath(root), /[\\/]evolve-maestro-closeout-[a-zA-Z0-9]+$/);

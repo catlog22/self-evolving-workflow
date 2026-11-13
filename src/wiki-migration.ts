@@ -19,6 +19,18 @@ interface LegacyEntry {
   keywords?: string[];
 }
 
+interface LegacyWikiLayer {
+  scope: 'project' | 'global' | 'team' | 'personal';
+  uid?: string;
+}
+
+export function validateWikiMemberUid(uid: string | undefined): string {
+  if (!uid || !/^[a-z0-9][a-z0-9_.+@-]*$/i.test(uid) || uid.endsWith('.')) {
+    throw new InputError('Personal Wiki migration requires a valid member UID');
+  }
+  return uid;
+}
+
 const legacySpecFiles: Partial<Record<string, WikiCategory>> = {
   'coding-conventions.md': 'coding', 'architecture-constraints.md': 'arch', 'debug-notes.md': 'debug',
   'test-conventions.md': 'test', 'review-standards.md': 'review', 'quality-rules.md': 'review',
@@ -73,7 +85,9 @@ function parseSpecs(source: string, origin: string): LegacyEntry[] {
       category, repositories: fileRepositories,
     });
   }
-  if (!specs.size && document.body.replace(/^#+\s+.*$/gm, '').replace(/^---+$/gm, '').trim()) {
+  const plainBody = document.body.replace(/^#+\s+.*$/gm, '').replace(/^---+$/gm, '').trim();
+  const emptyLearningsSeed = basename(origin) === 'learnings.md' && plainBody === 'Add entries with: `/maestro-spec learning <description>`';
+  if (!specs.size && plainBody && !emptyLearningsSeed) {
     const title = typeof document.frontmatter.title === 'string' && document.frontmatter.title.trim()
       ? document.frontmatter.title.trim() : document.body.match(/^#\s+(.+)$/m)?.[1]?.trim() || basename(origin, '.md');
     specs.set(firstLine, {
@@ -84,32 +98,51 @@ function parseSpecs(source: string, origin: string): LegacyEntry[] {
   return [...specs.entries()].sort(([left], [right]) => left - right).map(([, entry]) => entry);
 }
 
-function collectLegacy(sourceRoot: string): LegacyEntry[] {
+function readLegacySpecFolder(sourceRoot: string, relative: string): LegacyEntry[] {
+  const directory = join(sourceRoot, relative);
+  const info = lstatSync(directory, { throwIfNoEntry: false });
+  if (!info) return [];
+  if (!info.isDirectory()) throw new InputError(`Invalid legacy Spec directory: ${directory}`);
+  return readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap(file =>
+    file.isFile() && file.name.endsWith('.md')
+      ? parseSpecs(readFileSync(join(directory, file.name), 'utf8').replace(/^\uFEFF/, ''), `${relative}/${file.name}`)
+      : [],
+  );
+}
+
+function collectLegacy(sourceRoot: string, layer: LegacyWikiLayer): LegacyEntry[] {
+  if (layer.scope === 'global') return readLegacySpecFolder(sourceRoot, 'specs');
   const entries: LegacyEntry[] = [];
   const workflow = join(sourceRoot, '.workflow');
   if (!lstatSync(workflow, { throwIfNoEntry: false })?.isDirectory()) {
     throw new InputError(`Legacy project has no regular .workflow directory: ${workflow}`);
   }
-  for (const folder of ['specs', 'knowhow'] as const) {
-    const directory = join(workflow, folder);
-    const info = lstatSync(directory, { throwIfNoEntry: false });
-    if (!info) continue;
-    if (!info.isDirectory()) throw new InputError(`Invalid legacy knowledge directory: ${directory}`);
-    for (const file of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!file.isFile() || !file.name.endsWith('.md')) continue;
-      const source = readFileSync(join(directory, file.name), 'utf8').replace(/^\uFEFF/, '');
-      const origin = `.workflow/${folder}/${file.name}`;
-      if (folder === 'specs') {
-        entries.push(...parseSpecs(source, origin));
-        continue;
-      }
-      const parsed = parseFrontmatter(source);
-      if (source.startsWith('---') && !parsed.hasFrontmatter) throw new InputError(`Invalid Knowhow frontmatter: ${origin}`);
-      const oldId = typeof parsed.frontmatter.id === 'string' ? parsed.frontmatter.id : basename(file.name, '.md');
-      const title = parsed.frontmatter.title || parsed.body.match(/^#\s+(.+)$/m)?.[1] || oldId;
-      entries.push({ origin, oldId, title, body: parsed.body, mode: 'reference', metadata: parsed.frontmatter,
-        repositories: parsed.frontmatter.appliesToRepoIds ?? parsed.frontmatter['applies-to-repo-ids'] });
-    }
+  if (layer.scope !== 'project') {
+    const collab = lstatSync(join(workflow, 'collab'), { throwIfNoEntry: false });
+    if (!collab) return [];
+    if (!collab.isDirectory()) throw new InputError('Invalid legacy collaboration directory');
+    const shared = '.workflow/collab/specs';
+    if (layer.scope === 'team') return readLegacySpecFolder(sourceRoot, shared);
+    const specs = lstatSync(join(sourceRoot, shared), { throwIfNoEntry: false });
+    if (!specs) return [];
+    if (!specs.isDirectory()) throw new InputError('Invalid legacy collaboration Spec directory');
+    return readLegacySpecFolder(sourceRoot, `${shared}/${layer.uid}`);
+  }
+  entries.push(...readLegacySpecFolder(sourceRoot, '.workflow/specs'));
+  const directory = join(workflow, 'knowhow');
+  const info = lstatSync(directory, { throwIfNoEntry: false });
+  if (!info) return entries;
+  if (!info.isDirectory()) throw new InputError(`Invalid legacy knowledge directory: ${directory}`);
+  for (const file of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!file.isFile() || !file.name.endsWith('.md')) continue;
+    const source = readFileSync(join(directory, file.name), 'utf8').replace(/^\uFEFF/, '');
+    const origin = `.workflow/knowhow/${file.name}`;
+    const parsed = parseFrontmatter(source);
+    if (source.startsWith('---') && !parsed.hasFrontmatter) throw new InputError(`Invalid Knowhow frontmatter: ${origin}`);
+    const oldId = typeof parsed.frontmatter.id === 'string' ? parsed.frontmatter.id : basename(file.name, '.md');
+    const title = parsed.frontmatter.title || parsed.body.match(/^#\s+(.+)$/m)?.[1] || oldId;
+    entries.push({ origin, oldId, title, body: parsed.body, mode: 'reference', metadata: parsed.frontmatter,
+      repositories: parsed.frontmatter.appliesToRepoIds ?? parsed.frontmatter['applies-to-repo-ids'] });
   }
   return entries;
 }
@@ -123,20 +156,23 @@ function statusFor(entry: LegacyEntry): WikiEntryMetadata['status'] {
   return 'active';
 }
 
-export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: string, apply = false) {
+export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: string, apply = false,
+  layer: LegacyWikiLayer = { scope: 'project' }) {
   project = requireText(project, 'legacy project ID');
   if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(project)) throw new InputError('Legacy project ID must be a stable slug');
+  if (layer.scope === 'personal') validateWikiMemberUid(layer.uid);
+  const sources = collectLegacy(sourceRoot, layer);
   const destination = join(wiki.root, 'wiki', 'entries');
   for (const path of [join(wiki.root, 'wiki'), destination]) {
     const info = lstatSync(path, { throwIfNoEntry: false });
     if (info && !info.isDirectory()) throw new InputError(`Invalid Wiki migration directory: ${path}`);
   }
-  const sources = collectLegacy(sourceRoot);
   const oldIds = new Map<string, string>();
   const knowhowPaths = new Map<string, string>();
+  const namespace = layer.scope === 'personal' ? `personal:${layer.uid}:` : layer.scope === 'project' ? '' : `${layer.scope}:`;
   const writes = sources.map(entry => {
     const kind = entry.mode === 'constraint' ? 'spec' : 'knowhow';
-    const key = `${project}:${kind}:${entry.oldId || entry.origin}`;
+    const key = `${project}:${kind}:${namespace}${entry.oldId || entry.origin}`;
     const id = `legacy-${createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
     if (entry.oldId) {
       const oldKey = `${kind}:${entry.oldId.toLowerCase()}`;

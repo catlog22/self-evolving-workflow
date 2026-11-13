@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
@@ -16,7 +16,7 @@ import {
 import { reviewSession, reviewSkillExecution } from './retrospective.js';
 import { draftSkillAddition } from './skill-addition.js';
 import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
-import { migrateLegacyWiki } from './wiki-migration.js';
+import { migrateLegacyWiki, validateWikiMemberUid } from './wiki-migration.js';
 import { isRepositoryId, isWikiCategory } from './wiki-entry.js';
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
 
@@ -31,7 +31,7 @@ const help = `Usage: agent-memory <command> [options]
   wiki search <query>                      Search wiki pages (--hop 0)
   wiki get <id>                            Read a Wiki entry, including history
   wiki constraints                         Resolve active constraints (--skill, --task, --path, --category, --repository, --keyword)
-  wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
+  wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --scope project|global|team|personal, --uid, --apply)
   wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
   wiki changes [change-id]                 Read change previews and application receipts (--entry)
   wiki apply <change-id>                   Apply an approved Wiki change
@@ -94,6 +94,7 @@ const options = {
   path: { type: 'string', multiple: true },
   history: { type: 'boolean' },
   project: { type: 'string' },
+  uid: { type: 'string' },
   apply: { type: 'boolean' },
   transcript: { type: 'string' },
   receipt: { type: 'string' },
@@ -212,9 +213,27 @@ async function main() {
           keyword: values.keyword,
           includePathScoped: values['include-path-scoped'] }));
       }
-      case 'migrate': return print(migrateLegacyWiki(
-        wiki, requireText(args[0], 'legacy project root'), requireText(values.project, 'legacy project ID'), values.apply,
-      ));
+      case 'migrate': {
+        const scope = values.scope ?? 'project';
+        if (scope !== 'project' && scope !== 'global' && scope !== 'team' && scope !== 'personal') {
+          throw new InputError('Expected Wiki migration scope project, global, team, or personal');
+        }
+        const source = resolve(requireText(args[0], 'legacy source root'));
+        const uid = scope === 'personal' ? validateWikiMemberUid(values.uid) : undefined;
+        const collab = join(root, '.workflow', 'collab');
+        if (!values['wiki-root'] && (scope === 'team' || scope === 'personal')) {
+          const parents = [join(root, '.workflow'), collab];
+          if (uid) parents.push(join(collab, 'personal'), join(collab, 'personal', uid));
+          for (const parent of parents) {
+            const info = lstatSync(parent, { throwIfNoEntry: false });
+            if (info && !info.isDirectory()) throw new InputError(`Invalid Wiki migration directory: ${parent}`);
+          }
+        }
+        const layerRoot = scope === 'global' ? source : scope === 'team' ? collab
+          : uid ? join(collab, 'personal', uid) : root;
+        const destination = new Wiki(values['wiki-root'] ?? layerRoot);
+        return print(migrateLegacyWiki(destination, source, requireText(values.project, 'legacy project ID'), values.apply, { scope, uid }));
+      }
       case 'propose': {
         const change = JSON.parse(readFileSync(requireText(args[0], 'change file'), 'utf8').replace(/^\uFEFF/, ''));
         const evidence = values.evidence ?? [];

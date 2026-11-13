@@ -219,7 +219,17 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 选一组项目基线任务，将原入口和新入口的约束集合逐条比对，覆盖项目全局、局部适用、已退役和冲突条目。完成迁移核对的范围切到新 Wiki 读取与更新，旧文件保留为可回查档案。受影响的范围在依赖核对完成前沿用旧入口。切换前保留来源快照和 ID 映射，便于查回旧条目或回退读取入口。
 
-新 Run 复用 `workspaces.linked` 的 `share: [spec]` 权限。已迁移的共享源从该仓库自己的 `wiki/entries/` 读取，规则按消费方 UUID 筛选。快照用 `source_repository` 记录来源别名和可取得的 UUID。共享源仍只有旧 Spec 时，相关新 Run 沿用旧读取入口。撤销共享影响后续分派，已启动的 Run 沿用原快照。验收覆盖缓存身份失效、仅分享 Knowhow、跨仓库适用范围和撤销后的恢复。共享参考检索及全局、团队、个人规则的迁移仍待接入。 [共享约束装载](/D:/evolve-maestro-runtime/src/run/v3/evolve-closeout.ts:27)
+新 Run 复用 `workspaces.linked` 的 `share: [spec]` 权限。已迁移的共享源从该仓库自己的 `wiki/entries/` 读取，规则按消费方 UUID 筛选。快照用 `source_repository` 记录来源别名和可取得的 UUID。撤销共享影响后续分派，已启动的 Run 沿用原快照。验收覆盖缓存身份失效、仅分享 Knowhow、跨仓库适用范围和撤销后的恢复。共享参考检索仍待接入。 [共享约束装载](/D:/evolve-maestro-runtime/src/run/v3/evolve-closeout.ts)
+
+用 `agent-memory --root <project> wiki migrate <source> --project <id> --scope <scope>` 预览各层迁移，确认后加 `--apply`。全局层的 `<source>` 为 `MAESTRO_HOME`，团队与个人层为 Maestro 项目根目录，个人迁移另传 `--uid <member-uid>`。各目录沿用同一 Wiki 格式。
+
+| 层 | 旧规则目录 | Wiki 条目目录 |
+| --- | --- | --- |
+| 全局 `global` | `MAESTRO_HOME/specs/` | `MAESTRO_HOME/wiki/entries/` |
+| 团队 `team` | `.workflow/collab/specs/` | `.workflow/collab/wiki/entries/` |
+| 个人 `personal` | `.workflow/collab/specs/<uid>/` | `.workflow/collab/personal/<uid>/wiki/entries/` |
+
+新 Run 按全局、共享仓库、项目、团队、个人的顺序合并约束。团队与个人沿用本地 Git 邮箱对应的成员记录。个人层只读取该成员的目录，快照记录层和 UID。仍有适用旧约束且对应层尚未导入时，分派沿用旧读取路径。旧脚手架的示例和空种子无需切换。已完成的 Run 使用分派时的快照。 [新旧分层验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
 `agent-memory wiki constraints` 和 `maestro run wiki-constraints` 均支持 `--keyword`。已导入的结构化条目继续使用原关键词，旧 Wiki 页面可从保存的迁移属性读取。运行中的查询只读取该 Run 固定的约束及其关键词。 [新旧读取验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
