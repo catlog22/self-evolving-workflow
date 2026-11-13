@@ -1,0 +1,257 @@
+# Evolve Workflow 规划
+
+讨论日期为 2026 年 11 月 13 日。方案基于 Maestro2 源码、当前知识引擎，以及与 Agy 对 Wiki 和 Session/Run 架构的评审。文中的数据结构和运行流程用于后续实现评审。
+
+## 1. 目标与架构
+
+Evolve Workflow 是 Maestro2 的升级。Maestro2 提供 Session、Run 和 Skill 的执行生命周期，Evolve 使用从 TencentDB Agent Memory 提取的本地引擎，把任务中的错误、用户纠正和验证结果沉淀为项目知识，并用可回放的证据改进 Skill。
+
+首版用一个项目内可控的 Skill 跑通完整流程，覆盖 Maestro Session 收尾、独立 Skill 收尾、知识检索与更新，以及 Skill 补丁的生成、回放、应用和回滚。
+
+```text
+Maestro Session 完成 / 独立 Skill 明确结束
+  → 完成回执与已冻结的证据
+  → 多层沉淀 Skill + MemoryCore L1 提取
+  → 匹配已有 Wiki → 补证 / 待确认候选
+  → 发布到统一 Wiki → 后续 Session 加载约束、检索参考
+  → 自进化 Skill 读取相关证据 → 补丁 → 回放 → 应用并验证
+```
+
+| 组件 | 职责 |
+| --- | --- |
+| Maestro2 Session/Run | 管理步骤链、执行状态、决策、产物和完成回执，校验已绑定的执行契约。 |
+| Maestro 入口与宿主 | 入口负责路由、编排和推进。宿主执行端沿版本固定的 Markdown 链接读取 Skill 及其流程。 |
+| MemoryCore L1 | 从有边界的任务证据中提取情境和经验，保留来源消息。 |
+| MemoryKnowledge | 提供 Wiki 全文检索和页面关系。涉及代码时，可用 CodeGraph 定位文件、符号和调用关系。 |
+| Evolve | 负责回执消费、证据校验、Wiki 条目、候选更新、旧库迁移和 Skill 改动的验证流程。 |
+
+### 上游版本与复用范围
+
+截至讨论日期，TencentDB Agent Memory 最新正式发布为 `v2.0.3`（`084bed4`），默认分支为 `42d4cde`，与本地提取基线一致。两者之间的 8 个提交未改动本方案用到的 L1 提取、Skill 提取及 Wiki 引擎目录。首版固定完整提交 `42d4cde50c5a83182fced8c584f9ddb32a620615`，继续复用本地的 MemoryCore L1 与 MemoryKnowledge Wiki/CodeGraph，升级时按提交差异和集成测试显式更新。 [上游发布](https://github.com/TencentCloud/TencentDB-Agent-Memory/releases/tag/v2.0.3) · [提交差异](https://api.github.com/repos/TencentCloud/TencentDB-Agent-Memory/compare/v2.0.3...42d4cde50c5a83182fced8c584f9ddb32a620615) · [本地 L1 提取](/D:/evolve_workflow/src/upstream/l1-extraction.ts)
+
+上游提供两处可直接借鉴的能力。Wiki 的 Markdown、全文索引和页面链接继续复用。Skill 提取沿用相关 Skill 检索与评审的思路，模型工具只输出补丁提案。上游 `skill_create` / `skill_patch` 的写入时机早于评审结果返回，Evolve 的写入权由独立的应用步骤持有。整体以本地库运行。 [本地 Wiki](/D:/evolve_workflow/src/wiki.ts:42) · [上游 Skill 工具](/D:/evolve_workflow/ref/TencentDB-Agent-Memory/MemoryCore/src/core/skill/skill-tools.ts:122)
+
+## 2. Session/Run 与 Skill 编排
+
+### 保留 Session/Run v3
+
+Session 管理目标、步骤链、决策和同一 Session 内的产物关系。Run 记录一次执行尝试，按既有操作检查输入与产物，完成时提交封存回执。继续使用 `run next`、`run brief`、`run check`、`run complete --advance`、`run decide` 和 `session complete`。协调器消费 Runtime 返回的定位、修订号和结构化续步，同一任务在单步、多步和恢复之间沿用同一 Session。 [Session 状态机](/D:/maestro2/src/run/v3/session-machine.ts:8) · [Run 生命周期](/D:/maestro2/workflows/run-mode.md:14)
+
+### Skill 自带流程，用 Markdown 链接连接
+
+各 Skill 的 `SKILL.md` 负责入口、适用条件和简短执行说明。长流程、准备指导和分支步骤放在本包的 `references/` 或 `phases/`，用 Markdown 相对链接按需读取。角色与脚本也随对应 Skill 打包。共享 Session/Run 说明保留一份，供需要持久化执行状态的 Skill 引用。下面是目标结构示例。
+
+```text
+skills/
+  maestro/SKILL.md
+  analyze/SKILL.md
+  analyze/references/workflow.md
+  odyssey/SKILL.md
+  odyssey/phases/
+  swarm/SKILL.md
+  swarm/roles/
+  swarm/scripts/
+```
+
+例如，Maestro 入口用 `[分析 Skill](../analyze/SKILL.md)` 指向分析 Skill，分析 Skill 用 `[执行流程](references/workflow.md)` 指向下一份文件。第一跳由协调器从当前步骤的可信 Skill 入口确定。执行端以实际加载文件所在目录为基准解析后续链接。执行引用限于显式选定的 Skill 包和声明引用的共享说明。Wiki、任务报告和普通正文里的链接供读取，是否执行下一步仍由 Session 步骤链与续步决定。
+
+### 移除新 Run 的 Skill 加载
+
+| 层 | 改动 |
+| --- | --- |
+| 协调器 | 通过可信的 Skill 解析入口选择具体包，绑定稳定 Skill ID、入口 Markdown 路径和包版本。该入口从已选定的固定版本读取 `SKILL.md` frontmatter，规范化机器契约并记录绑定。步骤发现与调度使用同一解析结果。 |
+| Session/Run Runtime | 保存步骤执行引用、已绑定的机器契约快照及其哈希。继续按该快照校验参数、产物、门禁和链变更。新路径的 `next`、`brief`、`check` 与 `complete` 消费记录的引用和契约，去掉扫描 `prepare/`、`workflows/`、查找 `SKILL.md` 和组装指导正文的逻辑。 |
+| 宿主执行端 | 从 Run 返回的引用读取对应版本的 Skill，再沿 Markdown 链接加载本次需要的流程。用于执行提示的 `prepare` 内容和文字完成清单随 Skill 读取。 |
+
+当前 `run check` 和产物封存会重新解析 Skill 契约，启动包也会解析旧目录生成 `guidance`。切换时先用绑定的契约快照接替这些校验。快照保留现有参数、输入、输出、进入与退出门禁及允许的链效果。可信绑定入口可由现有 CLI 在同一进程调用。Runtime 从此入口登记的绑定取得契约，核对 Skill 身份、版本及契约摘要，按快照执行验证。普通调用者和工作者提交的契约、报告及 Markdown 正文均无法改变这份绑定。项目约束仍按 Wiki 的有效范围加载。 [现有步骤解析](/D:/maestro2/src/run/contract.ts:614) · [现有启动包](/D:/maestro2/src/run/v3/mutation-engine.ts:1072) · [现有完成检查](/D:/maestro2/src/commands/run-v3.ts:503)
+
+### 版本固定、恢复和缺失引用
+
+首个样本选择受 Git 管理的项目 Skill，以可回取的仓库提交、包路径及目录树 ID 固定整包版本。包内文件从该提交读取，工作树修改等提交并重新绑定后才生效。公共说明如参与本次执行，随绑定记录其可回取版本。执行端通过受控读取入口记录实际读取的相对路径和 Git blob ID。`run check` 和完成步骤核对受控读取记录与已绑定的包清单，再用原契约检查结果。自进化样本可先在隔离工作区把候选固定为测试提交，再由宿主回放。未纳入 Git 的安装包后续可用按内容寻址、可回取的整包快照走同一约定。
+
+已有 Run 恢复时使用原绑定和契约，并在该 Run 仍需恢复期间保留对原版本的读取能力。Skill 发布新版本后，新的调用可以绑定新版，旧 Run 继续引用原版。缺失版本、断链、路径越界或同名来源不明时，停止执行该步骤，输出确切引用与原因。优先补齐原版本。若确认需要改用新版，则通过现有取消或重试流程创建带新绑定的 Run，保留原尝试及已封存产物。迁移前创建、尚无新绑定的 Run 继续走原解析兼容路径。
+
+### 合并 Next、Ralph 和现有 Maestro 入口
+
+统一使用 `maestro`。意图识别与任务分级沿用 Next，初始步骤链规划沿用 Maestro，已确认步骤推进、恢复和有限重试沿用 Ralph。正常模式与自动模式共用一个执行循环。协调器逐次读取 Runtime 的续步与最新修订号，完成同一 Session。自动策略在原授权范围内增加低风险选择，涉及新授权、风险升级或门禁未解决时保留人工决策。
+
+| 入口用法 | 行为 |
+| --- | --- |
+| `maestro <任务>` | 轻量任务可直接执行。需要状态恢复、门禁或产物交接时，建立一条 Session 步骤链并执行已确认步骤。 |
+| `maestro --auto <任务>` | 使用同一循环和步骤链，允许授权范围内的有限重试与低风险调整。 |
+| `maestro --resume <session-id>` | 使用确切 Session ID 恢复，沿用原 Run、决策和产物绑定。 |
+
+迁移期保留旧 Next、Ralph 和 Maestro 的调用方式。旧命令以兼容入口委托统一实现，保留原参数、确认条件和恢复方式。旧 Next 只展示转交命令的分支继续只展示建议。旧 `-y` 依原入口处理，统一 `--auto` 由用户显式选择。兼容入口避免重复打开 Session 或重复创建 Run。 [Next 路由](/D:/maestro2/.codex/skills/maestro-next/SKILL.md:30) · [Maestro 初始规划](/D:/maestro2/.codex/skills/maestro/SKILL.md:45) · [Ralph 策略](/D:/maestro2/.codex/skills/maestro-ralph/SKILL.md:43)
+
+### 专用 Skill 与知识闭环
+
+| Skill | 职责 |
+| --- | --- |
+| 元 Skill | 设计、生成和校验 Skill 包，检查相对链接、契约声明和回放用例。以 `maestro-skill-design` 草稿为候选，整合现有元 Skill 的 Maestro 专用能力。 |
+| Odyssey | 保留长期诊断、修复和复验的迭代策略。各模式与共享阶段随 Odyssey 包分发，Session/Run 管理外层进度。 |
+| Swarm | 保留并行探索、评分及迭代收敛。协调器提交 Run 结果，角色、迭代文件和脚本由 Swarm 管理并随包分发。 |
+
+沉淀与自进化保留可单独调用的入口，完成回执进入第 4 节的沉淀流程。Maestro2 工作树已有 Skill 进化信号、评审、投影及元 Skill 的在研实现。评估复用信号和评审入口，统一由第 5 节的真实回放与版本校验负责 Skill 变更生效。 [元 Skill 草稿](/D:/maestro2/.codex/skills/maestro-skill-design/SKILL.md:40) · [Odyssey 模式](/D:/maestro2/.codex/skills/maestro-odyssey/SKILL.md:41) · [Swarm 包内引用](/D:/maestro2/.codex/skills/team-swarm/SKILL.md:92) · [进化收尾](/D:/maestro2/ref/skill-evolve-closeout.md:5)
+
+## 3. 统一 Wiki
+
+### 条目存储
+
+每个项目用 `wiki/entries/<稳定 ID>.md` 存放正式条目。文件名就是条目的稳定 ID。标题、主题和 `mode` 变化时复用原路径。每页承载一条能够独立引用和更新的知识。用 `tags` 和 `[[entries/<id>]]` 组织主题，主题导航可按需从索引生成。
+
+Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重建。初始执行时按作用域解析约束，再按任务检索参考。生效约束的选择以作用域和状态为准，全文检索排名只用于参考条目的相关性排序。
+
+### 条目格式
+
+| 字段 | 含义 |
+| --- | --- |
+| `title` | 能独立说明条目内容的短标题。 |
+| `mode` | `constraint` 表示执行约束，`reference` 表示可参考的经验。 |
+| `status` | `active` 为当前版本，`deprecated` 供历史查询，`needs_review` 用于切换前尚待核实的条目。 |
+| `scope` | 适用项目范围。项目全局用 `project` 显式声明，局部可用 `skill:<id>`、`path:<glob>` 或 `task:<kind>`。列表中的范围是可独立命中的适用条件。缺少上下文的局部范围保持未命中。旧复合条件需要按原语义核对后再切换。 |
+| `sources` | 可回查的证据引用。任务证据指向完成回执与具体片段，迁移证据指向原项目、文件和条目锚点。 |
+| `tags`、`aliases` | 可选。前者用于主题或旧子类型，后者保留来源项目内的旧身份。 |
+
+下面是格式示例，`sources` 中的值为占位。
+
+```markdown
+---
+title: 数据库迁移前执行预检
+mode: constraint
+status: active
+scope: [skill:db-migration]
+sources:
+  - "<完成回执中的可回查证据引用>"
+---
+
+执行数据库迁移前先运行 `--dry-run`。预检通过后才执行迁移。
+```
+
+约束正文写适用条件、必须采取的动作和必要例外。参考正文写触发情况、做法和验证方法。两种模式共用正文格式。经验升为约束时，如果讲的是同一个命题，在明确确认后更新原页的 `mode`，保留 ID、证据和 Git 历史。原有经验包含独立的操作细节时，可保留经验页并链接约束页。
+
+`sources` 用于回查任务证据，写入前校验引用能定位到对应回执。已有图谱从正文 `[[…]]` 解析页面间关系。自动补证只追加 `sources`，Wiki 页面间的关联在正文显式表达。 [Wiki 索引与关系解析](/D:/evolve_workflow/src/wiki.ts:42)
+
+## 4. 多层沉淀 Skill
+
+### 触发与证据
+
+Maestro Session 结束前固定本次可提取的证据范围和锚点，结束时使用同侧提交的完成回执记录这些引用。证据准备和提交路径只做确定性操作，模型提取在提交之后异步执行。现有 Maestro2 v3 完成事务写入文件型回执，完成后封存证据和候选侧写。Evolve 从已提交回执读取，并通过补扫恢复漏投事件。接入首版时，用完成回执携带证据引用并验证能回查，通过后再接入提取。 [Session 完成事务](/D:/maestro2/src/run/v3/mutation-engine.ts:1535) · [封存证据约束](/D:/maestro2/src/run/transcript-evidence.ts:201)
+
+独立 Skill 通过执行入口明确记录 `succeeded`、`failed` 或 `cancelled`，生成包含执行 ID、实际 Skill 版本和证据引用的结束回执。两类回执进入同一沉淀入口。宿主 `Stop` 此时只作为会话监测信号。关联同一个 Skill 调用的 Session 回执和独立回执时，使用执行 ID 与证据锚点归并信号。沉淀和自进化 Skill 自身的执行事件排除在这一自动触发入口之外，避免递归触发。 [宿主 Stop 处理](/D:/maestro2/src/commands/hooks.ts:1360)
+
+| 层次 | 内容与去向 |
+| --- | --- |
+| 任务证据 | 用户纠正、报错、修复动作、验证结果、实际 Skill 版本。保留可定位的原始来源。 |
+| 可复用知识 | 提取有适用条件与验证依据的经验，匹配同一项目 Wiki 中的已有条目。 |
+| Skill 改进信号 | 只有证据能定位到某个版本的步骤缺漏、歧义或执行约束时，才交给自进化 Skill。 |
+
+工具失败后恢复成功可以作为搜索线索。判定原因时需要把失败、介入动作和结果关联起来，并检查当时实际加载的 Skill。如果步骤已写明却被跳过，先查执行器和流程约束。项目特有的问题沉淀为项目经验。临时故障和根因待确认的问题留在任务证据中。提取器输出的来源引用必须归属于本次证据快照，可验证后才进入 Wiki 候选。
+
+### 更新决策
+
+| 结果 | 首版行为 |
+| --- | --- |
+| 同一参考在相同条件下再次得到验证 | 自动给唯一匹配的 `active` 参考页追加经过校验的 `sources`，正文与作用域保持原值。 |
+| 新参考，或已有参考的结论、步骤、适用条件需要变化 | 暂存候选，列出证据和差异，由统一更新入口确认并发布。 |
+| 新增、修改、退役约束，或者参考升为约束 | 暂存候选，说明适用范围和影响，经明确确认后应用。 |
+| 同义匹配不唯一、证据相反或范围重叠 | 保留现有生效条目，列出冲突双方及证据供审查。 |
+| 证据不足或本次无可复用结果 | 记录本次处理完成与原因，允许产生零候选。 |
+
+候选只携带操作、目标 ID、修改前版本、证据引用和变更内容。更新入口按 ID 定位页面，应用前比对基线内容哈希。文件变动后重新对照当前正文、证据和作用域。当前通用 ingest 按类型和标题决定路径，这个受控入口按稳定 ID 写页面，随后重建或刷新现有 Wiki 索引。 [通用 ingest 当前写入逻辑](/D:/evolve_workflow/src/wiki-ingest.ts:59)
+
+完成回执和候选处理状态放在本地运行存储中，优先复用现有 SQLite 运行数据层，与可重建的 Wiki 索引分开。以来源项目加完成回执 ID 幂等消费，输出内容措辞的变化不影响处理身份。候选或零候选结果持久化后才确认本次处理。补证以规范化的证据引用去重，发布时保存更新基线与目标版本。文件写入后、运行回执确认前发生中断时，通过目标内容哈希复核已完成的写入，避免重复改动。Wiki 正文可从 Git 历史恢复，回滚后重新索引。
+
+## 5. 自进化 Skill
+
+1. **选择改动。** 读取相关 Wiki 条目、原始失败与验证证据、实际 Skill 路径和基线哈希。确定可修改的具体步骤。进入首版验证的目标限定为项目内选定的 Skill。
+2. **生成补丁。** 产出局部改动、依据和预期改善，绑定知识 ID、目标路径、基线哈希和补丁哈希。提取和提案阶段的模型调用只具备读取和生成权限。
+3. **真实回放。** 用宿主显式加载旧版与候选版，在相同任务输入和等价环境下分别执行。记录实际加载路径和内容哈希，用带预期失败标记的候选验证加载路径，防止同名 Skill 的发现优先级遮蔽候选。对比目标失败和原有成功场景。
+4. **应用与回滚。** 确认采用的补丁和验证结果后，由更新入口校验目标基线未变，再原子替换文件。重新调用确认宿主加载了新版。应用回执关联知识条目、回放结果与新旧版本，回滚时恢复上一版并再次检查实际加载结果。
+
+首版用本地项目 Skill 和真实宿主验证路径装载，候选装载实验限定在验证执行中。Wiki 继续承载跨任务约束与经验，Skill 中通过稳定 ID 引用相关知识。只有适合固化在执行步骤中的改动进入 Skill 文件。
+
+## 6. 旧 Spec 和 Knowhow 迁移
+
+### 两遍导入
+
+第一遍解析固定的 Maestro2 来源快照。旧 Spec 用原解析语义拆成独立条目，以 `constraint` 导入，覆盖可识别的 `<spec-entry>` 和旧标题条目。旧 Knowhow 沿用一份内容为一条的粒度，以 `reference` 导入。正文原样保留，旧 `recipe`、`tip` 等子类型可保留为标签。 [旧 Spec 解析](/D:/maestro2/src/tools/spec-entry-parser.ts:123) · [旧 Knowhow 存储](/D:/maestro2/src/tools/store-knowhow.ts)
+
+有原 ID 的条目用来源项目与旧 ID 建立映射。无 `sid` 的条目用来源项目、原文件和可区分的条目锚点生成确定性 ID，并在迁移映射中固化。重复迁移按映射定位同一条目，发现目标已经修改时交给审查。迁移输入使用普通解析与确定性映射，保留来源与原文。
+
+第二遍解析旧引用、生命周期、适用范围和替代关系。保留旧别名，已有替代关系映射到新 ID，退役条目仍可按 ID 查历史。`category` 和关键词可保留为标签或旧选择器的输入，实际适用范围按旧调用行为映射。遇到 ID 冲突、作用域未知、旧约束互相冲突或引用断链时，保留原类型与证据并标记 `needs_review`，明确受影响的切换范围。疑似重复条目进入核对列表，正文逐条迁移。
+
+### 切换
+
+选一组项目基线任务，将原入口和新入口的约束集合逐条比对，覆盖项目全局、局部适用、已退役和冲突条目。完成迁移核对的范围切到新 Wiki 读取与更新，旧文件保留为可回查档案。受影响的范围在依赖核对完成前沿用旧入口。切换前保留来源快照和 ID 映射，便于查回旧条目或回退读取入口。
+
+## 7. 迁移顺序与验收
+
+| 阶段 | 工作 | 通过条件 |
+| --- | --- | --- |
+| 1. 固定基线并试迁 `analyze` | 按下文试迁任务接入可信绑定、契约快照和 Markdown 链接。其他步骤沿用兼容路径。 | 新旧入口的参数、产物和门禁行为一致。启动包仅含引用与运行元数据。旧 Run 可恢复，缺失版本可定位。 |
+| 2. 合并编排入口 | 在样本路径上收敛 Next 的路由、Maestro 的规划、Ralph 的循环，保留旧调用兼容入口。 | 规划、执行和恢复只绑定一条 Session。旧 Next 的建议分支无执行副作用。手动与自动使用同一链，风险升级时保留确认。 |
+| 3. 统一 Wiki 与样本迁移 | 增加条目读取、作用域匹配、历史查询和旧 ID 解析。迁移一组有关联的 Spec 与 Knowhow。 | 原文、来源和旧引用可回查。迁移重跑命中原 ID。同一任务前后加载相同的有效约束。重建索引后解析结果一致。 |
+| 4. 收尾沉淀与发布 | 接入 Session 完成回执和独立 Skill 结束回执。实现证据校验、匹配、补证与候选发布。 | 重复投递、漏投补扫和中途重试都只产生一批结果。零候选正常完成。相反证据生成冲突候选。约束与候选发布可追溯。 |
+| 5. 自进化闭环 | 选一个项目 Skill，生成局部补丁，通过真实宿主回放后应用并回滚。 | 旧版能复现问题，候选改善目标行为，原有成功场景通过。实际加载路径和哈希与候选一致，能拒绝基线漂移，应用和回滚都可复查。 |
+| 6. 扩大迁移范围 | 迁移元 Skill、Odyssey、Swarm 和其他步骤。按仓库或 Skill 比对旧规则，逐组切换。 | 宿主安装后可以从包内读取所需流程。Odyssey 可恢复原模式，Swarm 的角色及产物契约不变。新 Wiki 接管确认范围，旧运行记录走兼容读取。 |
+
+### 7.1 `analyze` 试迁任务
+
+试迁只对明确启用的 `analyze` / `maestro-analyze` 生效。两种命令名映射到同一个 Skill，原入口继续可用。先记录旧行为并完成新路径的端到端验收，再进入阶段 2 的编排入口合并。
+
+| 任务 | 工作和交付 | 依赖 |
+| --- | --- | --- |
+| **A1 固定基线** | 固定一份 Maestro2 来源版本，给完整分析、`-q`、`--gaps [ISS-ID]`、`--from <artifact-alias>` 及数字和文本主题留出对照样本。记录位置参数、门禁适用条件、产物和后续 `plan` 交接。必需产物是 `outputs/findings.json`，别名为 `current-analysis`。`risk-matrix.json` 和 `priors.json` 按现有契约可选。用测试区分现有 Runtime 真正执行的校验和流程要求执行端检查的步骤门禁。 | 无 |
+| **A2 整理 Skill 包** | 在 `skills/analyze/` 建立 `SKILL.md`，将 `prepare/analyze.md` 的参数声明和 `contract` 迁入 frontmatter，准备说明放入 `references/prepare.md`，`workflows/analyze.md` 放入 `references/workflow.md`。按触发条件链接边界评审、Issue 根因分析和收尾说明。保留完整分析及 `-q`、`--gaps` 的条件分支和检查项，共享收尾说明引用同一份固定版本。 | A1 |
+| **A3 绑定版本与读取 Markdown** | 在协调端用同一解析入口完成步骤发现与调度。定位 `analyze` 包，从固定 Git 对象读取入口 frontmatter，生成规范化契约快照与可信绑定。宿主读取器按下文规则打开链接，记录实际读取的文件与版本。试迁只选择一个实际宿主和一个受 Git 管理的项目。 | A1、A2 |
+| **A4 切换 Session/Run 调用点** | 在新 `analyze` Run 创建时原子持久化绑定、契约快照和摘要。启动、恢复、检查及封存按下表改读已绑定信息。运行时仍复用状态机、产物校验、权限校验和回执。 | A3 |
+| **A5 接通旧 Run 和失败恢复** | 用持久化绑定区分新旧协议，验证旧运行中和已封存样本、同请求重放、缺失原版本以及显式改版重试。保留旧目录和兼容解析器，允许对新分派关闭试迁。 | A4 |
+| **A6 验收并清理试迁入口** | 按第 7.4 节跑真实宿主、构建后 CLI 和安装包验收。确认新路径已经切断旧指导读取，移除试迁中的重复解析调用，保留历史兼容入口。 | A5 |
+
+A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` 仍走现有产物解析和校验。Session 目标与 Run 的位置参数各有来源，产物输入继续使用已封存的同 Session Artifact 引用。 [现有 `analyze` 契约](/D:/maestro2/prepare/analyze.md:4) · [现有分支和门禁](/D:/maestro2/workflows/analyze.md:36)
+
+### 7.2 要移除的 Session/Run 读取
+
+| 调用面 | 新 `analyze` 路径 | 兼容与校验 |
+| --- | --- | --- |
+| 步骤发现、`session chain`、`run next` / `run create` | 两个入口共用可信绑定。新 Run 采用绑定的契约摘要。`createRunningRunV3` 及 `republishedConsumerInputs` 使用快照内的消费者槽位，避免再次从命令名解析 `prepare` / Skill。 | 保留前驱门禁、产物资格、修订号与请求回执校验。首次分派确定绑定，重放已有请求用原 Run。 |
+| `v3BirthPacket`、`run brief`、`session resume-view` | 启动和恢复从记录返回 `skill_ref` 与契约标识。新包跳过 `buildV3GuidanceSnapshot` 和 `resolveStepContent`。`goal_mode` 如仍需交给宿主，在绑定时作为元数据提取。`resume-view` 继续投影原运行索引。 | 旧 Run 的 `guidance` 兼容输出留在旧分支。`brief` 和 `resume-view` 继续只读。 |
+| `run check` | 从 Run 读取已绑定契约并核对执行端的读取证据，去掉按命令名找当前契约和读取 workflow `finish:` 的逻辑。文字检查项由宿主随流程文档读取。 | 产物 schema、必要产物、报告摘要、状态和修订校验沿用现有实现。试迁前后核对 CLI 门禁结果。 |
+| `run complete --advance`、恢复封存、产物兼容性 | `assertRunContractSnapshot` 校验持久化契约摘要与绑定。`prepareArtifactPublication` 用相同快照校验输出。旧恢复封存仅留给历史路径。面向新 `analyze` 的兼容性检查如需要读消费者契约，使用该消费者的可信绑定。 | 保留封存、注册产物别名、记录产物来源和推进步骤的原子语义。新 Run 改版通过显式重试生成新绑定，旧 `run rebind` 逻辑留给旧路径。 |
+
+`session complete` 继续使用 Session、Run 和决策状态，也继续给沉淀流程提供完成回执。`resolveCommandSource`、`resolveStepContent`、旧步骤枚举和旧目录在其他步骤及历史数据仍使用时继续存在。 [启动与产物输入](/D:/maestro2/src/run/v3/mutation-engine.ts:967) · [恢复包](/D:/maestro2/src/commands/run-v3.ts:376) · [检查与完成清单](/D:/maestro2/src/commands/run-v3.ts:503) · [封存产物](/D:/maestro2/src/run/v3/mutation-engine.ts:437) · [消费者契约](/D:/maestro2/src/run/artifact-compatibility.ts:238)
+
+### 7.3 Markdown 解析与旧 Run 兼容
+
+**Markdown 链接解析。** 从协调端已绑定的 `SKILL.md` 启动。流程中以链接所在文件的目录解析标准相对链接，例如 `[流程](references/workflow.md)` 或 `[输出检查](workflow.md#输出检查)`。路径使用 `/`，按标准 Markdown 链接解析后进行规范化，`#` 后的部分只定位同一版本文件的章节。每次读取检查目标是固定 Git 树中的常规文件，规范化后仍在当前 Skill 包内，或命中绑定时明确列出的共享文件。绝对路径、外部 URL、越界路径、符号链接与缺失文件不能作为执行引用。普通说明链接继续供阅读。只在执行到对应分支时读取其流程链接，引用环和必要章节缺失报告明确错误。记录来源文件、目标路径、目录树 ID 和实际 blob ID。
+
+**绑定和失效处理。** 可信绑定从授权项目的固定 Git 提交生成，包含 Skill ID、仓库、提交、包根、入口路径、目录树 ID 和冻结契约摘要。`skill_ref` 可放入响应，绑定及契约随 Run 在原事务中持久化。Run 使用协调端登记的绑定，普通请求和工作者无法提交一份替代契约。必需链接缺失或内容不属于绑定版本时，定位失败的步骤、引用和版本，恢复可读取的原版本后继续。运行过程中的工作树改动由新提交和新绑定生效。
+
+| Run 场景 | 恢复行为 |
+| --- | --- |
+| 旧 v3 Run 无新绑定 | 使用旧解析入口和已有 `command_contract_hash` 检查。旧指导包与旧运行契约继续可读。缺档时给出旧来源与恢复路径。 |
+| 旧 v1/v2 历史 Run | 沿用现有历史读取和旧协议迁移分支，本次保留其原始记录。 |
+| 新 Run 有有效绑定 | 恢复同一 Run，用原版本读流程，并用原快照完成检查和封存。读取证据缺失时重新读取并补齐证据。 |
+| 新 Run 的绑定损坏或原包不可取 | 明确阻断继续执行，优先恢复原包。需要新版时走显式取消或重试并分配新 Run。绑定异常不得触发旧解析回退。 |
+| 重放已经提交的创建请求 | 返回原回执、Run ID、原绑定和原修订号；即使当前默认 Skill 版本已变化或原包暂不可取，也能查原回执。真正恢复仍需取到原包。 |
+
+试迁回退只影响之后的新分派。已创建的绑定 Run 保留新读取路径直到收尾，旧 Run 继续走兼容分支。删除旧目录前需要确认其余步骤、旧项目覆盖、安装包和需恢复的历史 Run 均有可用入口。
+
+启用试迁前要核对 Run Store、CLI JSON 消费端和所选宿主对新增绑定字段的支持。当前协议含严格校验，试迁应先让新读端兼容缺少绑定的旧记录，再让支持该能力的入口写入绑定记录。回退时保留能读取两类记录的版本。
+
+### 7.4 `analyze` 验收矩阵
+
+| 场景 | 可观察结果 |
+| --- | --- |
+| 旧行为对照 | 完整分析与精简、缺口、原产物输入分支保持现有参数与门禁条件。`findings.json` 缺失或 schema 错误时拒绝封存。`plan` 可读取 `current-analysis` 的原 Artifact 别名。 |
+| 新路径不读取旧指导 | 新 `analyze` 的启动、`brief`、`check`、`complete` 跑通。响应携带引用与契约标识。用读取监测或移除试验环境中的旧指导文件证明没有访问旧 `prepare` / `workflows`，同时验证缺少旧文件的历史 Run 有相应恢复提示。 |
+| 只改被链接文件后恢复 | 提交 A 后启动 Run，仅改 `references/workflow.md` 中可观察的步骤并提交 B。恢复旧 Run，核对读取记录中的 A 版 blob ID 和旧版结果。新 Run 显式绑定 B 后核对新版 blob ID 和结果。 |
+| 断链与伪造 | 覆盖缺失包、断链、路径越界、伪造执行读取证据或放宽契约。任务报告中的链接无法更改步骤链或门禁。受影响 Run 给出可定位错误，保持旧产物封存状态。 |
+| 幂等与兼容 | 同请求重复启动只返回原 Run。恢复旧运行中 Run 与读取已封存 Run 均保留原 ID、回执和 Artifact 关系。关闭试迁后新分派可走旧入口，已绑定 Run 仍可完成。 |
+| 实际交付 | 在真实宿主完成 `analyze → plan` 小样本，在构建后的 CLI 跑状态与回执测试，并在独立安装目录验证 Skill 相对链接可解析。复用现有 `check:session-run-contract-parity`、`check:session-run-release-machine` 和 `check:session-run-packaged-install` 作为回归入口。 |
+
+### 7.5 知识闭环的端到端验收
+
+端到端验收使用一个有实际用户纠正的场景。例如数据库迁移预检 Skill 漏传 `--dry-run`，补参后验证通过。结束回执触发沉淀，重复投递只处理一次。发布后，新 Session 能检索相关参考，并按原作用域加载迁移来的约束。自进化 Skill 生成补丁，旧版复现漏参，候选版首条命令即带齐参数，已有的成功用例继续通过。应用后重新调用，核对宿主加载新版，再验证回滚。
+
+验收同时覆盖一个反例。临时网络故障经重试恢复时，任务证据留档，Wiki 无新增约束，Skill 无补丁候选。删除可重建的 Wiki 索引再重建，条目、别名、链接、约束加载以及沉淀进度的查询结果应一致。
