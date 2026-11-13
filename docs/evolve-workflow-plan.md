@@ -101,6 +101,8 @@ skills/
 
 Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重建。初始执行时按作用域解析约束，再按任务检索参考。生效约束的选择以作用域和状态为准，全文检索排名只用于参考条目的相关性排序。
 
+完成约束比对的项目可用 `MAESTRO_EVOLVE_CONSTRAINTS=1` 启用新读取入口。版本化 Skill 的新 Run 在分派时按 Skill ID 与命令名读取约束，将正文、适用范围和证据一并固定到启动包。恢复同一 Run 时沿用该快照。具体文件确定后，执行器用 `wiki constraints --path <project-relative-path>` 核对路径约束。
+
 ### 条目格式
 
 | 字段 | 含义 |
