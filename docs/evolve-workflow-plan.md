@@ -207,6 +207,8 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 Odyssey 的七种模式已随 Skill 包分发。安装包验收覆盖 `odyssey-review` 的分派和恢复，兼容解析继续优先读取已有项目覆盖。Swarm 的角色、脚本和产物契约随包分发。同一轮更新重试复用原结果，更新回执提交后中断时可恢复派生状态。下一步用真实宿主验证两者的文档读取与恢复行为，再扩大固定版本的绑定范围。 [Odyssey 入口](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/specs/swarm-protocol.md)
 
+`plan` 和 `execute` 已把准备说明与流程移入各自的 Skill 包。项目提交这些包后，可通过 `MAESTRO_PROJECT_SKILLS=analyze,plan,execute` 启用固定版本读取。两步保留原契约哈希，旧 Run 用恢复包中的 `guidance_files` 找到兼容文件。安装验收覆盖三步交接、`plan --tdd` 引用、旧 `plan` Run 恢复，以及 `execute` 的产物兼容性检查。 [Plan Skill](/D:/evolve-maestro-runtime/skills/plan/SKILL.md) · [Execute Skill](/D:/evolve-maestro-runtime/skills/execute/SKILL.md)
+
 ### 7.1 `analyze` 试迁任务
 
 试迁只对明确启用的 `analyze` / `maestro-analyze` 生效。两种命令名映射到同一个 Skill，原入口继续可用。先记录旧行为并完成新路径的端到端验收，再进入阶段 2 的编排入口合并。
