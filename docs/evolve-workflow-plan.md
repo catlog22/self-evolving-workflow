@@ -87,11 +87,11 @@ skills/
 
 | Skill | 职责 |
 | --- | --- |
-| 元 Skill | 设计、生成和校验 Skill 包，检查相对链接、契约声明和回放用例。以 `maestro-skill-design` 草稿为候选，整合现有元 Skill 的 Maestro 专用能力。 |
+| 元 Skill | `maestro-skill-design` 负责设计、迁移和校验 Skill 包，按需引用契约和回放说明。`maestro skills validate <id>` 用 Git 固定版本检查契约、必读链接和可达 Markdown。 |
 | Odyssey | 保留长期诊断、修复和复验的迭代策略。各模式与共享阶段随 Odyssey 包分发，Session/Run 管理外层进度。 |
 | Swarm | 保留并行探索、评分及迭代收敛。协调器提交 Run 结果，角色、迭代文件和脚本由 Swarm 管理并随包分发。 |
 
-沉淀与自进化保留可单独调用的入口，完成回执进入第 4 节的沉淀流程。Maestro2 工作树已有 Skill 进化信号、评审、投影及元 Skill 的在研实现。评估复用信号和评审入口，统一由第 5 节的真实回放与版本校验负责 Skill 变更生效。 [元 Skill 草稿](/D:/maestro2/.codex/skills/maestro-skill-design/SKILL.md:40) · [Odyssey 模式](/D:/maestro2/.codex/skills/maestro-odyssey/SKILL.md:41) · [Swarm 包内引用](/D:/maestro2/.codex/skills/team-swarm/SKILL.md:92) · [进化收尾](/D:/maestro2/ref/skill-evolve-closeout.md:5)
+沉淀与自进化保留独立入口，完成回执进入第 4 节的沉淀流程。元 Skill 使用 Memory 回溯为改动定位证据，Skill 变更按第 5 节回放、应用和回滚。 [元 Skill](/D:/evolve-maestro-runtime/.claude/skills/maestro-skill-design/SKILL.md) · [Odyssey 模式](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 包内引用](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/SKILL.md)
 
 ## 3. 统一 Wiki
 
@@ -206,6 +206,8 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 | 6. 扩大迁移范围 | 迁移元 Skill、Odyssey、Swarm 和其他步骤。按仓库或 Skill 比对旧规则，逐组切换。 | 宿主安装后可以从包内读取所需流程。Odyssey 可恢复原模式，Swarm 的角色及产物契约不变。新 Wiki 接管确认范围，旧运行记录走兼容读取。 |
 
 Odyssey 的七种模式已随 Skill 包分发。安装包验收覆盖 `odyssey-review` 的分派和恢复，兼容解析继续优先读取已有项目覆盖。Swarm 的角色、脚本和产物契约随包分发。同一轮更新重试复用原结果，更新回执提交后中断时可恢复派生状态。下一步用真实宿主验证两者的文档读取与恢复行为，再扩大固定版本的绑定范围。 [Odyssey 入口](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/specs/swarm-protocol.md)
+
+统一 Maestro 入口以 Skill 包分发，入口按需链接意图分类、建链、Run 循环、自动执行和目标修订。Next 与 Ralph 的兼容入口委托该包。已有 Run 可通过旧解析入口读取迁移后的准备说明和分类目录。安装包同时分发元 Skill 及其契约和回放说明。 [统一 Maestro Skill](/D:/evolve-maestro-runtime/.claude/skills/maestro/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
 `plan` 和 `execute` 的准备说明与流程已归入各自的 Skill 包，两步沿用原契约哈希。项目从已安装的 CLI 运行 `maestro skills install --workflow-root <repo>`，将 `analyze`、`plan`、`execute` 导入 `skills/`。导入会保留不同于安装包的本地内容并报出冲突。把 Skill 包提交到 Git 后，通过 `MAESTRO_PROJECT_SKILLS=analyze,plan,execute` 启用。旧 Run 用恢复包中的 `guidance_files` 查找兼容文件。 [Plan Skill](/D:/evolve-maestro-runtime/skills/plan/SKILL.md) · [Execute Skill](/D:/evolve-maestro-runtime/skills/execute/SKILL.md)
 
