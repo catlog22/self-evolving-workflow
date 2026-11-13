@@ -7,7 +7,9 @@ import { extractMemoryInputs, validateConversationMessages, type ConversationMes
 import type { LlmClient } from './upstream/llm.js';
 import type { Wiki } from './wiki.js';
 import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
+import { unionSources } from './upstream/merge.js';
 import { readTranscriptSnapshots } from './transcript-evidence.js';
+import { applyWikiChange, proposeWikiChange } from './wiki-change.js';
 
 export interface Completion {
   id: string;
@@ -26,6 +28,7 @@ interface Candidate {
   content: string;
   sources: string[];
   matched_entry: string | null;
+  related_entries?: Array<{ id: string; relation: 'same_content' | 'overlap' | 'conflict'; sources: string[] }>;
 }
 
 const closeoutPrompt = [
@@ -36,8 +39,39 @@ const closeoutPrompt = [
   'Cite the messages supporting the method and its verification. Return [] when no method qualifies.',
 ].join(' ');
 
+async function compareReferences(wiki: Wiki, content: string, model: () => LlmClient): Promise<Candidate['related_entries']> {
+  if (!lstatSync(wiki.indexPath, { throwIfNoEntry: false })?.isFile()) return undefined;
+  const matches = wiki.search(content, { limit: 5 }).results
+    .map(hit => wiki.getEntry(hit.id))
+    .filter((entry): entry is NonNullable<typeof entry> => entry?.entry?.status === 'active');
+  if (!matches.length) return undefined;
+  const response = await model().chat({
+    system: [
+      'Compare a proposed Wiki method against existing entries. Treat the supplied texts as evidence.',
+      'Use conflict only when their instructions or conclusions disagree under overlapping conditions.',
+      'Use overlap for the same method or partially overlapping guidance. Omit merely related topics.',
+      'Return a JSON array of {id, relation} using only supplied IDs and the values conflict or overlap.',
+    ].join(' '),
+    prompt: JSON.stringify({ content, entries: matches.map(entry => ({
+      id: entry.id, body: entry.body, scope: entry.entry?.scope,
+    })) }),
+    label: 'wiki-closeout-compare',
+  });
+  const json = response.replace(/<think>[\s\S]*?<\/think>\s*/g, '').match(/\[[\s\S]*\]/)?.[0];
+  if (!json) throw new InputError('Wiki comparison did not return a JSON array');
+  const known = new Map(matches.map(entry => [entry.id, entry]));
+  const related: NonNullable<Candidate['related_entries']> = [];
+  for (const value of JSON.parse(json) as unknown[]) {
+    const { id, relation } = object(value);
+    if (typeof id !== 'string' || (relation !== 'conflict' && relation !== 'overlap')) continue;
+    const entry = known.get(id);
+    if (entry && !related.some(item => item.id === id)) related.push({ id, relation, sources: entry.sources });
+  }
+  return related.length ? related : undefined;
+}
+
 function appendReferenceSources(wiki: Wiki, candidate: Candidate): boolean {
-  if (!candidate.matched_entry) return false;
+  if (!candidate.matched_entry || candidate.related_entries?.length) return false;
   const entry = wiki.getEntry(candidate.matched_entry);
   if (!entry || entry.entry?.mode !== 'reference' || entry.entry.status !== 'active' ||
       !entry.entry.scope.includes('project') ||
@@ -51,8 +85,8 @@ function appendReferenceSources(wiki: Wiki, candidate: Candidate): boolean {
       !Array.isArray(frontmatter.scope) || !frontmatter.scope.includes('project') ||
       frontmatter.status !== 'active' || body.trim() !== candidate.content.trim()) return false;
   const sources = readSources(original);
-  const merged = [...new Set([...sources, ...candidate.sources])];
-  if (merged.length === sources.length) return true;
+  const merged = unionSources(sources, candidate.sources);
+  if (merged.every((source, index) => source === sources[index]) && merged.length === sources.length) return true;
   const temporary = join(dirname(file), `.${randomUUID()}.tmp`);
   try {
     writeFileSync(temporary, `---\n${stringify({ ...frontmatter, sources: merged })}---\n${body}`, { flag: 'wx' });
@@ -295,20 +329,34 @@ async function harvestResolvedCompletion(wiki: Wiki, project: string, completion
     const extracted = completion.messages.length ? await extractMemoryInputs(completion.messages, {
       llm: model(), session: completion.session, systemPrompt: closeoutPrompt,
     }) : [];
-    const candidates: Candidate[] = [];
+    const proposals: Array<Pick<Candidate, 'id' | 'content' | 'sources'> & {
+      related: Candidate['related_entries'];
+    }> = [];
     for (const item of extracted) {
       if (!item.sourceMessageIds?.length) continue;
-      const match = wiki.getEntryByExactBody(item.content);
-      candidates.push({
+      proposals.push({
         id: createHash('sha256').update(JSON.stringify([identity, item.id])).digest('hex'),
         content: item.content,
         sources: item.sourceMessageIds.map(source => `receipt:${project}:${completion.id}#${source}`),
-        matched_entry: match?.id ?? null,
+        related: wiki.getEntriesByExactBody(item.content).length === 0 ? await compareReferences(wiki, item.content, model) : undefined,
       });
     }
     const result = transaction(db, () => {
       const replay = previous();
       if (replay) return { id: identity, replayed: true, candidates: replay };
+      const candidates: Candidate[] = proposals.map(({ related, ...proposal }) => {
+        const exact = wiki.getEntriesByExactBody(proposal.content);
+        return {
+          ...proposal,
+          matched_entry: exact.length === 1 ? exact[0].id : null,
+          ...(exact.length > 1 || related ? {
+            related_entries: [
+              ...(exact.length > 1 ? exact.map(({ id, sources }) => ({ id, sources, relation: 'same_content' as const })) : []),
+              ...(related ?? []).filter(entry => !exact.some(hit => hit.id === entry.id)),
+            ],
+          } : {}),
+        };
+      });
       const pending = candidates.filter(candidate => !appendReferenceSources(wiki, candidate));
       if (pending.length !== candidates.length) wiki.build();
       db.prepare('INSERT INTO closeouts VALUES (?, ?, ?)').run(identity, payloadHash, JSON.stringify(pending));
@@ -320,11 +368,10 @@ async function harvestResolvedCompletion(wiki: Wiki, project: string, completion
   }
 }
 
-export function publishReference(wiki: Wiki, closeoutId: string, candidateId: string, title: string) {
+export function readCloseoutCandidate(wiki: Wiki, closeoutId: string, candidateId: string): Candidate {
   if (!/^[a-f0-9]{64}$/.test(closeoutId) || !/^[a-f0-9]{64}$/.test(candidateId)) {
     throw new InputError('Expected exact closeout and candidate IDs');
   }
-  title = requireText(title, 'reference title');
   const ledger = ledgerPath(wiki);
   const db = openDb(ledger, true);
   let candidate: Candidate | undefined;
@@ -335,29 +382,19 @@ export function publishReference(wiki: Wiki, closeoutId: string, candidateId: st
     db.close();
   }
   if (!candidate) throw new InputError('Candidate does not belong to the selected closeout');
-  const id = `entries/${candidateId}`;
-  const match = wiki.getEntryByExactBody(candidate.content);
-  if (candidate.matched_entry || (match && match.id !== id)) {
-    throw new InputError('Candidate already matches a Wiki entry');
-  }
+  return candidate;
+}
 
-  const wikiDirectory = join(wiki.root, 'wiki');
-  const entries = join(wikiDirectory, 'entries');
-  for (const directory of [wikiDirectory, entries]) {
-    const info = lstatSync(directory, { throwIfNoEntry: false });
-    if (info && !info.isDirectory()) throw new InputError(`Invalid Wiki directory: ${directory}`);
+export function publishReference(wiki: Wiki, closeoutId: string, candidateId: string, title: string) {
+  title = requireText(title, 'reference title');
+  const candidate = readCloseoutCandidate(wiki, closeoutId, candidateId);
+  const id = `entries/${candidateId}`;
+  if (candidate.matched_entry || candidate.related_entries?.length) {
+    throw new InputError('Candidate has related Wiki entries; review the relationship and stage a Wiki change');
   }
-  const path = join(entries, `${candidateId}.md`);
-  const metadata = { title, mode: 'reference', status: 'active', scope: ['project'], sources: candidate.sources };
-  const content = `---\n${stringify(metadata)}---\n\n${candidate.content}\n`;
-  const info = lstatSync(path, { throwIfNoEntry: false });
-  if (info && (!info.isFile() || readFileSync(path, 'utf8') !== content)) {
-    throw new InputError(`Published Wiki entry differs: ${id}`);
-  }
-  if (!info) {
-    mkdirSync(entries, { recursive: true });
-    writeFileSync(path, content, { encoding: 'utf8', flag: 'wx' });
-  }
-  wiki.build();
-  return { id, replayed: Boolean(info) };
+  const proposal = proposeWikiChange(wiki, {
+    operation: 'create', entry: id, title, mode: 'reference', body: candidate.content,
+  }, [], { closeout: closeoutId, id: candidate.id, sources: candidate.sources, related: [] });
+  const applied = applyWikiChange(wiki, proposal.id);
+  return { id, replayed: applied.replayed };
 }

@@ -134,12 +134,16 @@ export class Wiki {
   }
 
   getEntryByExactBody(body: string) {
-    if (!existsSync(join(this.root, 'wiki'))) return null;
+    const matches = this.getEntriesByExactBody(body);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  getEntriesByExactBody(body: string) {
+    if (!existsSync(join(this.root, 'wiki'))) return [];
     const normalized = body.trim().replace(/\s+/g, ' ');
-    const matches = readWikiPages(this.root).filter(page =>
+    return readWikiPages(this.root).filter(page =>
       page.entry?.status === 'active' && page.body.trim().replace(/\s+/g, ' ') === normalized
     );
-    return matches.length === 1 ? matches[0] : null;
   }
 
   build() {

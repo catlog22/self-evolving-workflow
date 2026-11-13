@@ -10,13 +10,14 @@ import { parseScope, search, type SearchScope, type SearchSources } from './sear
 import type { LlmClient } from './upstream/llm.js';
 import { Wiki } from './wiki.js';
 import {
-  harvestCompletion, publishReference, readCompletionReceipts,
+  harvestCompletion, publishReference, readCloseoutCandidate, readCompletionReceipts,
   readHarvest, readSkillCompletions, recordSkillCompletion,
 } from './closeout.js';
 import { reviewSession } from './retrospective.js';
 import { draftSkillAddition } from './skill-addition.js';
 import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
+import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
 
 const help = `Usage: agent-memory <command> [options]
 
@@ -30,6 +31,9 @@ const help = `Usage: agent-memory <command> [options]
   wiki get <id>                            Read a Wiki entry, including history
   wiki constraints                         Resolve active constraints (--skill, --task, --path)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
+  wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
+  wiki changes [change-id]                 Read change previews and application receipts (--entry)
+  wiki apply <change-id>                   Apply an approved Wiki change
   closeout harvest <receipt.json>          Extract Wiki candidates from a completion receipt (--project)
   closeout session <id>                    Harvest a committed Session receipt (--project, --receipt)
   closeout skill <execution-id>            Record and harvest a standalone Skill completion
@@ -89,6 +93,9 @@ const options = {
   'skill-version': { type: 'string' },
   status: { type: 'string' },
   evidence: { type: 'string', multiple: true },
+  entry: { type: 'string' },
+  closeout: { type: 'string' },
+  candidate: { type: 'string' },
   when: { type: 'string' },
   runner: { type: 'string' },
   scenarios: { type: 'string' },
@@ -192,6 +199,22 @@ async function main() {
       case 'migrate': return print(migrateLegacyWiki(
         wiki, requireText(args[0], 'legacy project root'), requireText(values.project, 'legacy project ID'), values.apply,
       ));
+      case 'propose': {
+        const change = JSON.parse(readFileSync(requireText(args[0], 'change file'), 'utf8').replace(/^\uFEFF/, ''));
+        const evidence = values.evidence ?? [];
+        if (values.closeout !== undefined || values.candidate !== undefined) {
+          const closeout = requireText(values.closeout, 'closeout ID');
+          const candidate = readCloseoutCandidate(wiki, closeout, requireText(values.candidate, 'candidate ID'));
+          return print(proposeWikiChange(wiki, change, evidence, {
+            closeout, id: candidate.id, sources: candidate.sources,
+            related: [...(candidate.matched_entry ? [candidate.matched_entry] : []),
+              ...(candidate.related_entries ?? []).map(entry => entry.id)],
+          }));
+        }
+        return print(proposeWikiChange(wiki, change, evidence));
+      }
+      case 'changes': return print(listWikiChanges(wiki, { id: args[0], entry: values.entry }));
+      case 'apply': return print(applyWikiChange(wiki, requireText(args[0], 'Wiki change ID')));
       case 'ingest': return print(await wiki.ingest(requireText(args[0], 'source file'), { llm: modelClient() }));
     }
   }

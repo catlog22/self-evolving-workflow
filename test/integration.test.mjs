@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { CodeGraph, MemoryStore, Wiki, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
@@ -142,6 +143,50 @@ test('managed Wiki entries resolve active scopes independently of search and pre
   assert.equal(wiki.search('calibration', { includeHistory: true }).results.some(hit => hit.id === 'entries/retired'), true);
 });
 
+test('Wiki proposals publish by stable ID, recover interrupted writes, and reject stale changes', async t => {
+  const root = await temp(t);
+  const draft = join(root, 'change.json');
+  const propose = async (value, evidence) => {
+    await writeFile(draft, JSON.stringify(value));
+    return cliJson(root, 'wiki', 'propose', draft, '--evidence', evidence);
+  };
+  const entry = 'entries/preflight';
+  const page = join(root, 'wiki', 'entries', 'preflight.md');
+  const create = await propose({
+    operation: 'create', entry, title: 'Migration preflight', mode: 'reference',
+    scope: ['skill:migration'], body: 'Verify the database dry-run before applying.',
+  }, 'design:preflight');
+  assert.equal(create.state, 'pending');
+  await assert.rejects(readFile(page), { code: 'ENOENT' });
+  const concurrent = await Promise.all([
+    cliJson(root, 'wiki', 'apply', create.id), cliJson(root, 'wiki', 'apply', create.id),
+  ]);
+  assert.ok(concurrent.every(change => change.state === 'applied'));
+  assert.deepEqual(concurrent.map(change => change.replayed).sort(), [false, true]);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'migration'), []);
+  const stale = await propose({ operation: 'update', entry, title: 'Obsolete title' }, 'review:1');
+  const promote = await propose({ operation: 'promote', entry, title: 'Verified migration preflight' }, 'review:2');
+  assert.equal(promote.before, await readFile(page, 'utf8'));
+  assert.equal((await cliJson(root, 'wiki', 'apply', promote.id)).replayed, false);
+  await assert.rejects(cliJson(root, 'wiki', 'apply', stale.id), /changed since review/);
+  assert.equal((await cliJson(root, 'wiki', 'constraints', '--skill', 'migration'))[0].id, entry);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'deploy'), []);
+  const retire = await propose({ operation: 'retire', entry }, 'review:retire');
+  const db = new DatabaseSync(join(root, '.agent-memory', 'closeout.db'));
+  // Reproduce a crash after committing the application intent and replacing the page.
+  db.prepare("UPDATE wiki_changes SET state = 'applying' WHERE id = ?").run(retire.id);
+  db.close();
+  await writeFile(page, retire.after);
+  assert.equal((await cliJson(root, 'wiki', 'apply', retire.id)).state, 'applied');
+  assert.equal((await cliJson(root, 'wiki', 'apply', retire.id)).replayed, true);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'migration'), []);
+  assert.equal((await cliJson(root, 'wiki', 'get', entry)).entry.status, 'deprecated');
+  const history = await cliJson(root, 'wiki', 'changes', '--entry', entry);
+  assert.deepEqual(history.map(change => change.state), ['applied', 'pending', 'applied', 'applied']);
+  assert.equal(history.at(-1).before, promote.after);
+  assert.equal(history.at(-1).baseline_sha256, promote.result_sha256);
+});
+
 test('legacy Wiki migration is previewable, idempotent, and preserves constraint provenance', async t => {
   const legacy = await temp(t);
   const root = await temp(t);
@@ -203,6 +248,53 @@ test('completion harvesting preserves evidence and records zero-candidate receip
   assert.deepEqual(wiki.getEntry(published.id).sources, [
     'receipt:example:completion-1#check', 'receipt:example:completion-3#check',
   ]);
+});
+
+test('conflicting closeout evidence stays pending until a reviewed Wiki change is applied', async t => {
+  const root = await temp(t);
+  const { harvestCompletion, publishReference } = await import('../dist/closeout.js');
+  const wiki = new Wiki(root);
+  const draft = join(root, 'change.json');
+  const entry = 'entries/preflight';
+  await writeFile(draft, JSON.stringify({
+    operation: 'create', entry, title: 'Migration dry-run',
+    mode: 'constraint', body: 'Always use a dry-run before applying a database migration.',
+  }));
+  const original = await cliJson(root, 'wiki', 'propose', draft, '--evidence', 'policy:preflight');
+  await cliJson(root, 'wiki', 'apply', original.id);
+  const completion = {
+    schema_version: 'skill-completion/1.0', id: 'evidence-conflict', execution_id: 'exec-1', status: 'succeeded',
+    recorded_at: '2026-11-13T02:00:00Z',
+    messages: [{ id: 'check', role: 'tool', timestamp: 0, content: 'The isolated database migration succeeded without a dry-run.' }],
+  };
+  let compared = false;
+  const harvested = await harvestCompletion(wiki, 'example', completion, () => ({ async chat({ label, prompt }) {
+    if (label === 'wiki-closeout-compare') {
+      compared = true;
+      assert.equal(JSON.parse(prompt).entries[0].id, entry);
+      return JSON.stringify([{ id: entry, relation: 'conflict' }, { id: 'entries/unknown', relation: 'conflict' }]);
+    }
+    return JSON.stringify([{ memories: [{
+      type: 'work_method', content: 'Skip the dry-run for an isolated test database migration.', source_message_ids: ['check'],
+    }] }]);
+  } }));
+  assert.equal(compared, true);
+  const [candidate] = harvested.candidates;
+  assert.deepEqual(candidate.related_entries, [{ id: entry, relation: 'conflict', sources: ['policy:preflight'] }]);
+  assert.equal(wiki.getEntry(entry).body.trim(), 'Always use a dry-run before applying a database migration.');
+  assert.throws(() => publishReference(wiki, harvested.id, candidate.id, 'Conflict'), /related Wiki entries/);
+  const update = { operation: 'update', entry, body: 'Use dry-run for production database migration.' };
+  const proposeArgs = ['wiki', 'propose', draft, '--closeout', harvested.id, '--candidate', candidate.id];
+  await writeFile(draft, JSON.stringify(update));
+  await assert.rejects(cliJson(root, ...proposeArgs), /requires a recorded relationship decision/);
+  await writeFile(draft, JSON.stringify({
+    ...update, review: { relationship: 'conflict', rationale: 'The isolated test result supports a narrower production rule.' },
+  }));
+  const reviewed = await cliJson(root, ...proposeArgs);
+  assert.deepEqual(reviewed.review.related, [entry]);
+  assert.deepEqual(reviewed.candidate, { closeout: harvested.id, id: candidate.id });
+  await cliJson(root, 'wiki', 'apply', reviewed.id);
+  assert.deepEqual(wiki.getEntry(entry).sources, ['policy:preflight', 'receipt:example:evidence-conflict#check']);
 });
 
 test('standalone Skill completion survives a failed harvest and is reconciled once', async t => {
