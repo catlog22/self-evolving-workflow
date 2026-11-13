@@ -11,5 +11,5 @@ description: 回溯指定 Session，找出可归因到 Skill 的执行问题，�
    - `high` 放一条明确的短指令，供每次执行前读取。
    - `normal` 用包内链接承载详细说明，用 `--when "<触发条件>"` 标出何时读取。
    - `low` 放入独立参考文档，供主动检索。
-4. 核对草稿的基线哈希，在隔离工作区用实际宿主回放旧版和候选版。使用相同输入复现旧问题并验证候选，同时跑已有成功场景。记录实际加载路径和版本。
-5. 确认采用后应用经过回放的候选，保留旧版本和回滚记录。重新执行并核对宿主实际加载的内容。
+4. 将草稿保存为 JSON。准备一个由项目维护的宿主回放脚本和场景文件，运行 `agent-memory --root <project> evolve replay <draft.json> --runner <host-runner.mjs> --scenarios <cases.json>`。场景是 `{id,input,baseline}` 数组，至少覆盖一次原问题和一次既有成功流程。脚本从标准输入取得场景、入口和提交，通过真实宿主执行后返回 `{passed,loaded:[{path,sha256}]}`。命令用独立 Git worktree 对照旧版和候选版，核对宿主实际读取的内容，并返回回执 ID。
+5. 得到采用授权后，运行 `agent-memory --root <project> evolve apply <receipt-id>`，重新执行并核对宿主加载版本。用 `agent-memory --root <project> evolve rollback <receipt-id>` 恢复该次变更，保留 Git 历史。

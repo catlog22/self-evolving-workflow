@@ -28,6 +28,53 @@ async function cliJson(root, ...args) {
   return JSON.parse(stdout);
 }
 
+test('Skill evolution replays a failed and a passing case, applies the verified commit, and rolls it back', async t => {
+  const root = await temp(t);
+  const support = await temp(t);
+  const git = (...args) => run('git', args, { cwd: root });
+  await git('init', '-q');
+  await git('config', 'user.name', 'Evolve test');
+  await git('config', 'user.email', 'evolve-test@example.invalid');
+  await git('config', 'core.autocrlf', 'false');
+  const entry = join(root, 'skills', 'example', 'SKILL.md');
+  await mkdir(join(root, 'skills', 'example'), { recursive: true });
+  const original = '---\nname: example\n---\n\n# Example\n';
+  await writeFile(entry, original);
+  await git('add', '.');
+  await git('commit', '-qm', 'Initial Skill');
+  const runner = join(support, 'runner.mjs');
+  await writeFile(runner, [
+    "import {readFileSync} from 'node:fs';",
+    "import {createHash} from 'node:crypto';",
+    "const {entry,input} = JSON.parse(readFileSync(0, 'utf8'));",
+    'const body = readFileSync(entry);',
+    "const sha256 = createHash('sha256').update(body).digest('hex');",
+    "console.log(JSON.stringify({passed: input === 'existing' || body.includes('Verify preflight.'),loaded:[{path: entry,sha256}]}));",
+  ].join('\n'));
+  const draft = join(support, 'draft.json');
+  const scenarios = join(support, 'scenarios.json');
+  await writeFile(draft, JSON.stringify(draftSkillAddition({
+    entry, priority: 'high', instruction: 'Verify preflight.', sources: ['receipt:preflight'],
+  })));
+  await writeFile(scenarios, JSON.stringify([
+    { id: 'missing-preflight', input: 'reproduce', baseline: false },
+    { id: 'existing-flow', input: 'existing', baseline: true },
+  ]));
+  const receipt = await cliJson(root, 'evolve', 'replay', draft, '--runner', runner, '--scenarios', scenarios);
+  assert.equal(await readFile(entry, 'utf8'), original);
+  assert.deepEqual(receipt.scenarios.map(item => [item.baseline.passed, item.candidate.passed]), [[false, true], [true, true]]);
+  await writeFile(entry, original + '\nLocal edit.\n');
+  await assert.rejects(cliJson(root, 'evolve', 'apply', receipt.id), /local changes/);
+  await writeFile(entry, original);
+  const applied = await cliJson(root, 'evolve', 'apply', receipt.id);
+  assert.equal(applied.commit, receipt.candidate);
+  assert.match(await readFile(entry, 'utf8'), /Verify preflight/);
+  assert.equal((await cliJson(root, 'evolve', 'apply', receipt.id)).replayed, true);
+  await cliJson(root, 'evolve', 'rollback', receipt.id);
+  assert.equal(await readFile(entry, 'utf8'), original);
+  assert.equal((await cliJson(root, 'evolve', 'rollback', receipt.id)).replayed, true);
+});
+
 test('CodeGraph indexes real TypeScript, resolves call edges, and syncs edits', async t => {
   const root = await temp(t);
   const path = join(root, 'billing.ts');

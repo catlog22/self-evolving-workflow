@@ -12,6 +12,7 @@ import { Wiki } from './wiki.js';
 import { harvestCompletion, publishReference, readCompletionReceipts } from './closeout.js';
 import { reviewSession } from './retrospective.js';
 import { draftSkillAddition } from './skill-addition.js';
+import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
 
 const help = `Usage: agent-memory <command> [options]
@@ -32,6 +33,8 @@ const help = `Usage: agent-memory <command> [options]
                                           Publish a reviewed reference
   session review <id>                      Review Session signals (--transcript <messages.json>)
   evolve draft <SKILL.md> <instruction>    Draft a Skill addition (--priority high|normal|low, --evidence <ref>, --when)
+  evolve replay <draft.json>               Compare baseline and candidate (--runner <script>, --scenarios <json>)
+  evolve apply|rollback <receipt-id>       Apply a validated version or revert it
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
   memory get|delete <id>                   Read or delete a memory
@@ -77,6 +80,8 @@ const options = {
   transcript: { type: 'string' },
   evidence: { type: 'string', multiple: true },
   when: { type: 'string' },
+  runner: { type: 'string' },
+  scenarios: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 } as const;
 
@@ -215,6 +220,14 @@ async function main() {
       sources: values.evidence ?? [],
       when: values.when,
     }));
+  }
+  if (command === 'evolve' && action === 'replay') {
+    const draft: unknown = JSON.parse(readFileSync(requireText(args[0], 'draft file'), 'utf8').replace(/^\uFEFF/, ''));
+    const scenarios: unknown = JSON.parse(readFileSync(requireText(values.scenarios, 'scenarios file'), 'utf8').replace(/^\uFEFF/, ''));
+    return print(replaySkillAddition(root, draft, { runner: requireText(values.runner, 'replay runner'), scenarios }));
+  }
+  if (command === 'evolve' && (action === 'apply' || action === 'rollback')) {
+    return print(changeSkillVersion(root, requireText(args[0], 'replay receipt ID'), action === 'rollback'));
   }
   if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract'].includes(action)) {
     const memory = openMemory();

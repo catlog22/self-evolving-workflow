@@ -1,0 +1,235 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve } from 'node:path';
+import { InputError, requireText } from './common.js';
+import { draftSkillAddition } from './skill-addition.js';
+
+interface Scenario {
+  id: string;
+  input: unknown;
+  baseline: boolean;
+}
+
+interface ReplayReceipt {
+  base: string;
+  candidate: string;
+  entry: string;
+  files: string[];
+  sources: string[];
+  runnerSha256: string;
+  scenarios: Array<{
+    id: string;
+    inputSha256: string;
+    baseline: Observation;
+    candidate: Observation;
+  }>;
+}
+
+interface Observation {
+  passed: boolean;
+  loaded: Array<{ path: string; sha256: string }>;
+}
+
+const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+type GitOptions = { input?: string; env?: NodeJS.ProcessEnv };
+
+function git(root: string, args: string[], options: GitOptions = {}) {
+  return execFileSync('git', args, { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], ...options });
+}
+
+function gitText(root: string, args: string[], options?: GitOptions) {
+  return git(root, args, options).toString('utf8').trimEnd();
+}
+
+function repoPath(root: string, path: string): string {
+  const name = relative(root, resolve(root, path)).replaceAll('\\', '/');
+  if (!name || name.startsWith('../') || name === '..' || /[:\u0000-\u001f]/.test(name)) {
+    throw new InputError(`Skill path is outside the project: ${path}`);
+  }
+  return name;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InputError('Expected a JSON object');
+  return value as Record<string, unknown>;
+}
+
+function loadDraft(root: string, data: unknown) {
+  const draft = record(data);
+  const baseline = record(draft.baseline);
+  if (draft.priority !== 'high' && draft.priority !== 'normal' && draft.priority !== 'low') {
+    throw new InputError('Invalid Skill draft priority');
+  }
+  if (!Array.isArray(draft.sources)) throw new InputError('Skill draft is missing its evidence sources');
+  const entry = realpathSync(resolve(root, requireText(baseline.path, 'Skill entry')));
+  const entryPath = repoPath(root, entry);
+  if (!entryPath.endsWith('/SKILL.md')) throw new InputError('Expected a project Skill package entry');
+  const regenerated = draftSkillAddition({
+    entry, priority: draft.priority, instruction: requireText(draft.instruction, 'Skill instruction'),
+    sources: draft.sources.map(source => requireText(source, 'evidence reference')),
+    when: draft.when === undefined ? undefined : requireText(draft.when, 'learning trigger'),
+  });
+  if (regenerated.id !== draft.id || regenerated.baseline.sha256 !== baseline.sha256 ||
+      JSON.stringify(regenerated.changes) !== JSON.stringify(draft.changes)) {
+    throw new InputError('Skill draft or its baseline changed');
+  }
+  return { draft: regenerated, entryPath };
+}
+
+function loadScenarios(data: unknown): Scenario[] {
+  if (!Array.isArray(data) || data.length < 2) throw new InputError('Provide a failure replay and a passing regression scenario');
+  const ids = new Set<string>();
+  const scenarios = data.map(value => {
+    const scenario = record(value);
+    const id = requireText(scenario.id, 'scenario ID');
+    if (ids.has(id) || typeof scenario.baseline !== 'boolean' || !('input' in scenario)) {
+      throw new InputError(`Invalid or duplicate replay scenario: ${id}`);
+    }
+    ids.add(id);
+    return { id, input: scenario.input, baseline: scenario.baseline };
+  });
+  if (!scenarios.some(item => item.baseline) || !scenarios.some(item => !item.baseline)) {
+    throw new InputError('Replay requires both a baseline failure and a baseline pass');
+  }
+  return scenarios;
+}
+
+function runScenario(
+  worktree: string,
+  commit: string,
+  runner: string,
+  entry: string,
+  scenario: Scenario,
+): Observation {
+  const output = execFileSync(process.execPath, [runner], {
+    cwd: worktree,
+    windowsHide: true,
+    input: JSON.stringify({ id: scenario.id, input: scenario.input, entry, commit }),
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 120_000,
+  });
+  const proof = record(JSON.parse(output));
+  if (typeof proof.passed !== 'boolean' || !Array.isArray(proof.loaded)) {
+    throw new InputError(`Replay runner omitted its result or loaded files: ${scenario.id}`);
+  }
+  const packageRoot = dirname(entry).replaceAll('\\', '/') + '/';
+  const loaded = proof.loaded.map(value => {
+    const item = record(value);
+    const path = repoPath(worktree, requireText(item.path, 'loaded file'));
+    if (!path.startsWith(packageRoot)) throw new InputError(`Replay loaded a file outside the selected Skill: ${path}`);
+    const expected = sha256(git(worktree, ['show', `${commit}:${path}`]));
+    if (expected !== item.sha256) throw new InputError(`Replay loaded different Skill bytes: ${path}`);
+    return { path, sha256: expected };
+  });
+  if (!loaded.some(item => item.path === entry)) throw new InputError(`Replay did not load the selected Skill: ${entry}`);
+  return { passed: proof.passed, loaded };
+}
+
+function repoRoot(root: string) {
+  return realpathSync(gitText(root, ['rev-parse', '--show-toplevel']));
+}
+
+function receiptPath(root: string, id: string) {
+  if (!/^[a-f0-9]{64}$/.test(id)) throw new InputError('Expected an exact Skill replay receipt ID');
+  return join(gitText(root, ['rev-parse', '--absolute-git-dir']), 'evolve-replay', id + '.json');
+}
+
+export function replaySkillAddition(root: string, data: unknown, options: { runner: string; scenarios: unknown }) {
+  root = repoRoot(root);
+  const { draft, entryPath } = loadDraft(root, data);
+  const runner = realpathSync(options.runner);
+  const runnerSha256 = sha256(readFileSync(runner));
+  const scenarios = loadScenarios(options.scenarios);
+  const base = gitText(root, ['rev-parse', 'HEAD']);
+  const baseline = git(root, ['show', `${base}:${entryPath}`]).toString('utf8');
+  if (sha256(baseline) !== draft.baseline.sha256 &&
+      sha256(baseline.replace(/\r?\n/g, '\r\n')) !== draft.baseline.sha256 &&
+      sha256(baseline.replace(/\r\n/g, '\n')) !== draft.baseline.sha256) {
+    throw new InputError('Commit the Skill baseline before replay');
+  }
+  const packagePath = dirname(entryPath).replaceAll('\\', '/');
+  if (gitText(root, ['status', '--porcelain', '--untracked-files=all', '--', packagePath])) {
+    throw new InputError('Commit the Skill package before replay');
+  }
+  const scratch = mkdtempSync(join(tmpdir(), 'evolve-replay-'));
+  const index = join(scratch, 'index');
+  const gitIndex = { env: { ...process.env, GIT_INDEX_FILE: index } };
+  const oldTree = join(scratch, 'baseline');
+  const newTree = join(scratch, 'candidate');
+  let oldAdded = false;
+  let newAdded = false;
+  try {
+    git(root, ['read-tree', base], gitIndex);
+    const files = draft.changes.map(change => {
+      const path = repoPath(root, change.path);
+      const blob = gitText(root, ['hash-object', '-w', '--stdin'], { input: change.content.replace(/\r\n/g, '\n') });
+      git(root, ['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], gitIndex);
+      return path;
+    });
+    const tree = gitText(root, ['write-tree'], gitIndex);
+    const candidate = gitText(root, ['commit-tree', tree, '-p', base, '-m', 'chore: 生成 Skill 回放候选']);
+    if (!gitText(root, ['diff', '--name-only', base, candidate])) throw new InputError('Skill draft has no changes');
+    git(root, ['worktree', 'add', '--detach', oldTree, base]);
+    oldAdded = true;
+    git(root, ['worktree', 'add', '--detach', newTree, candidate]);
+    newAdded = true;
+    const expectedLearning = files.find(file => file !== entryPath) ?? entryPath;
+    const observations = scenarios.map(scenario => {
+      const baseline = runScenario(oldTree, base, runner, entryPath, scenario);
+      const proposed = runScenario(newTree, candidate, runner, entryPath, scenario);
+      if (baseline.passed !== scenario.baseline || !proposed.passed ||
+          (!scenario.baseline && !proposed.loaded.some(item => item.path === expectedLearning))) {
+        throw new InputError(`Skill replay failed: ${scenario.id}`);
+      }
+      return { id: scenario.id, inputSha256: sha256(JSON.stringify(scenario.input)), baseline, candidate: proposed };
+    });
+    if (sha256(readFileSync(runner)) !== runnerSha256) throw new InputError('Replay runner changed during validation');
+    const receipt: ReplayReceipt = { base, candidate, entry: entryPath, files, sources: draft.sources, runnerSha256, scenarios: observations };
+    const content = JSON.stringify(receipt);
+    const id = sha256(content);
+    const path = receiptPath(root, id);
+    mkdirSync(dirname(path), { recursive: true });
+    git(root, ['update-ref', 'refs/evolve/replays/' + id, candidate]);
+    if (!existsSync(path)) writeFileSync(path, content, { flag: 'wx' });
+    else if (readFileSync(path, 'utf8') !== content) throw new InputError('Skill replay receipt differs');
+    return { id, ...receipt };
+  } finally {
+    if (newAdded) git(root, ['worktree', 'remove', '--force', newTree]);
+    if (oldAdded) git(root, ['worktree', 'remove', '--force', oldTree]);
+    rmSync(index, { force: true });
+    rmdirSync(scratch);
+  }
+}
+
+export function changeSkillVersion(root: string, id: string, rollback = false) {
+  root = repoRoot(root);
+  const content = readFileSync(receiptPath(root, id), 'utf8');
+  if (sha256(content) !== id) throw new InputError('Skill replay receipt changed');
+  const receipt = JSON.parse(content) as ReplayReceipt;
+  if (gitText(root, ['rev-parse', '--verify', 'refs/evolve/replays/' + id]) !== receipt.candidate) {
+    throw new InputError('Skill candidate no longer matches its replay receipt');
+  }
+  const head = gitText(root, ['rev-parse', 'HEAD']);
+  const changedFiles = gitText(root, ['diff', '--name-only', receipt.base, receipt.candidate]).split(/\r?\n/);
+  if (!changedFiles.length || changedFiles.some(path => !receipt.files.includes(path)) ||
+      gitText(root, ['rev-list', '--parents', '-n', '1', receipt.candidate]) !== `${receipt.candidate} ${receipt.base}`) {
+    throw new InputError('Skill candidate has unexpected changes or parent');
+  }
+  if (!rollback && head === receipt.candidate) return { id, commit: head, replayed: true };
+  if (rollback && gitText(root, ['rev-list', '--parents', '-n', '1', head]) === `${head} ${receipt.candidate}` &&
+      gitText(root, ['rev-parse', `${head}^{tree}`]) === gitText(root, ['rev-parse', `${receipt.base}^{tree}`])) {
+    return { id, commit: head, replayed: true };
+  }
+  if (head !== (rollback ? receipt.candidate : receipt.base)) throw new InputError('Project version changed since Skill replay');
+  const packagePath = dirname(receipt.entry).replaceAll('\\', '/');
+  if (gitText(root, ['status', '--porcelain', '--untracked-files=all', '--', packagePath])) {
+    throw new InputError('Skill package has local changes');
+  }
+  if (gitText(root, ['diff', '--cached', '--name-only'])) throw new InputError('The Git index contains staged changes');
+  if (rollback) git(root, ['revert', '--no-edit', receipt.candidate]);
+  else git(root, ['merge', '--ff-only', receipt.candidate]);
+  return { id, commit: gitText(root, ['rev-parse', 'HEAD']), replayed: false };
+}

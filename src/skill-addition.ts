@@ -47,8 +47,10 @@ export function draftSkillAddition(input: {
     changes.unshift({ path: entry, content });
   }
   return {
-    id, priority: input.priority, sources,
+    id, priority: input.priority, sources, instruction, ...(when ? { when } : {}),
     baseline: { path: entry, sha256: createHash('sha256').update(baseline).digest('hex') },
     changes,
   };
 }
+
+export type SkillAddition = ReturnType<typeof draftSkillAddition>;
