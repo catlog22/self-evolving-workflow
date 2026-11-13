@@ -5,8 +5,8 @@ description: 回溯指定 Session，找出可归因到 Skill 的执行问题，�
 
 # Skill 自进化
 
-1. 调用 `agent-memory --root <maestro-project> session review <session-id>`。有经授权的会话导出时，加 `--transcript <messages.json>`。通过信号的 `runIds` 查找 `runs` 中对应的执行记录和 `skillRef`。对只来自会话片段的信号，先结合上下文确认对应的 Run；缺少版本记录时保留为待确认信号。
-2. 确认缺漏位于 Skill 的步骤、约束或适用条件。把临时故障与执行器问题留给对应处理流程。
+1. 调用 `agent-memory --root <maestro-project> session review <session-id>`。有经授权的会话导出时，加 `--transcript <messages.json>`。用信号的 `runIds` 找到对应执行和 `skillRef`，用 `skillReads` 核对实际打开的文件、哈希与封存回执。对只来自会话片段的信号，先结合上下文确认对应的 Run。缺少版本记录时保留为待确认信号。
+2. 在对应 Git 版本中检查步骤、约束和适用条件。结合失败、修复和验证证据判断是否应修改 Skill。对缺少读取记录的文件，将其读取情况视为未知。把临时故障与执行器问题交给对应处理流程。
 3. 生成附加内容。运行 `agent-memory evolve draft <SKILL.md> "<执行指令或说明>" --priority <high|normal|low> --evidence "<证据引用>"`。有多个来源时重复传入 `--evidence`。
    - `high` 用于已证实影响结果正确性或关键门禁的通用要求。在入口放一条短指令，供每次执行前读取。
    - `normal` 用于有明确触发条件、可重复出现的流程问题。用包内链接承载说明，并用 `--when "<触发条件>"` 标出何时读取。

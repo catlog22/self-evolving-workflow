@@ -432,7 +432,18 @@ test('Session review connects failure and retry receipts to the original Skill v
   await writeReceipt(3, 'run', 'run-1', { run_id: 'run-1', status: 'failed' }, 'Required preflight missing.');
   await writeReceipt(4, 'orchestration', session, { ...birth, run_id: 'run-2', retry_of_run_id: 'run-1' });
   await writeReceipt(5, 'orchestration', session, {
-    operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-2', summary: 'Preflight re-run passed.',
+    ...birth, run_id: 'run-3', skill_ref: skillRef, retry_of_run_id: 'run-2',
+  });
+  const skillReads = {
+    reference: skillRef, missing: [],
+    reads: [
+      { path: 'SKILL.md', sha256: `sha256:${'d'.repeat(64)}` },
+      { path: 'references/prepare.md', sha256: `sha256:${'e'.repeat(64)}` },
+    ],
+  };
+  await writeReceipt(6, 'orchestration', session, {
+    operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-3',
+    summary: 'Preflight re-run passed.', skill_reads: skillReads,
   });
   const result = await reviewSession(root, session, { model: () => ({
     async chat({ system, prompt }) {
@@ -441,17 +452,33 @@ test('Session review connects failure and retry receipts to the original Skill v
       assert.match(prompt, /run-1 became blocked.*Workflow link skipped/);
       assert.match(prompt, /run-1 became failed.*Required preflight missing/);
       assert.match(prompt, /run-2 \(analyze\) retries run-1/);
-      assert.match(prompt, /run-2 completed.*Preflight re-run passed/);
+      assert.match(prompt, /run-3 completed.*Preflight re-run passed/);
+      assert.match(prompt, /run-3 opened Skill documents: SKILL.md, references\/prepare.md/);
       return JSON.stringify([{ memories: [
         { type: 'retry', content: 'Run was retried.', source_message_ids: ['receipt:tr_4#run:run-2'] },
+        { type: 'verified_fix', content: 'Retry opened preflight and passed.', source_message_ids: [
+          'receipt:tr_6#skill-reads:run-3', 'receipt:tr_6#run:run-3',
+        ] },
       ] }]);
     },
   }) });
   assert.deepEqual(result.runs, [
     { id: 'run-1', command: 'analyze', skillRef, retryOf: undefined, source: 'receipt:tr_1#run:run-1' },
     { id: 'run-2', command: 'analyze', skillRef: undefined, retryOf: 'run-1', source: 'receipt:tr_4#run:run-2' },
+    {
+      id: 'run-3', command: 'analyze', skillRef, retryOf: 'run-2', source: 'receipt:tr_5#run:run-3',
+      skillReads: { source: 'receipt:tr_6#skill-reads:run-3', files: skillReads.reads },
+    },
   ]);
-  assert.deepEqual(result.signals[0].runIds, ['run-1', 'run-2']);
+  assert.deepEqual(result.signals.find(signal => signal.kind === 'retry').runIds, ['run-1', 'run-2']);
+  assert.deepEqual(result.signals.find(signal => signal.kind === 'verified_fix').runIds, ['run-3']);
+  await writeReceipt(6, 'orchestration', session, {
+    operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-3', summary: 'Preflight re-run passed.',
+    skill_reads: { ...skillReads, reference: { ...skillRef, tree: 'f'.repeat(40) } },
+  });
+  await assert.rejects(reviewSession(root, session, {
+    model: () => { throw new Error('Wrong Skill version reached the model'); },
+  }), /Skill reads do not match the sealed Run/);
   await writeFile(join(receipts, 'requests', 'req-3.json'), '{}');
   await assert.rejects(reviewSession(root, session, {
     model: () => { throw new Error('Uncommitted evidence reached the model'); },

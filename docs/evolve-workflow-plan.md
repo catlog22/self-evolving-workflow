@@ -171,7 +171,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 ## 5. 自进化 Skill
 
-1. **封装 Session 回溯。** 用 `agent-memory session review <session-id>` 读取 Run 状态与重试回执、Session 完成回执和可核对的会话证据快照。必要时通过 `--transcript` 加入经授权的会话导出。工具复用 Memory L1 提取，返回带来源引用的纠正、失败、重试和修复信号。回执可关联到 Run 时，返回对应 Run ID 与可取得的 Skill 版本，供沉淀与自进化共同调用。
+1. **封装 Session 回溯。** 用 `agent-memory session review <session-id>` 读取 Run 状态与重试回执、Session 完成回执和可核对的会话证据快照。必要时通过 `--transcript` 加入经授权的会话导出。工具复用 Memory L1 提取，返回带来源引用的纠正、失败、重试和修复信号。回执可关联到 Run 时，返回 Run ID、可取得的 Skill 版本，以及封存时记录的文件路径与内容哈希。缺少读取记录时，读取情况视为未知。
 2. **生成附加内容。** 核对实际 Skill 版本、建议的优先级和证据，以 `agent-memory evolve draft` 生成附加文本或链接文档。高优先级在入口放一条执行前应读取的短指令。普通优先级从入口链接到包内说明，按条件读取。低优先级保存在独立参考文档中，供主动检索。草稿保留目标路径、基线哈希与证据，便于回放和审批。
 3. **真实回放。** `agent-memory evolve replay` 在两个独立 Git worktree 上调用同一宿主脚本，逐一传入相同的任务输入。场景包含可复现的旧版失败和既有成功流程。回执记录两版加载的文件与哈希。带链接的候选还要证明失败用例回放时读取了新增文档。
 4. **应用与回滚。** 确认采用后，`agent-memory evolve apply` 对比当前提交、Skill 工作树和回执，再快进到已验证的候选。重新调用确认宿主加载新版。应用关联证据、回放结果与新旧版本。紧接该候选的回滚由 `agent-memory evolve rollback` 创建 Git 反向提交；后续提交已经改变历史时，重新核对影响后再恢复。
@@ -202,6 +202,8 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 | 4. 收尾沉淀与发布 | 接入 Session 完成回执和独立 Skill 结束回执。实现证据校验、匹配、补证与候选发布。 | 重复投递、漏投补扫和中途重试都只产生一批结果。零候选正常完成。相反证据生成冲突候选。约束与候选发布可追溯。 |
 | 5. 自进化闭环 | 选一个项目 Skill，生成局部补丁，通过真实宿主回放后应用并回滚。 | 旧版能复现问题，候选改善目标行为，原有成功场景通过。实际加载路径和哈希与候选一致，能拒绝基线漂移，应用和回滚都可复查。 |
 | 6. 扩大迁移范围 | 迁移元 Skill、Odyssey、Swarm 和其他步骤。按仓库或 Skill 比对旧规则，逐组切换。 | 宿主安装后可以从包内读取所需流程。Odyssey 可恢复原模式，Swarm 的角色及产物契约不变。新 Wiki 接管确认范围，旧运行记录走兼容读取。 |
+
+Odyssey 的七种模式已随 Skill 包分发。安装包验收覆盖 `odyssey-review` 的分派和恢复，兼容解析继续优先读取已有项目覆盖。Swarm 的角色、脚本和产物契约随包分发。同一轮更新重试复用原结果，更新回执提交后中断时可恢复派生状态。下一步用真实宿主验证两者的文档读取与恢复行为，再扩大固定版本的绑定范围。 [Odyssey 入口](/D:/evolve-maestro-runtime/.claude/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve-maestro-runtime/.claude/skills/team-swarm/specs/swarm-protocol.md)
 
 ### 7.1 `analyze` 试迁任务
 

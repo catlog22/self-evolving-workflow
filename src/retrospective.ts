@@ -17,9 +17,18 @@ export interface SkillSignal {
 export interface ReviewedRun {
   id: string;
   command: string;
-  skillRef?: { skill_id: string; commit: string; tree: string; package_path: string; entry: string };
+  skillRef?: ReviewedSkillReference;
+  skillReads?: { source: string; files: Array<{ path: string; sha256: string }> };
   retryOf?: string;
   source: string;
+}
+
+interface ReviewedSkillReference {
+  skill_id: string;
+  commit: string;
+  tree: string;
+  package_path: string;
+  entry: string;
 }
 
 const signalPrompt = [
@@ -27,6 +36,7 @@ const signalPrompt = [
   'Extract evidence of user corrections, errors that changed the approach, blocked or aborted actions,',
   'retries, verified fixes, and repeatable workflow issues. Omit routine progress and speculation.',
   'Each signal should state what happened and, where evidenced, why it matters or how it was fixed.',
+  'A record of an opened Skill document confirms the read only. A missing read record is inconclusive.',
   'A successful completion alone does not prove a fix. Use the language of the conversation.',
   'Return [{"memories":[{"type":"correction","content":"...","source_message_ids":["exact ID from the timeline"]}]}].',
   'Allowed types are correction, error, retry, aborted, verified_fix and workflow_issue. Return [] if there are no signals.',
@@ -46,7 +56,7 @@ function signalKind(value: string | undefined): SkillSignal['kind'] {
   }
 }
 
-function readSkillReference(value: unknown): ReviewedRun['skillRef'] {
+function readSkillReference(value: unknown): ReviewedSkillReference | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object') throw new InputError('Invalid Run Skill reference');
   const source = value as Record<string, unknown>;
@@ -58,6 +68,30 @@ function readSkillReference(value: unknown): ReviewedRun['skillRef'] {
     skill_id: requireText(source.skill_id, 'Skill ID'), commit, tree,
     package_path: requireText(source.package_path, 'Skill package path'), entry: requireText(source.entry, 'Skill entry'),
   };
+}
+
+function readSkillFiles(value: unknown, run: ReviewedRun): NonNullable<ReviewedRun['skillReads']>['files'] {
+  if (!value || typeof value !== 'object') throw new InputError(`Invalid Skill reads for Run ${run.id}`);
+  const reads = value as Record<string, unknown>;
+  const reference = readSkillReference(reads.reference);
+  if (!run.skillRef || !reference || JSON.stringify(reference) !== JSON.stringify(run.skillRef) ||
+      !Array.isArray(reads.reads) || !Array.isArray(reads.missing) || reads.missing.length !== 0) {
+    throw new InputError(`Skill reads do not match the sealed Run ${run.id}`);
+  }
+  const files = new Map<string, string>();
+  for (const entry of reads.reads) {
+    if (!entry || typeof entry !== 'object') throw new InputError(`Invalid Skill read for Run ${run.id}`);
+    const path = requireText(entry.path, 'Skill read path');
+    const sha256 = requireText(entry.sha256, 'Skill read hash');
+    if (path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..') ||
+        !/\.md$/i.test(path) || !/^sha256:[a-f0-9]{64}$/.test(sha256) ||
+        (files.has(path) && files.get(path) !== sha256)) {
+      throw new InputError(`Invalid Skill read for Run ${run.id}: ${path}`);
+    }
+    files.set(path, sha256);
+  }
+  if (!files.has(reference.entry)) throw new InputError(`Missing Skill entry read for Run ${run.id}`);
+  return [...files].map(([path, sha256]) => ({ path, sha256 }));
 }
 
 export async function reviewSession(
@@ -91,6 +125,21 @@ export async function reviewSession(
     const run = result.run_id;
     const source = `receipt:${id}#run:${run}`;
     const timestamp = requireText(receipt.recorded_at, 'Run transition time');
+    const sealed = result.status === 'sealed' && (
+      (receipt.target_type === 'orchestration' && receipt.target_id === session && result.operation === 'run-complete-and-seal') ||
+      (receipt.target_type === 'run' && receipt.target_id === run && result.operation === 'run-recovery-seal')
+    );
+    const reviewedRun = runs.get(run);
+    if (sealed && reviewedRun?.skillRef && result.skill_reads !== undefined) {
+      const files = readSkillFiles(result.skill_reads, reviewedRun);
+      const readSource = `receipt:${id}#skill-reads:${run}`;
+      reviewedRun.skillReads = { source: readSource, files };
+      evidence.set(readSource, {
+        id: readSource, role: 'tool', timestamp,
+        content: `Run ${run} opened Skill documents: ${files.map(file => file.path).join(', ')}.`,
+      });
+      evidenceRuns.set(readSource, [run]);
+    }
     const record = (content: string, runIds = [run]) => {
       evidence.set(source, { id: source, content, timestamp, role: 'tool' });
       evidenceRuns.set(source, runIds);
