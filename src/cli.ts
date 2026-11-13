@@ -9,6 +9,7 @@ import { MemoryStore, type ConversationMessage } from './memory.js';
 import { parseScope, search, type SearchScope, type SearchSources } from './search.js';
 import type { LlmClient } from './upstream/llm.js';
 import { Wiki } from './wiki.js';
+import { migrateLegacyWiki } from './wiki-migration.js';
 
 const help = `Usage: agent-memory <command> [options]
 
@@ -21,6 +22,7 @@ const help = `Usage: agent-memory <command> [options]
   wiki search <query>                      Search wiki pages (--hop 0)
   wiki get <id>                            Read a Wiki entry, including history
   wiki constraints                         Resolve active constraints (--skill, --task, --path)
+  wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --apply)
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
   memory get|delete <id>                   Read or delete a memory
@@ -61,6 +63,8 @@ const options = {
   task: { type: 'string' },
   path: { type: 'string', multiple: true },
   history: { type: 'boolean' },
+  project: { type: 'string' },
+  apply: { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
 } as const;
 
@@ -158,6 +162,9 @@ async function main() {
       case 'search': return print(wiki.search(args.join(' '), wikiOptions));
       case 'get': return print(wiki.getEntry(requireText(args[0], 'wiki entry ID')));
       case 'constraints': return print(wiki.constraints({ skill: values.skill, task: values.task, paths: values.path }));
+      case 'migrate': return print(migrateLegacyWiki(
+        wiki, requireText(args[0], 'legacy project root'), requireText(values.project, 'legacy project ID'), values.apply,
+      ));
       case 'ingest': return print(await wiki.ingest(requireText(args[0], 'source file'), { llm: modelClient() }));
     }
   }

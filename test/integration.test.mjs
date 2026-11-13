@@ -94,6 +94,29 @@ test('managed Wiki entries resolve active scopes independently of search and pre
   assert.equal(wiki.search('calibration', { includeHistory: true }).results.some(hit => hit.id === 'entries/retired'), true);
 });
 
+test('legacy Wiki migration is previewable, idempotent, and preserves constraint provenance', async t => {
+  const legacy = await temp(t);
+  const root = await temp(t);
+  await mkdir(join(legacy, '.workflow', 'specs'), { recursive: true });
+  await mkdir(join(legacy, '.workflow', 'knowhow'), { recursive: true });
+  await writeFile(join(legacy, '.workflow', 'specs', 'runtime.md'), [
+    '<spec-entry title="Current" sid="S-1">', 'Check the current calibration.', '</spec-entry>',
+    '<spec-entry title="Old" sid="S-2" status="deprecated" superseded-by="S-1">', 'Use the old calibration.', '</spec-entry>',
+    '<spec-entry title="Disputed" confidence="contested">', 'Check the disputed calibration.', '</spec-entry>',
+  ].join('\n'));
+  await writeFile(join(legacy, '.workflow', 'knowhow', 'K-1.md'), '---\ntitle: Calibration tips\n---\n\nInspect the gauge.\n');
+  const args = ['wiki', 'migrate', legacy, '--project', 'legacy-project'];
+  const preview = await cliJson(root, ...args);
+  assert.equal(preview.length, 4);
+  const wiki = new Wiki(root);
+  assert.deepEqual(wiki.constraints(), []);
+  assert.deepEqual(await cliJson(root, ...args, '--apply'), preview);
+  assert.ok((await cliJson(root, ...args, '--apply')).every(row => row.existing));
+  assert.deepEqual(wiki.constraints().map(row => row.title), ['Current']);
+  assert.match(wiki.getEntry('legacy-project:spec:S-2').body, /Superseding entry/);
+  assert.equal(wiki.getEntry('legacy-project:knowhow:K-1').entry.mode, 'reference');
+});
+
 test('Wiki ingest preserves source attribution and locked pages', async t => {
   const root = await temp(t);
   const source = join(root, 'notes.md');
