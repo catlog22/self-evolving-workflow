@@ -139,6 +139,8 @@ sources:
 
 Maestro Session 结束前固定本次可提取的证据范围和锚点，结束时使用同侧提交的完成回执记录这些引用。证据准备和提交路径只做确定性操作，模型提取在提交之后异步执行。现有 Maestro2 v3 完成事务写入文件型回执，完成后封存证据和候选侧写。Evolve 从已提交回执读取，并通过补扫恢复漏投事件。接入首版时，用完成回执携带证据引用并验证能回查，通过后再接入提取。 [Session 完成事务](/D:/maestro2/src/run/v3/mutation-engine.ts:1535) · [封存证据约束](/D:/maestro2/src/run/transcript-evidence.ts:201)
 
+用 `maestro session evidence <descriptor.json> --session <id> --json` 固定经选择的会话片段。它返回引用，重复提交同一片段会复用已有快照。把引用作为 `--evidence` 附在相关 Run 的状态变更上，Session 完成时收集并检查这些引用。回溯可以从同一证据定位 Run 及其 Skill 版本。
+
 Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装的 Evolve JavaScript 入口，`MAESTRO_EVOLVE_PROJECT` 提供稳定项目 ID，`MAESTRO_EVOLVE_WIKI_ROOT` 可指定独立 Wiki 目录。完成事务把 Run 摘要及明确引用的会话快照锚点写入回执，后台进程按回执 ID 提取。模型失败或后台进程未启动时，可用 `agent-memory closeout scan <maestro-project> --project <id>` 补扫。用 `closeout show <receipt-id> --project <id>` 查看处理结果。
 
 独立 Skill 通过执行入口明确记录 `succeeded`、`failed` 或 `cancelled`，生成包含执行 ID、实际 Skill 版本和证据引用的结束回执。两类回执进入同一沉淀入口。宿主 `Stop` 此时只作为会话监测信号。关联同一个 Skill 调用的 Session 回执和独立回执时，使用执行 ID 与证据锚点归并信号。沉淀和自进化 Skill 自身的执行事件排除在这一自动触发入口之外，避免递归触发。 [宿主 Stop 处理](/D:/maestro2/src/commands/hooks.ts:1360)
@@ -266,7 +268,7 @@ A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` �
 
 ### 7.5 知识闭环的端到端验收
 
-用 `npm run test:codex-replay` 验证独立的 Skill 回放闭环。将 `MAESTRO_REPLAY_CLI` 设为已构建的 Maestro JavaScript 入口。测试在临时 Git 仓库调用真实 Codex，复现迁移预检场景的旧版失败，验证候选版按需打开新增说明并通过，同时保持状态查询行为。应用和回滚后再调用宿主，核对结果和文档哈希。这个场景验证命令文本，完整知识闭环还需覆盖实际命令执行与沉淀发布。
+将 `MAESTRO_REPLAY_CLI` 设为已构建的 Maestro JavaScript 入口。用 `npm run test:codex-replay` 验证真实 Codex 的 Skill 回放、应用与回滚，核对新增链接的读取条件和文档哈希。用 `npm run test:maestro-closeout` 在临时 Git 仓库执行预检命令，验证会话纠正、Run 重试、完成回执自动沉淀、重复投递、Wiki 发布和索引重建。后者使用本地模型测试端点固定提取结果，并覆盖临时网络故障产生零候选的场景。
 
 端到端验收使用一个有实际用户纠正的场景。例如数据库迁移预检 Skill 漏传 `--dry-run`，补参后验证通过。结束回执触发沉淀，重复投递只处理一次。发布后，新 Session 能检索相关参考，并按原作用域加载迁移来的约束。自进化 Skill 生成补丁，旧版复现漏参，候选版首条命令即带齐参数，已有的成功用例继续通过。应用后重新调用，核对宿主加载新版，再验证回滚。
 

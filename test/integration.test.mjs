@@ -413,23 +413,35 @@ test('Session review connects failure and retry receipts to the original Skill v
   };
   const birth = { run_already_created: true, task: { command: 'analyze' }, status: 'running' };
   const pathFor = revision => `${String(revision).padStart(12, '0')}-tr_${revision}.json`;
-  async function writeReceipt(revision, targetType, targetId, result, reason = 'Run started') {
+  async function writeReceipt(revision, targetType, targetId, result, reason = 'Run started', evidence = []) {
     const requestId = `req-${revision}`;
     const filename = pathFor(revision);
     await writeFile(join(receipts, 'transitions', filename), JSON.stringify({
       schema_version: 'transition-receipt/2.0', session_id: session, activity_revision: revision,
       request_id: requestId, transition_id: `tr_${revision}`, participant_id: 'actor',
       target_type: targetType, target_id: targetId, revision_before: revision - 1, revision_after: revision,
-      recorded_at: `2026-11-13T01:0${revision}:00Z`, reason, result,
+      recorded_at: `2026-11-13T01:0${revision}:00Z`, reason, result, evidence_refs: evidence,
     }));
     await writeFile(join(receipts, 'requests', `${requestId}.json`), JSON.stringify({
       schema_version: 'request-receipt/2.0', request_id: requestId, participant_id: 'actor',
       payload_hash: `sha256:${'c'.repeat(64)}`, transition_receipt_ref: `receipts/transitions/${filename}`,
     }));
   }
+  const quote = 'Use the required preflight link before retrying.';
+  const locator = ['codex', 'host-2', 'correction'];
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const sha256 = digest(quote);
+  const anchor = `transcript:${locator.join(':')}:${sha256.slice(0, 16)}`;
+  const directory = join(receipts, '..', 'transcript-evidence');
+  await mkdir(directory);
+  await writeFile(join(directory, `${sha256}-${digest(locator.join('\0')).slice(0, 16)}.json`), JSON.stringify({
+    schema_version: 'transcript-evidence/1.0', sha256, normalized_sha256: sha256,
+    host_kind: locator[0], host_session_id: locator[1], entry_id: locator[2],
+    captured_at: '2026-11-13T01:03:00Z', quote,
+  }));
   await writeReceipt(1, 'orchestration', session, { ...birth, run_id: 'run-1', skill_ref: skillRef });
   await writeReceipt(2, 'run', 'run-1', { run_id: 'run-1', status: 'blocked' }, 'Workflow link skipped.');
-  await writeReceipt(3, 'run', 'run-1', { run_id: 'run-1', status: 'failed' }, 'Required preflight missing.');
+  await writeReceipt(3, 'run', 'run-1', { run_id: 'run-1', status: 'failed' }, 'Required preflight missing.', [anchor]);
   await writeReceipt(4, 'orchestration', session, { ...birth, run_id: 'run-2', retry_of_run_id: 'run-1' });
   await writeReceipt(5, 'orchestration', session, {
     ...birth, run_id: 'run-3', skill_ref: skillRef, retry_of_run_id: 'run-2',
@@ -456,6 +468,7 @@ test('Session review connects failure and retry receipts to the original Skill v
       assert.match(prompt, /run-3 opened Skill documents: SKILL.md, references\/prepare.md/);
       return JSON.stringify([{ memories: [
         { type: 'retry', content: 'Run was retried.', source_message_ids: ['receipt:tr_4#run:run-2'] },
+        { type: 'correction', content: quote, source_message_ids: [anchor] },
         { type: 'verified_fix', content: 'Retry opened preflight and passed.', source_message_ids: [
           'receipt:tr_6#skill-reads:run-3', 'receipt:tr_6#run:run-3',
         ] },
@@ -471,6 +484,7 @@ test('Session review connects failure and retry receipts to the original Skill v
     },
   ]);
   assert.deepEqual(result.signals.find(signal => signal.kind === 'retry').runIds, ['run-1', 'run-2']);
+  assert.deepEqual(result.signals.find(signal => signal.kind === 'correction').runIds, ['run-1']);
   assert.deepEqual(result.signals.find(signal => signal.kind === 'verified_fix').runIds, ['run-3']);
   await writeReceipt(6, 'orchestration', session, {
     operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-3', summary: 'Preflight re-run passed.',

@@ -123,6 +123,16 @@ export async function reviewSession(
     }
     if (typeof result.run_id !== 'string') continue;
     const run = result.run_id;
+    if ((receipt.target_type === 'run' && receipt.target_id === run) ||
+        (receipt.target_type === 'orchestration' && receipt.target_id === session)) {
+      if (Array.isArray(receipt.evidence_refs)) {
+        for (const ref of receipt.evidence_refs) {
+          if (typeof ref !== 'string' || !ref.startsWith('transcript:')) continue;
+          const linked = evidenceRuns.get(ref) ?? [];
+          if (!linked.includes(run)) evidenceRuns.set(ref, [...linked, run]);
+        }
+      }
+    }
     const source = `receipt:${id}#run:${run}`;
     const timestamp = requireText(receipt.recorded_at, 'Run transition time');
     const sealed = result.status === 'sealed' && (
