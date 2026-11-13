@@ -1,0 +1,57 @@
+{
+  "name": "evolve-agent-memory",
+  "version": "0.1.0",
+  "description": "Local code graph, Markdown wiki and agent memory search",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "bin": {
+    "agent-memory": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./code": {
+      "types": "./dist/code.d.ts",
+      "default": "./dist/code.js"
+    },
+    "./wiki": {
+      "types": "./dist/wiki.d.ts",
+      "default": "./dist/wiki.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "default": "./dist/memory.js"
+    },
+    "./http": {
+      "types": "./dist/http.d.ts",
+      "default": "./dist/http.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@colbymchenry/codegraph": "1.2.0",
+    "@node-rs/jieba": "2.0.1",
+    "@types/emscripten": "^1.41.6",
+    "graphology": "0.26.0",
+    "ignore": "^7.0.5",
+    "web-tree-sitter": "^0.25.3",
+    "yaml": "2.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.3"
+  }
+}
