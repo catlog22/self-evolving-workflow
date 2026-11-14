@@ -240,7 +240,12 @@ try {
   state.finished_at = new Date().toISOString();
   state.state_sha256 = createHash('sha256').update(JSON.stringify(state)).digest('hex');
   writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n');
-  console.log(JSON.stringify({ output_dir: outputDir, ...state }, null, 2));
+  const report = { output_dir: outputDir, ...state };
+  const runDir = process.env.MAESTRO_RUN_DIR || process.env.RUN_DIR;
+  const reportPath = runDir ? join(runDir, 'outputs', 'evolution-report.json') : join(outputDir, 'evolution-report.json');
+  mkdirSync(dirname(reportPath), { recursive: true });
+  writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+  console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   state.status = 'failed';
   state.error = error instanceof Error ? error.message : String(error);
