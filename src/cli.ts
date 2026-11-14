@@ -21,6 +21,10 @@ import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.j
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
 import { KnowledgeReads } from './knowledge-reads.js';
 import { decideSkillRoute } from './skill-route.js';
+import {
+  applySkillDesign, createSkillDesignTask, readSkillDesignTask, replaySkillDesign,
+  reviewSkillDesign, runSkillDesign,
+} from './skill-design.js';
 
 const help = `Usage: agent-memory <command> [options]
 
@@ -54,6 +58,11 @@ const help = `Usage: agent-memory <command> [options]
   evolve draft <SKILL.md> <instruction>    Draft a Skill addition (--priority high|normal|low, --evidence <ref>, --when)
   evolve replay <draft.json>               Compare baseline and candidate (--runner <script>, --scenarios <json>)
   evolve apply|rollback <receipt-id>       Apply a validated version or revert it
+  skill-design task <task-id>              Read a generated meta Skill design task
+  skill-design run <task-id>                Run the explicit meta Skill design runner (--runner)
+  skill-design review <design-id>           Review the generated design against its baseline
+  skill-design replay <design-id>           Replay the reviewed design (--runner, --scenarios)
+  skill-design apply|rollback <design-id>  Apply or roll back the replayed design
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
   memory get|delete <id>                   Read or delete a memory
@@ -365,7 +374,9 @@ async function main() {
     ));
     if (action === 'route') {
       const candidate = readCloseoutCandidate(wiki, requireText(args[0], 'closeout ID'), requireText(args[1], 'candidate ID'));
-      return print(decideSkillRoute({
+      const closeoutId = requireText(args[0], 'closeout ID');
+      const candidateId = requireText(args[1], 'candidate ID');
+      const decision = decideSkillRoute({
         content: candidate.content,
         sources: candidate.sources,
         matchedEntry: candidate.matched_entry,
@@ -380,7 +391,14 @@ async function main() {
         requiresNewArtifacts: values['new-artifacts'],
         requiresRouting: values['requires-routing'],
         explicitSkillIntent: values['skill-intent'],
-      }));
+      });
+      if (decision.route !== 'skill-design') return print(decision);
+      if (!values.skill) throw new InputError('Skill-design route requires --skill <skill-id> for the replay/apply chain');
+      const task = createSkillDesignTask(root, {
+        closeoutId, candidateId, content: candidate.content, sources: candidate.sources,
+        decision, skillId: values.skill, skillVersion: values['skill-version'],
+      });
+      return print({ ...decision, design_task: task });
     }
     const project = requireText(values.project, 'source project ID');
     if (action === 'resume') {
@@ -471,6 +489,20 @@ async function main() {
   }
   if (command === 'evolve' && (action === 'apply' || action === 'rollback')) {
     return print(changeSkillVersion(root, requireText(args[0], 'replay receipt ID'), action === 'rollback'));
+  }
+  if (command === 'skill-design') {
+    if (action === 'task') return print(readSkillDesignTask(root, requireText(args[0], 'Skill design task ID')));
+    if (action === 'run') return print(runSkillDesign(root, requireText(args[0], 'Skill design task ID'), requireText(values.runner, 'design runner')));
+    if (action === 'review') return print(reviewSkillDesign(root, requireText(args[0], 'Skill design receipt ID')));
+    if (action === 'replay') {
+      const scenarios: unknown = JSON.parse(readFileSync(requireText(values.scenarios, 'scenarios file'), 'utf8').replace(/^\uFEFF/, ''));
+      return print(replaySkillDesign(root, requireText(args[0], 'Skill design receipt ID'), {
+        runner: requireText(values.runner, 'replay runner'), scenarios,
+      }));
+    }
+    if (action === 'apply' || action === 'rollback') {
+      return print(applySkillDesign(root, requireText(args[0], 'Skill design receipt ID'), action === 'rollback'));
+    }
   }
   if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract'].includes(action)) {
     const memory = openMemory();

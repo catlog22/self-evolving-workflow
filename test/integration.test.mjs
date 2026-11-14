@@ -10,7 +10,11 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CodeGraph, KnowledgeReads, MemoryStore, Wiki, context, createSearchServer, decideSkillRoute, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
+import {
+  CodeGraph, KnowledgeReads, MemoryStore, Wiki, applySkillDesign, context, createSearchServer,
+  createSkillDesignTask, decideSkillRoute, draftSkillAddition, replaySkillDesign, reviewSession,
+  reviewSkillDesign, runSkillDesign, search,
+} from 'evolve-agent-memory';
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -780,6 +784,67 @@ test('Knowledge closeout routes local fixes and structural changes to the right 
   const wiki = decideSkillRoute({ content: 'Use the staging inventory as a reference.', sources: ['receipt:run-3#check'] });
   assert.equal(wiki.route, 'wiki');
   assert.equal(wiki.invoke_meta_skill, false);
+});
+
+test('Skill-design route generates a task, reviews a meta design, replays it, and applies it', async t => {
+  const root = await temp(t);
+  const support = await temp(t);
+  const git = (...args) => run('git', args, { cwd: root });
+  await git('init', '-q');
+  await git('config', 'user.name', 'Skill design test');
+  await git('config', 'user.email', 'skill-design@example.invalid');
+  await git('config', 'core.autocrlf', 'false');
+  const entry = join(root, 'skills', 'example', 'SKILL.md');
+  await mkdir(join(root, 'skills', 'example'), { recursive: true });
+  const original = '---\nname: example\n---\n\n# Example\n';
+  await writeFile(entry, original);
+  await git('add', '.');
+  await git('commit', '-qm', 'Skill design baseline');
+
+  const decision = decideSkillRoute({
+    content: 'Design a new Skill contract for the release workflow.',
+    sources: ['receipt:design#summary'], skillId: 'example', skillVersion: 'baseline',
+    requiresNewContract: true, stepCount: 3,
+  });
+  const task = createSkillDesignTask(root, {
+    closeoutId: 'a'.repeat(64), candidateId: 'b'.repeat(64), content: decision.meta_skill.instruction,
+    sources: ['receipt:design#summary'], decision, skillId: 'example', skillVersion: 'baseline',
+  });
+  assert.equal(task.replayed, false);
+
+  const packageEntry = new URL('../dist/index.js', import.meta.url).href;
+  const designRunner = join(support, 'design-runner.mjs');
+  await writeFile(designRunner, [
+    "import { readFileSync } from 'node:fs';",
+    `import { draftSkillAddition } from ${JSON.stringify(packageEntry)};`,
+    "const {task} = JSON.parse(readFileSync(0, 'utf8'));",
+    "const draft = draftSkillAddition({ entry: task.target.entry, priority: 'high', instruction: 'Verify release preflight.', sources: task.source.evidence });",
+    "console.log(JSON.stringify({ schema_version: 'skill-design/1.0', task_id: task.id, draft }));",
+  ].join('\n'));
+  const designed = await runSkillDesign(root, task.id, designRunner);
+  const reviewed = reviewSkillDesign(root, designed.id);
+  assert.equal(reviewed.status, 'reviewed');
+
+  const replayRunner = join(support, 'replay-runner.mjs');
+  await writeFile(replayRunner, [
+    "import { readFileSync } from 'node:fs';",
+    "import { createHash } from 'node:crypto';",
+    "const {entry,input} = JSON.parse(readFileSync(0, 'utf8'));",
+    "const body = readFileSync(entry, 'utf8');",
+    "const sha256 = createHash('sha256').update(body).digest('hex');",
+    "console.log(JSON.stringify({ passed: input === 'existing' || body.includes('Verify release preflight.'), loaded: [{ path: entry, sha256 }] }));",
+  ].join('\n'));
+  const scenarios = [
+    { id: 'missing-release-preflight', input: 'reproduce', baseline: false },
+    { id: 'existing-release-flow', input: 'existing', baseline: true },
+  ];
+  const replayed = replaySkillDesign(root, designed.id, { runner: replayRunner, scenarios });
+  assert.equal(replayed.status, 'replayed');
+  const applied = applySkillDesign(root, designed.id);
+  assert.equal(applied.design_id, designed.id);
+  assert.match(await readFile(entry, 'utf8'), /Verify release preflight/);
+  applySkillDesign(root, designed.id, true);
+  assert.equal(await readFile(entry, 'utf8'), original);
 });
 
 test('CLI ingestion and memory extraction use an OpenAI-compatible endpoint', async t => {

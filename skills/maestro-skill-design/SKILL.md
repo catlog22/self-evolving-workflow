@@ -22,3 +22,7 @@ Use the requested outcome and the target project's conventions to design or vali
 2. Put dispatch rules and short instructions in `SKILL.md`. Move conditional procedures into package-relative Markdown links. Put scripts and role instructions beside the Skill when it owns them. Use [the package contract guide](references/package-contract.md) when choosing the lifecycle or declaring Run inputs, outputs, and linked documents.
 3. Inspect the package as the host will see it. Validate the intended Git revision and test the main workflow, one existing success case, and each affected recovery or conditional branch. For a plan or review request, deliver the design or identified gaps. For authoring, leave the requested files and verification results in the workspace.
 4. For changes motivated by a finished Session, use its Memory retrospective to ground the change. Follow [the replay and release procedure](references/validation.md) to verify the actual loaded version and preserve a rollback path.
+
+## Agent Memory design-task handoff
+
+When entered from `agent-memory closeout route`, read the generated task with `agent-memory skill-design task <task-id>`. Return a `skill-design/1.0` envelope containing `task_id` and a replayable `draft`. Keep the target Skill entry, evidence sources, baseline hash, priority, and conditional links explicit. The caller runs `agent-memory skill-design review <design-id>`, `skill-design replay`, and `skill-design apply` after the design response is returned. Do not edit the target Skill during design generation.

@@ -27,6 +27,16 @@ export type { WikiContext, WikiEntryMetadata } from './wiki-entry.js';
 export { reviewSession, reviewSkillExecution, type ReviewedRun, type SkillSignal } from './retrospective.js';
 export { draftSkillAddition, type SkillPriority } from './skill-addition.js';
 export { decideSkillRoute, type SkillRetentionRoute, type SkillRouteContext, type SkillRouteDecision } from './skill-route.js';
+export {
+  applySkillDesign,
+  createSkillDesignTask,
+  readSkillDesignTask,
+  replaySkillDesign,
+  reviewSkillDesign,
+  runSkillDesign,
+  type SkillDesignReceipt,
+  type SkillDesignTask,
+} from './skill-design.js';
 export type { WikiIngestOptions } from './wiki-ingest.js';
 export { MemoryStore, type MemoryInput, type MemoryRecord, type MemorySearchOptions, type MemoryStoreOptions, type ConversationMessage } from './memory.js';
 export {

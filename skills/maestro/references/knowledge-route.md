@@ -97,6 +97,10 @@ agent-memory --root <project> closeout skill <execution-id> --skill <skill-id> -
 agent-memory --root <project> closeout scan <maestro-root> --project <source-project-id>
 agent-memory --root <project> closeout show <receipt-id> --project <source-project-id>
 agent-memory --root <project> closeout route <closeout-id> <candidate-id> --skill <skill-id> --skill-version <version>
+agent-memory --root <project> skill-design run <task-id> --runner <meta-skill-runner.mjs>
+agent-memory --root <project> skill-design review <design-id>
+agent-memory --root <project> skill-design replay <design-id> --runner <host-runner.mjs> --scenarios <cases.json>
+agent-memory --root <project> skill-design apply <design-id>
 ```
 
 重复投递按回执身份幂等处理。模型失败后使用同一回执重试，不重新构造证据。Closeout 自身和 `workflow-evolve` 的执行记录不进入自动沉淀，避免递归。
@@ -113,7 +117,7 @@ agent-memory --root <project> closeout route <closeout-id> <candidate-id> --skil
 
 审查输出保留候选 ID、条目 ID、关系、证据和建议动作。审查本身不应用文件变更。
 
-`closeout route` 只输出路由决策。`route=wiki` 进入 Wiki 审查，`route=skill-addition` 进入自进化草稿，`route=skill-design` 返回元 Skill 设计所需的结构条件和证据。路由结果中的 `invoke_meta_skill` 只表示允许显式调用，不代表自动启动元 Skill。
+`closeout route` 对 `route=skill-design` 生成当前项目 `.agent-memory/skill-design/tasks/` 下的设计任务。设计任务必须带目标 Skill，避免生成无法回放的无主候选。`skill-design run` 通过显式元 Skill runner 生成设计回执，`review` 校验候选能从目标基线重建，`replay` 复用现有 Skill replay，`apply` 和 `rollback` 复用现有版本应用链。路由结果中的 `invoke_meta_skill` 只表示允许显式调用，不代表自动启动元 Skill。
 
 ### `publish`
 

@@ -221,7 +221,7 @@ Closeout 候选先经过只读路由决策，再选择 Wiki、Skill 附加修正
 | 可归因到既有 Skill 的单条规则、条件链接或局部修正 | `workflow-evolve` 生成 `high/normal/low` 附加内容 |
 | 需要新契约、新产物、跨 Skill 路由、至少 3 个稳定步骤或明确新增 Skill | 元 Skill 设计 |
 
-元 Skill 路由只返回 `invoke_meta_skill` 和设计输入，不自动启动设计任务。明确调用后，元 Skill 负责生成入口、Markdown 链接、契约、产物、恢复路径和验收场景，再回到自进化回放与采用流程。这样知识沉淀可以形成新的 Skill 包，同时保持普通经验不被过度流程化。
+元 Skill 路由会在当前项目 `.agent-memory/skill-design/tasks/` 生成设计任务。`skill-design run` 通过显式元 Skill runner 生成设计回执，`skill-design review` 校验候选能从目标 Skill 基线重建，`skill-design replay` 复用既有双 Worktree 回放，`skill-design apply|rollback` 复用现有版本应用链。这样知识沉淀可以形成可审查、可回放、可回滚的 Skill 改动，同时保持普通经验不被过度流程化。
 
 ### 更新决策
 
