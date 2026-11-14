@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CodeGraph, KnowledgeReads, MemoryStore, Wiki, context, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
+import { CodeGraph, KnowledgeReads, MemoryStore, Wiki, context, createSearchServer, decideSkillRoute, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -757,6 +757,29 @@ test('Stage search tracing keeps context sessions separate from historical Memor
   assert.equal(receipt.reads[0].id, 'old-memory');
   assert.equal(receipt.reads[0].from_search_id, searchId);
   store.close();
+});
+
+test('Knowledge closeout routes local fixes and structural changes to the right Skill flow', () => {
+  const addition = decideSkillRoute({
+    content: 'The execute Skill must search the error Memory before retrying.',
+    sources: ['receipt:run-1#error'], skillId: 'execute', skillVersion: 'v1',
+    signalKinds: ['retry'], repeatCount: 2,
+  });
+  assert.equal(addition.route, 'skill-addition');
+  assert.equal(addition.invoke_meta_skill, false);
+  assert.equal(addition.priority, 'high');
+
+  const design = decideSkillRoute({
+    content: 'Create a workflow for multi-stage release validation.',
+    sources: ['receipt:run-2#summary'], crossSkill: true, requiresNewContract: true, stepCount: 4,
+  });
+  assert.equal(design.route, 'skill-design');
+  assert.equal(design.invoke_meta_skill, true);
+  assert.equal(design.meta_skill.id, 'maestro-skill-design');
+
+  const wiki = decideSkillRoute({ content: 'Use the staging inventory as a reference.', sources: ['receipt:run-3#check'] });
+  assert.equal(wiki.route, 'wiki');
+  assert.equal(wiki.invoke_meta_skill, false);
 });
 
 test('CLI ingestion and memory extraction use an OpenAI-compatible endpoint', async t => {

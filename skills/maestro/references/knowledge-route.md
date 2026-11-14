@@ -12,6 +12,7 @@
 | 发布或更新候选 | `publish` | 需要明确授权 | `wiki propose` → `wiki apply` 或 `closeout publish` |
 | 迁移旧 Spec 和 Knowhow | `migrate` | 预览 | `agent-memory wiki migrate` |
 | 发现可归因于 Skill 的问题 | `evolve` | 只读回溯 | `agent-memory session review` 或 `evolve review`，随后转交 `workflow-evolve` |
+| 候选需要新 Skill 或新流程包 | `skill-design` | 只读决策 | `agent-memory closeout route`，满足结构条件时显式调用元 Skill 设计 |
 
 ### 统一 Wiki 条目
 
@@ -36,6 +37,7 @@
 6. `constraint` 与 `reference` 发生冲突时保留双方证据，创建待审查关系，不自动覆盖活跃条目。
 7. 没有合格候选、候选被拒绝或用户延期都属于正常结果，不得为了填充知识库而制造条目。
 8. 发现信号能定位到具体 Skill、版本、读取文件和证据时，才转交 `workflow-evolve`。项目级规则和跨任务经验留在 Wiki。
+9. 候选只有在需要新契约、新产物、跨 Skill 路由、至少 3 个稳定步骤或明确要求新增 Skill 时，才进入 `skill-design`。单条指令和条件链接继续由 `workflow-evolve` 处理。
 
 ## 操作流程
 
@@ -94,6 +96,7 @@ agent-memory --root <project> closeout session <session-id> --project <source-pr
 agent-memory --root <project> closeout skill <execution-id> --skill <skill-id> --skill-version <version> --status <status> --transcript <messages.json> --project <source-project-id>
 agent-memory --root <project> closeout scan <maestro-root> --project <source-project-id>
 agent-memory --root <project> closeout show <receipt-id> --project <source-project-id>
+agent-memory --root <project> closeout route <closeout-id> <candidate-id> --skill <skill-id> --skill-version <version>
 ```
 
 重复投递按回执身份幂等处理。模型失败后使用同一回执重试，不重新构造证据。Closeout 自身和 `workflow-evolve` 的执行记录不进入自动沉淀，避免递归。
@@ -109,6 +112,8 @@ agent-memory --root <project> closeout show <receipt-id> --project <source-proje
 - 是否应追加来源、创建 Wiki 提案、等待补证或保持零候选。
 
 审查输出保留候选 ID、条目 ID、关系、证据和建议动作。审查本身不应用文件变更。
+
+`closeout route` 只输出路由决策。`route=wiki` 进入 Wiki 审查，`route=skill-addition` 进入自进化草稿，`route=skill-design` 返回元 Skill 设计所需的结构条件和证据。路由结果中的 `invoke_meta_skill` 只表示允许显式调用，不代表自动启动元 Skill。
 
 ### `publish`
 

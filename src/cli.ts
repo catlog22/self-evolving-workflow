@@ -20,6 +20,7 @@ import { migrateLegacyWiki, validateWikiMemberUid } from './wiki-migration.js';
 import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.js';
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
 import { KnowledgeReads } from './knowledge-reads.js';
+import { decideSkillRoute } from './skill-route.js';
 
 const help = `Usage: agent-memory <command> [options]
 
@@ -45,6 +46,7 @@ const help = `Usage: agent-memory <command> [options]
   closeout resume <receipt-id>             Harvest an already recorded standalone Skill completion
   closeout scan [maestro-root]              Reconcile committed Session and standalone Skill receipts (--project)
   closeout show <receipt-id>                Show harvested candidates (--project)
+  closeout route <closeout-id> <candidate-id> Decide Wiki, Skill addition, or meta Skill design
   closeout publish <closeout-id> <candidate-id> <title>
                                           Publish a reviewed reference
   session review <id>                      Review Session signals (--transcript <messages.json>)
@@ -108,6 +110,14 @@ const options = {
   transcript: { type: 'string' },
   receipt: { type: 'string' },
   'skill-version': { type: 'string' },
+  'repeat-count': { type: 'string' },
+  'step-count': { type: 'string' },
+  'signal-kind': { type: 'string', multiple: true },
+  'cross-skill': { type: 'boolean' },
+  'new-contract': { type: 'boolean' },
+  'new-artifacts': { type: 'boolean' },
+  'requires-routing': { type: 'boolean' },
+  'skill-intent': { type: 'boolean' },
   status: { type: 'string' },
   'record-only': { type: 'boolean' },
   evidence: { type: 'string', multiple: true },
@@ -353,6 +363,25 @@ async function main() {
     if (action === 'publish') return print(publishReference(
       wiki, requireText(args[0], 'closeout ID'), requireText(args[1], 'candidate ID'), args.slice(2).join(' '),
     ));
+    if (action === 'route') {
+      const candidate = readCloseoutCandidate(wiki, requireText(args[0], 'closeout ID'), requireText(args[1], 'candidate ID'));
+      return print(decideSkillRoute({
+        content: candidate.content,
+        sources: candidate.sources,
+        matchedEntry: candidate.matched_entry,
+        relatedEntries: candidate.related_entries?.map(entry => entry.id),
+        skillId: values.skill,
+        skillVersion: values['skill-version'],
+        signalKinds: values['signal-kind'],
+        repeatCount: values['repeat-count'] === undefined ? undefined : Number(values['repeat-count']),
+        stepCount: values['step-count'] === undefined ? undefined : Number(values['step-count']),
+        crossSkill: values['cross-skill'],
+        requiresNewContract: values['new-contract'],
+        requiresNewArtifacts: values['new-artifacts'],
+        requiresRouting: values['requires-routing'],
+        explicitSkillIntent: values['skill-intent'],
+      }));
+    }
     const project = requireText(values.project, 'source project ID');
     if (action === 'resume') {
       const id = requireText(args[0], 'Skill completion receipt ID');

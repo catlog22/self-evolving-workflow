@@ -9,6 +9,7 @@ description: 回溯指定 Session 或独立 Skill 调用，找出可归因到 Sk
    - 独立 Skill 调用用 `agent-memory --root <maestro-project> evolve review <execution-id> --project <source-project-id>`，从已提交的回执获取 Skill 版本、结束状态和信号。有独立 Wiki 目录时传入记录该回执时使用的 `--wiki-root`。
 2. 在对应 Git 版本中检查步骤、约束和适用条件。结合失败、修复和验证证据判断是否应修改 Skill。对缺少读取记录的文件，将其读取情况视为未知。把临时故障与执行器问题交给对应处理流程。只有能定位到具体 Skill 行为并回查证据时才生成草稿。
    - 搜索缺口按四类归因。阶段没有执行规定搜索时补高优先级入口指令，零命中或过滤过窄时补普通优先级查询条件，命中但没有用稳定 ID 读取时补带 `--when` 的读取规则，读取后仍失败时优先提交 Wiki 更新候选。
+   - 先用 `agent-memory closeout route <closeout-id> <candidate-id>` 判断沉淀目标。需要新契约、新产物、跨 Skill 路由或多步骤流程时停止生成局部草稿，转交元 Skill 设计。局部行为修正继续走本 Skill 的 `draft`、`replay`、`apply`。
 3. 生成附加内容。把支持同一改动的用户纠正、失败与验证证据合在一份草稿中。运行 `agent-memory evolve draft <SKILL.md> "<执行指令或说明>" --priority <high|normal|low> --evidence "<证据引用>"`。有多个来源时重复传入 `--evidence`。
    - `high` 用于每种合法调用都必须遵守的正确性要求或关键门禁。在入口放一条短指令，供每次执行前读取。
    - `normal` 用于有明确触发条件的要求，包括只在部分调用生效的关键门禁。用包内链接承载说明，并用 `--when "<触发条件>"` 标出何时读取。
@@ -17,3 +18,7 @@ description: 回溯指定 Session 或独立 Skill 调用，找出可归因到 Sk
    - 对 `low` 用显式查阅场景验证索引和具体文档，用常规场景检查索引未被读取。对 `normal` 分别检查触发和非触发场景。
    - 对 `skills/<id>/SKILL.md` 下可用文本结果验收的任务，可选用包内 [Codex 回放脚本](scripts/codex-replay.mjs)。将 `AGENT_MEMORY_REPLAY_CLI` 指向当前 Agent Memory JavaScript 入口绝对路径。用 `input.task` 给宿主任务，用 `input.expected` 给回放脚本预期文本。回放脚本从 `run check` 获取实际文档哈希和可选的 `knowledge_reads`，场景可以声明 `knowledge_reads.searched_sources` 与 `knowledge_reads.loaded_ids` 作为搜索行为断言。需要工作区读写、产物检查或命令验收时，提供项目自己的脚本。
 5. 得到采用授权后，运行 `agent-memory --root <project> evolve apply <receipt-id>`，重新执行并核对宿主加载版本。用 `agent-memory --root <project> evolve rollback <receipt-id>` 恢复该次变更，保留 Git 历史。
+
+## 元 Skill 路由
+
+`closeout route` 返回 `route=skill-design` 时，使用已有证据调用 `maestro-skill-design`。调用前必须把候选正文、来源 ID、目标 Skill、版本和结构条件作为设计输入。元 Skill 负责生成入口、Markdown 链接、契约、产物、恢复路径和验收场景，完成后再回到本 Skill 的回放与采用流程。没有结构条件时不得为了扩充 Skill 包而调用元 Skill。

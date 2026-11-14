@@ -92,7 +92,7 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 4. Multiple lifecycle steps implied → prefer multi-step chains
 5. Single specific action → prefer single-step chains
 6. "问题" describing broken behavior → `debug`; tracked item with ISS-ID → `issue`; ambiguous → `debug`
-7. Knowledge, Wiki, closeout, harvest, constraint, reference, Spec or Knowhow intent → `knowledge` (read `references/knowledge-route.md`)
+7. Knowledge, Wiki, closeout, harvest, constraint, reference, Spec, Knowhow or Skill precipitation intent → `knowledge` (read `references/knowledge-route.md`)
 8. Simple task, no lifecycle context → `companion` (read `references/companion-route.md`)
 9. Global fallback → `companion` (read `references/companion-route.md`)
 
