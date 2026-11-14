@@ -181,7 +181,7 @@ Agent Memory 作为宿主无关的工具基础设施。Codex、Agy、Claude 和�
 - `session_id` 表示工作上下文。它可以过滤 L1 Memory 和回溯证据，不作为正式 Wiki 条目的唯一身份。
 - `authority` 区分 `binding`、`advisory` 和 `unverified_episodic`。检索内容作为工具数据或用户上下文进入宿主，不能覆盖宿主 system prompt。
 
-多 Agent 适配顺序先实现确定性读取，再接入回执和后台沉淀。第一步统一 Search、Get/Query 和 Envelope 字段。第二步接入 Codex、Agy、Claude 的 CLI/MCP 适配。第三步补齐 transcript 快照和 Closeout 回执适配。以上接口先写入规划，暂不实现。
+多 Agent 适配顺序先实现确定性读取，再接入回执和后台沉淀。本轮已实现库级 `context()`、CLI `context` 和 HTTP `/context`，并保持 Search 不接收 ID、Get/Reference 使用稳定 ID。下一步接入 Codex、Agy、Claude 的 CLI/MCP 适配，随后补齐 transcript 快照和 Closeout 回执适配。
 
 ## 4. 多层沉淀 Skill
 

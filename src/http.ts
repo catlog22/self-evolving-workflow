@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
 import { InputError, NotFoundError } from './common.js';
-import { parseScope, search, type SearchSources } from './search.js';
+import { context as buildContext, parseScope, search, type SearchSources } from './search.js';
+import { isRepositoryId, isWikiCategory } from './wiki-entry.js';
 
-/** GET /search?q=...&scope=all|code|wiki|memory&limit=10&hop=0&type=...&scene=...&session=... */
+/** GET /search or /context with q, scope, limit and optional Wiki/Memory filters. */
 export function createSearchServer(sources: SearchSources) {
   const server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -13,15 +14,46 @@ export function createSearchServer(sources: SearchSources) {
     };
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
-      if (url.pathname !== '/search') return send(404, { error: 'Route not found' });
+      if (url.pathname !== '/search' && url.pathname !== '/context') return send(404, { error: 'Route not found' });
       if (request.method !== 'GET') {
         response.setHeader('Allow', 'GET');
-        return send(405, { error: 'Use GET /search' });
+        return send(405, { error: 'Use GET /search or /context' });
       }
       const params = url.searchParams;
+      const scope = parseScope(params.get('scope') ?? 'all');
+      const limit = params.has('limit') ? Number(params.get('limit')) : undefined;
+      const categories = params.getAll('category');
+      const validCategories = categories.filter(isWikiCategory);
+      if (validCategories.length !== categories.length) throw new InputError('Unknown Wiki context category');
+      const repository = params.get('repository') ?? undefined;
+      if (repository !== undefined && !isRepositoryId(repository)) throw new InputError('Expected a persisted repository UUID');
+      if (url.pathname === '/context') {
+        return send(200, await buildContext(sources, params.get('q') ?? '', {
+          limit,
+          context: {
+            skill: params.get('skill') ?? undefined,
+            task: params.get('task') ?? undefined,
+            paths: params.getAll('path'),
+            categories: validCategories.length ? validCategories : undefined,
+            repository,
+          },
+          wiki: { hop: params.has('hop') ? Number(params.get('hop')) : undefined },
+          memory: {
+            type: params.get('type') ?? undefined,
+            scene: params.get('scene') ?? undefined,
+            session: params.get('session') ?? undefined,
+          },
+          contextScope: {
+            ...(params.get('session') ? { session_id: params.get('session')! } : {}),
+            ...(params.get('skill') ? { skill_id: params.get('skill')! } : {}),
+            ...(params.get('task') ? { task_kind: params.get('task')! } : {}),
+            ...(params.getAll('path').length ? { paths: params.getAll('path') } : {}),
+          },
+        }));
+      }
       const results = await search(sources, params.get('q') ?? '', {
-        scope: parseScope(params.get('scope') ?? 'all'),
-        limit: params.has('limit') ? Number(params.get('limit')) : undefined,
+        scope,
+        limit,
         wiki: { hop: params.has('hop') ? Number(params.get('hop')) : undefined },
         memory: {
           type: params.get('type') ?? undefined,

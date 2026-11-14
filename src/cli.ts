@@ -6,7 +6,7 @@ import { CodeGraph } from './code.js';
 import { InputError, requireText } from './common.js';
 import { createSearchServer } from './http.js';
 import { MemoryStore, type ConversationMessage } from './memory.js';
-import { parseScope, search, type SearchScope, type SearchSources } from './search.js';
+import { context as buildContext, parseScope, search, type SearchScope, type SearchSources } from './search.js';
 import type { LlmClient } from './upstream/llm.js';
 import { Wiki } from './wiki.js';
 import {
@@ -56,6 +56,7 @@ const help = `Usage: agent-memory <command> [options]
   memory get|delete <id>                   Read or delete a memory
   memory search <query>                    Search memory (--type, --scene, --session)
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
+  context <query>                          Build Agent Memory context envelope (--scope all|code|wiki|memory)
   serve                                    Serve GET /search on 127.0.0.1 (--port 4310)
 
 Options:
@@ -185,6 +186,40 @@ async function main() {
     const sources = sourcesFor(scope);
     try {
       print(await search(sources, query, { scope, limit, wiki: wikiOptions, memory: memoryOptions }));
+    } finally {
+      sources.memory?.close();
+    }
+    return;
+  }
+  if (command === 'context') {
+    const query = requireText([action, ...args].join(' '), 'query');
+    const scope = parseScope(values.scope ?? 'all');
+    if (values.category && !values.category.every(isWikiCategory)) {
+      throw new InputError('Unknown Wiki context category');
+    }
+    if (values.repository !== undefined && !isRepositoryId(values.repository)) {
+      throw new InputError('Expected a persisted repository UUID');
+    }
+    const sources = sourcesFor(scope);
+    try {
+      print(await buildContext(sources, query, {
+        limit,
+        context: {
+          skill: values.skill,
+          task: values.task,
+          paths: values.path,
+          categories: values.category,
+          repository: values.repository,
+        },
+        wiki: wikiOptions,
+        memory: memoryOptions,
+        contextScope: {
+          ...(values.session ? { session_id: values.session } : {}),
+          ...(values.skill ? { skill_id: values.skill } : {}),
+          ...(values.task ? { task_kind: values.task } : {}),
+          ...(values.path?.length ? { paths: values.path } : {}),
+        },
+      }));
     } finally {
       sources.memory?.close();
     }

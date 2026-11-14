@@ -49,6 +49,7 @@ agent-memory --root <project> wiki references "<topic>" --skill <id> --task <kin
 agent-memory --root <project> wiki reference <entry-id> --skill <id> --task <kind>
 agent-memory --root <project> wiki search "<query>"
 agent-memory --root <project> wiki get <entry-id>
+agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id>
 ```
 
 没有命中时保留查询条件和空结果。不要把缺少参考误写成新的约束。

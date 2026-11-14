@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CodeGraph, MemoryStore, Wiki, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
+import { CodeGraph, MemoryStore, Wiki, context, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -112,6 +112,7 @@ test('Wiki searches CRLF Chinese Markdown, follows links, and removes stale page
   const { results, links } = await cliJson(root, 'wiki', 'search', '回路压力', '--hop', '1');
   assert.equal(results[0].path, 'wiki/concepts/pump.md');
   assert.deepEqual(results[0].sources, ['notes.md']);
+  assert.equal(results[0].related[0].id, 'exchanger');
   assert.equal(results[0].related[0].direction, 'both');
   assert.equal(results[1].via, '冷却回路');
   assert.equal(results[1].hop, 1);
@@ -391,7 +392,12 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   const repeated = await invoke(args);
   assert.equal(repeated.id, pending[0].id);
   assert.equal(repeated.replayed, true);
-  assert.deepEqual(await invoke(['closeout', 'show', repeated.receipt]), { id: repeated.id, candidates: pending[0].candidates });
+  assert.deepEqual(await invoke(['closeout', 'show', repeated.receipt]), {
+    id: repeated.id,
+    candidates: pending[0].candidates,
+    session_id: 'host-invocation-1',
+    receipt_id: repeated.receipt,
+  });
   assert.equal(calls, 2);
   const review = await invoke(['evolve', 'review', 'host-invocation-1']);
   assert.deepEqual(review.skill, { id: 'db-migration', version: 'git:abc123', status: 'failed' });
@@ -623,6 +629,39 @@ test('Memory persists scoped records and fuses keyword and vector rankings', asy
   assert.equal(b.get('x').content, '水力计算');
 });
 
+test('Agent Memory context envelope keeps discovery and exact-read identities separate', async t => {
+  const root = await temp(t);
+  const entries = join(root, 'wiki', 'entries');
+  await mkdir(entries, { recursive: true });
+  await writeFile(join(entries, 'preflight.md'), [
+    '---', 'title: Migration preflight', 'mode: constraint', 'status: active',
+    'scope: [skill:migration]', 'sources: [policy:preflight]', '---', '',
+    'Run the migration preflight before applying changes.',
+  ].join('\n'));
+  await writeFile(join(entries, 'calibration.md'), [
+    '---', 'title: Calibration reference', 'mode: reference', 'status: active',
+    'scope: [project]', 'sources: [notes:calibration]', '---', '',
+    'Use a dry-run when the migration target is uncertain.',
+  ].join('\n'));
+  const wiki = new Wiki(root);
+  wiki.build();
+  const memory = new MemoryStore(':memory:');
+  t.after(() => memory.close());
+  await memory.put({ id: 'memory-1', content: 'The migration target is staging.', type: 'work_fact', session: 'session-1', sourceMessageIds: ['message-1'] });
+
+  const envelope = await context({ wiki, memory }, 'migration', {
+    context: { skill: 'migration' },
+    contextScope: { session_id: 'session-1', skill_id: 'migration' },
+  });
+  assert.equal(envelope.schema_version, 'agent-memory-envelope/1.0');
+  assert.equal(envelope.trust_boundary, 'untrusted_evidence_data_only');
+  assert.equal(envelope.constraints[0].knowledge_id, 'entries/preflight');
+  assert.equal(envelope.references[0].knowledge_id, 'entries/calibration');
+  assert.equal(envelope.working_memories[0].memory_id, 'memory-1');
+  assert.deepEqual(envelope.working_memories[0].source_ids, ['message-1']);
+  assert.equal(wiki.getEntry(envelope.constraints[0].knowledge_id).id, 'entries/preflight');
+});
+
 test('L1 extraction is traceable and retryable with a supplied model', async t => {
   const memory = new MemoryStore(':memory:');
   t.after(() => memory.close());
@@ -661,12 +700,19 @@ test('Shared module API, CLI and HTTP return the same scoped search', async t =>
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const url = `http://127.0.0.1:${server.address().port}/search`;
+  const baseUrl = url.slice(0, -'/search'.length);
   const expected = JSON.parse(JSON.stringify(await search(sources, 'recall')));
   assert.deepEqual(await cliJson(root, 'search', 'recall', '--db', db), expected);
   assert.ok(expected.code.length && expected.wiki.results.length && expected.memory.results.length);
+  const contextResult = await cliJson(root, 'context', 'recall', '--db', db, '--scope', 'memory');
+  assert.equal(contextResult.schema_version, 'agent-memory-envelope/1.0');
+  assert.equal(contextResult.working_memories[0].memory_id, 'test');
   const response = await fetch(url + '?q=recall');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), expected);
+  const contextResponse = await fetch(baseUrl + '/context?q=recall&scope=memory');
+  assert.equal(contextResponse.status, 200);
+  assert.equal((await contextResponse.json()).working_memories[0].memory_id, 'test');
   assert.deepEqual(await (await fetch(url + '?q=recall&scope=memory')).json(), { memory: expected.memory });
   assert.equal((await fetch(url + '?q=recall&limit=-1')).status, 400);
   assert.equal((await fetch(url + '/missing?q=recall')).status, 404);

@@ -37,7 +37,7 @@ export interface WikiHit extends Page {
   score: number;
   hop: number;
   via?: string;
-  related: Array<{ title: string; path: string; direction: 'in' | 'out' | 'both' }>;
+  related: Array<{ id: string; title: string; path: string; direction: 'in' | 'out' | 'both' }>;
 }
 
 export const structuralPages = new Set(['wiki/index.md', 'wiki/schema.md', 'wiki/purpose.md', 'wiki/log.md', 'wiki/overview.md']);
@@ -294,6 +294,7 @@ function readHits(db: DatabaseSync, seeds: { id: string; score: number }[], limi
     ...pages.get(id)!, score, hop, via,
     related: graph.neighbors(id).sort((a, b) => graph.degree(b) - graph.degree(a) || a.localeCompare(b)).slice(0, 10)
       .map(neighbor => ({
+        id: neighbor,
         title: pages.get(neighbor)!.title,
         path: pages.get(neighbor)!.path,
         direction: outgoing.get(id)!.has(neighbor) ? (outgoing.get(neighbor)!.has(id) ? 'both' : 'out') : 'in',

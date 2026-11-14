@@ -203,6 +203,28 @@ function ledgerPath(wiki: Wiki): string {
   return join(wiki.root, '.agent-memory', 'closeout.db');
 }
 
+function closeoutColumns(db: ReturnType<typeof openDb>): Set<string> {
+  return new Set((db.prepare('PRAGMA table_info(closeouts)').all() as Array<{ name: string }>).map(column => column.name));
+}
+
+function ensureCloseoutsTable(db: ReturnType<typeof openDb>): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS closeouts (
+    id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, candidates TEXT NOT NULL,
+    session_id TEXT, receipt_id TEXT
+  )`);
+  const columns = closeoutColumns(db);
+  if (!columns.has('session_id')) addCloseoutColumn(db, 'session_id');
+  if (!columns.has('receipt_id')) addCloseoutColumn(db, 'receipt_id');
+}
+
+function addCloseoutColumn(db: ReturnType<typeof openDb>, column: 'session_id' | 'receipt_id'): void {
+  try {
+    db.exec(`ALTER TABLE closeouts ADD COLUMN ${column} TEXT`);
+  } catch (error) {
+    if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error;
+  }
+}
+
 export function readHarvest(wiki: Wiki, project: string, receipt: string) {
   const id = closeoutId(requireText(project, 'source project ID'), requireText(receipt, 'completion receipt ID'));
   const path = ledgerPath(wiki);
@@ -212,9 +234,20 @@ export function readHarvest(wiki: Wiki, project: string, receipt: string) {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'closeouts' AND type = 'table'").get()) {
       throw new NotFoundError('Completion has not been harvested');
     }
-    const row = db.prepare('SELECT candidates FROM closeouts WHERE id = ?').get(id);
+    const columns = closeoutColumns(db);
+    const metadata = columns.has('session_id') && columns.has('receipt_id') ? ', session_id, receipt_id' : '';
+    const row = db.prepare(`SELECT candidates${metadata} FROM closeouts WHERE id = ?`).get(id) as {
+      candidates: string;
+      session_id?: string | null;
+      receipt_id?: string | null;
+    } | undefined;
     if (!row) throw new NotFoundError('Completion has not been harvested');
-    return { id, candidates: JSON.parse(String(row.candidates)) as Candidate[] };
+    return {
+      id,
+      candidates: JSON.parse(String(row.candidates)) as Candidate[],
+      ...(row.session_id ? { session_id: row.session_id } : {}),
+      ...(row.receipt_id ? { receipt_id: row.receipt_id } : {}),
+    };
   } finally {
     db.close();
   }
@@ -317,10 +350,9 @@ async function harvestResolvedCompletion(wiki: Wiki, project: string, completion
   mkdirSync(dirname(ledger), { recursive: true });
   const db = openDb(ledger);
   try {
-    db.exec(`CREATE TABLE IF NOT EXISTS closeouts (
-      id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, candidates TEXT NOT NULL
-    )`);
+    ensureCloseoutsTable(db);
     const lookup = db.prepare('SELECT payload_hash, candidates FROM closeouts WHERE id = ?');
+    const metadata = { session_id: completion.session, receipt_id: completion.id };
     const previous = () => {
       const row = lookup.get(identity);
       if (!row) return undefined;
@@ -328,7 +360,7 @@ async function harvestResolvedCompletion(wiki: Wiki, project: string, completion
       return JSON.parse(String(row.candidates)) as Candidate[];
     };
     const saved = previous();
-    if (saved) return { id: identity, replayed: true, candidates: saved };
+    if (saved) return { id: identity, replayed: true, candidates: saved, ...metadata };
     const extracted = completion.messages.length ? await extractMemoryInputs(completion.messages, {
       llm: model(), session: completion.session, agentMemoryPrompt: buildCloseoutHarvestPrompt(),
     }) : [];
@@ -362,8 +394,9 @@ async function harvestResolvedCompletion(wiki: Wiki, project: string, completion
       });
       const pending = candidates.filter(candidate => !appendReferenceSources(wiki, candidate));
       if (pending.length !== candidates.length) wiki.build();
-      db.prepare('INSERT INTO closeouts VALUES (?, ?, ?)').run(identity, payloadHash, JSON.stringify(pending));
-      return { id: identity, replayed: false, candidates: pending };
+      db.prepare('INSERT INTO closeouts (id, payload_hash, candidates, session_id, receipt_id) VALUES (?, ?, ?, ?, ?)')
+        .run(identity, payloadHash, JSON.stringify(pending), metadata.session_id, metadata.receipt_id);
+      return { id: identity, replayed: false, candidates: pending, ...metadata };
     });
     return result;
   } finally {
