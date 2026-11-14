@@ -73,6 +73,7 @@ agent-memory --root <project> closeout session <session-id> --project <source-pr
 agent-memory --root <project> closeout skill <execution-id> --skill <skill-id> --skill-version <version> --status <status> --transcript <messages.json> --project <source-project-id>
 agent-memory --root <project> closeout scan <maestro-root> --project <source-project-id>
 agent-memory --root <project> closeout show <receipt-id> --project <source-project-id>
+agent-memory --root <project> transcript capture <codex|agy|claude> <transcript.jsonl> --session <host-session-id> --output <transcript-evidence-dir>
 ```
 
 重复投递按回执身份幂等处理。模型失败后使用同一回执重试，不重新构造证据。Closeout 自身和 `workflow-evolve` 的执行记录不进入自动沉淀，避免递归。

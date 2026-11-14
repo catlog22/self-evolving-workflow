@@ -31,6 +31,7 @@ export interface WikiSearchOptions {
   hop?: number;
   decay?: number;
   includeHistory?: boolean;
+  entryMode?: 'constraint' | 'reference';
 }
 
 export interface WikiHit extends Page {
@@ -155,6 +156,37 @@ export class Wiki {
   }
 
   references(query: string, context: WikiContext = {}, options: WikiSearchOptions = {}) {
+    if (existsSync(this.indexPath)) {
+      const pages = new Map(readWikiPages(this.root, true).map(page => [page.id, page]));
+      const db = openDb(this.indexPath, true);
+      try {
+        db.exec('BEGIN');
+        const result = searchIndex(db, query, {
+          ...options,
+          limit: 100,
+          includeHistory: false,
+          entryMode: 'reference',
+        });
+        const filtered = result.results.filter(hit => {
+          const page = pages.get(hit.id);
+          return page?.entry?.mode === 'reference' && page.entry.status === 'active' &&
+            appliesToContext(page.entry, context, page.body);
+        });
+        const limit = searchLimit(options.limit);
+        const results = filtered.slice(0, limit);
+        const included = new Set(results.map(result => result.id));
+        return {
+          results,
+          links: result.links.filter(link => {
+            const source = link.source.replace(/^wiki\//, '').replace(/\.md$/i, '');
+            const target = link.target.replace(/^wiki\//, '').replace(/\.md$/i, '');
+            return included.has(source) && included.has(target);
+          }),
+        };
+      } finally {
+        db.close();
+      }
+    }
     const db = openDb(':memory:');
     try {
       transaction(db, () => indexPages(db, this.visibleReferences(context)));
@@ -255,23 +287,40 @@ function searchIndex(db: DatabaseSync, query: string, options: WikiSearchOptions
   const visibility = entries && !options.includeHistory
     ? "AND page_id NOT IN (SELECT page_id FROM wiki_entries WHERE status <> 'active')"
     : '';
+  const modeVisibility = entries && options.entryMode
+    ? "AND page_id IN (SELECT page_id FROM wiki_entries WHERE json_extract(metadata, '$.mode') = ?)"
+    : '';
+  const seedArgs = options.entryMode ? [expression, options.entryMode, hop ? limit * 2 : limit] : [expression, hop ? limit * 2 : limit];
   const seeds = db.prepare(`
     SELECT page_id AS id, -bm25(wiki_fts, 0.0, 5.0, 1.0) AS score
-    FROM wiki_fts WHERE wiki_fts MATCH ? ${visibility} ORDER BY score DESC, page_id LIMIT ?
-  `).all(expression, hop ? limit * 2 : limit) as Array<{ id: string; score: number }>;
+    FROM wiki_fts WHERE wiki_fts MATCH ? ${visibility} ${modeVisibility} ORDER BY score DESC, page_id LIMIT ?
+  `).all(...seedArgs) as Array<{ id: string; score: number }>;
   if (!seeds.length) return { results: [], links: [] };
-  return readHits(db, seeds, limit, hop, decay, Boolean(entries), Boolean(options.includeHistory));
+  return readHits(db, seeds, limit, hop, decay, Boolean(entries), Boolean(options.includeHistory), options.entryMode);
 }
 
-function readHits(db: DatabaseSync, seeds: { id: string; score: number }[], limit: number, hop: number, decay: number, hasEntries: boolean, includeHistory: boolean) {
+function readHits(
+  db: DatabaseSync,
+  seeds: { id: string; score: number }[],
+  limit: number,
+  hop: number,
+  decay: number,
+  hasEntries: boolean,
+  includeHistory: boolean,
+  entryMode?: 'constraint' | 'reference',
+) {
   const hasSources = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='page_sources'").get();
+  const modeVisibility = hasEntries && entryMode
+    ? "AND json_extract(e.metadata, '$.mode') = ?"
+    : '';
+  const pageArgs = entryMode ? [entryMode] : [];
   const rows = db.prepare(`SELECT m.page_id AS id, m.title, m.type, m.rel_path AS path, m.snippet,
     ${hasSources ? "COALESCE(s.sources, '[]')" : "'[]'"} AS sources,
     ${hasEntries ? 'e.metadata' : 'NULL'} AS metadata
     FROM page_meta m ${hasSources ? 'LEFT JOIN page_sources s USING(page_id)' : ''}
     ${hasEntries ? 'LEFT JOIN wiki_entries e USING(page_id)' : ''}
-    ${hasEntries && !includeHistory ? "WHERE e.status IS NULL OR e.status = 'active'" : ''}`)
-    .all() as (Omit<Page, 'sources' | 'entry'> & { sources: string; metadata: string | null })[];
+    ${hasEntries && !includeHistory ? `WHERE (e.status IS NULL OR e.status = 'active') ${modeVisibility}` : modeVisibility ? `WHERE ${modeVisibility.slice(4)}` : ''}`)
+    .all(...pageArgs) as (Omit<Page, 'sources' | 'entry'> & { sources: string; metadata: string | null })[];
   const pages = new Map(rows.map(({ metadata, ...row }) => [row.id, {
     ...row, path: row.path.replaceAll('\\', '/'), sources: JSON.parse(row.sources) as string[],
     ...(metadata ? { entry: JSON.parse(metadata) as WikiEntryMetadata } : {}),

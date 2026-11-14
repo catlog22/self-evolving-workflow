@@ -19,6 +19,7 @@ import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki, validateWikiMemberUid } from './wiki-migration.js';
 import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.js';
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
+import { captureHostTranscript, isHostKind, writeHostTranscriptEvidence } from './host-adapters.js';
 
 const help = `Usage: agent-memory <command> [options]
 
@@ -57,6 +58,7 @@ const help = `Usage: agent-memory <command> [options]
   memory search <query>                    Search memory (--type, --scene, --session)
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
   context <query>                          Build Agent Memory context envelope (--scope all|code|wiki|memory)
+  transcript capture <host> <file.jsonl>   Normalize Codex, Agy or Claude transcript evidence
   serve                                    Serve GET /search on 127.0.0.1 (--port 4310)
 
 Options:
@@ -111,6 +113,8 @@ const options = {
   when: { type: 'string' },
   runner: { type: 'string' },
   scenarios: { type: 'string' },
+  output: { type: 'string' },
+  'captured-at': { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 } as const;
 
@@ -177,6 +181,28 @@ async function main() {
     server.listen(port, '127.0.0.1', () => {
       const address = server.address();
       if (address && typeof address === 'object') print({ url: `http://127.0.0.1:${address.port}/search` });
+    });
+    return;
+  }
+  if (command === 'transcript' && action === 'capture') {
+    const host = args[0];
+    if (!isHostKind(host)) throw new InputError('host must be codex, agy or claude');
+    const source = requireText(args[1], 'transcript file');
+    const output = requireText(values.output, 'output directory');
+    const session = requireText(values.session, 'host session');
+    const capture = captureHostTranscript({
+      hostKind: host,
+      session,
+      source,
+      capturedAt: values['captured-at'],
+    });
+    const files = writeHostTranscriptEvidence(output, capture);
+    print({
+      host_kind: capture.host_kind,
+      host_session_id: capture.host_session_id,
+      messages: capture.messages.length,
+      refs: capture.refs,
+      files,
     });
     return;
   }
