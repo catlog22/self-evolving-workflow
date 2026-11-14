@@ -181,7 +181,7 @@ Agent Memory 作为宿主无关的工具基础设施。Codex、Agy、Claude 和�
 - `session_id` 表示工作上下文。它可以过滤 L1 Memory 和回溯证据，不作为正式 Wiki 条目的唯一身份。
 - `authority` 区分 `binding`、`advisory` 和 `unverified_episodic`。检索内容作为工具数据或用户上下文进入宿主，不能覆盖宿主 system prompt。
 
-多 Agent 适配顺序先实现确定性读取，再接入回执和后台沉淀。本轮已实现库级 `context()`、CLI `context`、HTTP `/context` 以及统一宿主 Transcript Adapter。`agent-memory transcript capture codex|agy|claude <file.jsonl> --session <id> --output <dir>` 会生成可由 `transcript-evidence/1.0` 读取的快照和引用。Search 不接收 ID，Get/Reference 使用稳定 ID。后续仍需把三类宿主的真实 Stop/Finish Hook 接到该捕获入口。
+多 Agent 适配采用无侵入流程。初始化阶段由宿主主动调用库级 `context()`、CLI `context` 或 HTTP `/context`，加载 L3 Wiki 约束与参考。执行阶段不读取宿主日志，不安装 Stop/Finish Hook，不改变宿主调用链。结束后优先通过已有 Session/Run 回执执行 `session review`、`closeout show` 和 `evolve review`。不同 CLI 的原始历史只作为未来显式回溯源，由宿主类型与配置路径选择性读取，不进入初始化和常规检索流程。Search 不接收 ID，Get/Reference 使用稳定 ID。
 
 ## 4. 多层沉淀 Skill
 
@@ -228,6 +228,16 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 自进化 Skill 以项目根目录和 Session ID 调用 `agent-memory --root <project-root> session review <session-id>`。工具通过 Memory 模块的 Maestro 证据适配层，将已提交的 Run 状态、失败或阻塞原因、重试关系、完成摘要和经校验的会话片段整理成时间线。提取沿用 Memory L1 的消息格式、模型客户端和来源校验，使用专门的指令识别执行信号。独立调用用 `agent-memory --root <project-root> evolve review <execution-id> --project <source-project-id>` 读取对应的结束回执，共用提取接口。两个入口都只返回结构化结果。Wiki 发布和 Skill 应用沿用各自的写入入口。 [回溯实现](/D:/evolve_workflow/src/retrospective.ts) · [Memory L1 接入](/D:/evolve_workflow/src/memory.ts:240)
 
 新式完成回执把会话片段限定到其中列出的快照引用，包括显式空列表。缺少快照范围字段的旧 Session 按兼容路径读取其已经保存的快照。调用者需要补充上下文时，可显式传入经授权的 `--transcript <messages.json>`，消息保留单独的来源标识。有引用的快照缺失或校验失败时，回溯报告该证据错误。未固定到 Run 的片段可以用于定位问题，由调用者根据上下文核对关联。 [回执校验](/D:/evolve_workflow/src/closeout.ts:149) · [快照校验](/D:/evolve_workflow/src/transcript-evidence.ts:7)
+
+### 初始化、Review 与自进化边界
+
+初始化阶段只加载 L3 运行上下文。宿主调用 `agent-memory context "<goal>" --skill <id> --task <kind> --session <session-id>`，读取适用的 `constraint` 和 `reference`，并把返回的 `agent-memory-envelope/1.0` 作为工具结果或用户上下文交给当前 Agent。需要补充当前 Session 的 L1 working memory 时显式加 `--include-memory`。该步骤不读取 Codex、Agy 或 Claude 的历史文件。
+
+当前实现没有按 CLI 自动发现历史目录的能力。`session review` 读取 Maestro Session/Run 回执和已提交的 `transcript-evidence`，`evolve review` 读取独立 Skill 完成回执，`--transcript` 只接受用户或宿主显式授权的消息文件。Codex、Agy、Claude 的历史根目录和 JSONL 格式保留在后续回溯适配规范中，不进入初始化或常规搜索。
+
+任务结束后，Maestro 已提交的 Session/Run 回执是 Review 和自进化的首选证据。`agent-memory session review <session-id>` 负责回溯执行信号，`agent-memory closeout show <receipt-id>` 负责审查候选，`agent-memory evolve review <execution-id>` 负责归因到 Skill 版本。宿主只需要发起这些 CLI 调用，不需要安装 Hook 或改变模型调用。
+
+不同 CLI 的历史文件属于可选回溯源。未来适配器按 `host_kind`、历史根目录和会话匹配规则读取 Codex、Agy 或 Claude 的历史，再将选中的片段转换为现有 `transcript-evidence/1.0`。适配器只在显式 Review 请求中运行，必须记录来源路径、会话 ID、片段 ID 和哈希。未配置路径或无法定位会话时，保持回执回溯结果，不阻塞 Review 和自进化。
 
 | 返回字段 | 自进化 Skill 的用法 |
 | --- | --- |

@@ -50,6 +50,7 @@ agent-memory --root <project> wiki reference <entry-id> --skill <id> --task <kin
 agent-memory --root <project> wiki search "<query>"
 agent-memory --root <project> wiki get <entry-id>
 agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id>
+agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id> --include-memory
 ```
 
 没有命中时保留查询条件和空结果。不要把缺少参考误写成新的约束。
@@ -64,6 +65,12 @@ agent-memory --root <project> context "<query>" --skill <id> --task <kind> --ses
 
 标准调用顺序是 `search → get/query`。搜索只返回摘要和 ID，精确读取才返回完整正文、作用域和来源。
 
+### L3 初始化与无侵入回溯
+
+初始化时调用 `agent-memory context` 加载 L3 Wiki 约束和参考，返回 `agent-memory-envelope/1.0`。宿主保留自己的 system prompt、模型调用和工具链，初始化过程不读取宿主历史文件。
+
+任务结束后使用已提交的 Session/Run 回执执行 Review 和自进化。原始 CLI 历史不是常规输入。未来如果需要补充历史，按 `host_kind` 和显式配置的历史根目录选择性读取，并把结果转换成现有 `transcript-evidence/1.0`，只服务于一次明确的回溯请求。
+
 ### `closeout`
 
 先消费已提交回执，再读取候选。模型提取使用 Agent Memory 的统一系统提示词，候选保留来源消息 ID 和回执身份。
@@ -73,7 +80,6 @@ agent-memory --root <project> closeout session <session-id> --project <source-pr
 agent-memory --root <project> closeout skill <execution-id> --skill <skill-id> --skill-version <version> --status <status> --transcript <messages.json> --project <source-project-id>
 agent-memory --root <project> closeout scan <maestro-root> --project <source-project-id>
 agent-memory --root <project> closeout show <receipt-id> --project <source-project-id>
-agent-memory --root <project> transcript capture <codex|agy|claude> <transcript.jsonl> --session <host-session-id> --output <transcript-evidence-dir>
 ```
 
 重复投递按回执身份幂等处理。模型失败后使用同一回执重试，不重新构造证据。Closeout 自身和 `workflow-evolve` 的执行记录不进入自动沉淀，避免递归。

@@ -652,9 +652,11 @@ test('Agent Memory context envelope keeps discovery and exact-read identities se
   const envelope = await context({ wiki, memory }, 'migration', {
     context: { skill: 'migration' },
     contextScope: { session_id: 'session-1', skill_id: 'migration' },
+    includeWorkingMemory: true,
   });
   assert.equal(envelope.schema_version, 'agent-memory-envelope/1.0');
   assert.equal(envelope.trust_boundary, 'untrusted_evidence_data_only');
+  assert.equal(envelope.memory_level, 'L3');
   assert.equal(envelope.constraints[0].knowledge_id, 'entries/preflight');
   assert.equal(envelope.references[0].knowledge_id, 'entries/calibration');
   assert.equal(envelope.working_memories[0].memory_id, 'memory-1');
@@ -704,13 +706,13 @@ test('Shared module API, CLI and HTTP return the same scoped search', async t =>
   const expected = JSON.parse(JSON.stringify(await search(sources, 'recall')));
   assert.deepEqual(await cliJson(root, 'search', 'recall', '--db', db), expected);
   assert.ok(expected.code.length && expected.wiki.results.length && expected.memory.results.length);
-  const contextResult = await cliJson(root, 'context', 'recall', '--db', db, '--scope', 'memory');
+  const contextResult = await cliJson(root, 'context', 'recall', '--db', db, '--scope', 'memory', '--include-memory');
   assert.equal(contextResult.schema_version, 'agent-memory-envelope/1.0');
   assert.equal(contextResult.working_memories[0].memory_id, 'test');
   const response = await fetch(url + '?q=recall');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), expected);
-  const contextResponse = await fetch(baseUrl + '/context?q=recall&scope=memory');
+  const contextResponse = await fetch(baseUrl + '/context?q=recall&scope=memory&include_memory=true');
   assert.equal(contextResponse.status, 200);
   assert.equal((await contextResponse.json()).working_memories[0].memory_id, 'test');
   assert.deepEqual(await (await fetch(url + '?q=recall&scope=memory')).json(), { memory: expected.memory });

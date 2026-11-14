@@ -1,16 +1,7 @@
 export { CodeGraph } from './code.js';
 export {
-  captureHostTranscript,
-  hostTranscriptAdapters,
-  isHostKind,
-  writeHostTranscriptEvidence,
-  type HostKind,
-  type HostTranscriptAdapter,
-  type HostTranscriptCapture,
-  type TranscriptEvidenceSnapshot,
-} from './host-adapters.js';
-export {
   AGENT_MEMORY_ENVELOPE_VERSION,
+  AGENT_MEMORY_CONTEXT_LEVEL,
   AGENT_MEMORY_TRUST_BOUNDARY,
   createAgentMemoryEnvelope,
   type AgentMemoryConstraint,

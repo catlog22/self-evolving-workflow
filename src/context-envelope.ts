@@ -1,5 +1,6 @@
 export const AGENT_MEMORY_ENVELOPE_VERSION = 'agent-memory-envelope/1.0';
 export const AGENT_MEMORY_TRUST_BOUNDARY = 'untrusted_evidence_data_only';
+export const AGENT_MEMORY_CONTEXT_LEVEL = 'L3';
 
 export type MemoryAuthority = 'binding' | 'advisory' | 'unverified_episodic';
 
@@ -50,6 +51,7 @@ export interface AgentMemoryWorkingMemory {
 export interface AgentMemoryEnvelope {
   schema_version: typeof AGENT_MEMORY_ENVELOPE_VERSION;
   trust_boundary: typeof AGENT_MEMORY_TRUST_BOUNDARY;
+  memory_level: typeof AGENT_MEMORY_CONTEXT_LEVEL;
   context_scope: AgentMemoryContextScope;
   constraints: AgentMemoryConstraint[];
   references: AgentMemoryReference[];
@@ -73,6 +75,7 @@ export function createAgentMemoryEnvelope(input: AgentMemoryEnvelopeInput = {}):
   return {
     schema_version: AGENT_MEMORY_ENVELOPE_VERSION,
     trust_boundary: AGENT_MEMORY_TRUST_BOUNDARY,
+    memory_level: AGENT_MEMORY_CONTEXT_LEVEL,
     context_scope: {
       ...contextScope,
       ...(paths(contextScope.paths) ? { paths: paths(contextScope.paths) } : {}),

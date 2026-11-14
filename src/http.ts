@@ -43,6 +43,7 @@ export function createSearchServer(sources: SearchSources) {
             scene: params.get('scene') ?? undefined,
             session: params.get('session') ?? undefined,
           },
+          includeWorkingMemory: params.get('include_memory') === 'true' || params.get('include_memory') === '1',
           contextScope: {
             ...(params.get('session') ? { session_id: params.get('session')! } : {}),
             ...(params.get('skill') ? { skill_id: params.get('skill')! } : {}),

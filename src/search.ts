@@ -31,6 +31,7 @@ export interface ContextOptions {
   wiki?: Omit<WikiSearchOptions, 'limit'>;
   memory?: Omit<MemorySearchOptions, 'limit'>;
   contextScope?: AgentMemoryContextScope;
+  includeWorkingMemory?: boolean;
 }
 
 export interface SearchResults {
@@ -65,7 +66,7 @@ export async function context(
   const wikiContext = options.context ?? {};
   const constraints = sources.wiki?.constraints(wikiContext).slice(0, limit) ?? [];
   const references = sources.wiki?.references(text, wikiContext, { ...options.wiki, limit }).results ?? [];
-  const workingMemories = sources.memory
+  const workingMemories = options.includeWorkingMemory && sources.memory
     ? (await sources.memory.search(text, { ...options.memory, limit })).results
     : [];
   return createAgentMemoryEnvelope({
