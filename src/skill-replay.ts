@@ -11,7 +11,7 @@ interface Scenario {
   id: string;
   input: unknown;
   baseline: boolean;
-  knowledgeReads?: { searchedSources?: string[]; loadedIds?: string[] };
+  knowledgeReads?: { searchedSources?: string[]; loadedIds?: string[]; boundConstraints?: string[] };
 }
 
 interface ReplayReceipt {
@@ -100,13 +100,16 @@ function loadScenarios(data: unknown): Scenario[] {
       const expected = record(scenario.knowledge_reads);
       const sources = expected.searched_sources;
       const ids = expected.loaded_ids;
+      const constraints = expected.bound_constraints;
       if ((sources !== undefined && (!Array.isArray(sources) || sources.some(item => typeof item !== 'string'))) ||
-          (ids !== undefined && (!Array.isArray(ids) || ids.some(item => typeof item !== 'string')))) {
+          (ids !== undefined && (!Array.isArray(ids) || ids.some(item => typeof item !== 'string'))) ||
+          (constraints !== undefined && (!Array.isArray(constraints) || constraints.some(item => typeof item !== 'string')))) {
         throw new InputError(`Invalid knowledge read expectations: ${id}`);
       }
       knowledgeReads = {
         ...(sources === undefined ? {} : { searchedSources: [...new Set(sources as string[])] }),
         ...(ids === undefined ? {} : { loadedIds: [...new Set(ids as string[])] }),
+        ...(constraints === undefined ? {} : { boundConstraints: [...new Set(constraints as string[])] }),
       };
     }
     return { id, input: scenario.input, baseline: scenario.baseline, knowledgeReads };
@@ -159,6 +162,16 @@ function assertKnowledgeReads(observation: Observation, expected: Scenario['know
   }
   if (expected.loadedIds?.some(id => !receipt.reads.some(read => read.id === id))) {
     throw new InputError(`Replay omitted expected knowledge read: ${scenario}`);
+  }
+  if (expected.boundConstraints?.some(id => !receipt.constraints_bound.some(constraint => constraint.knowledge_id === id))) {
+    throw new InputError(`Replay omitted expected bound constraint: ${scenario}`);
+  }
+  for (const read of receipt.reads) {
+    if (!read.from_search_id || read.from_search_id === 'priors') continue;
+    const search = receipt.searches.find(item => item.search_id === read.from_search_id);
+    if (!search || !search.returned_ids.includes(read.id)) {
+      throw new InputError(`Replay knowledge read is not backed by its search result: ${scenario}`);
+    }
   }
 }
 

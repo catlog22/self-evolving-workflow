@@ -1,0 +1,28 @@
+[
+  {
+    "id": "prod-freeze-blocks-release",
+    "input": {
+      "environment": "production",
+      "artifact_sha256": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+      "query": "production release freeze"
+    },
+    "baseline": false,
+    "knowledge_reads": {
+      "searched_sources": ["wiki_references", "memory"],
+      "loaded_ids": ["entries/prod-freeze-protocol", "mem-prod-freeze-01"]
+    }
+  },
+  {
+    "id": "staging-checksum-passes-release",
+    "input": {
+      "environment": "staging",
+      "artifact_sha256": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+      "query": "staging release checksum"
+    },
+    "baseline": true,
+    "knowledge_reads": {
+      "searched_sources": ["wiki_references"],
+      "loaded_ids": ["entries/release-checksum"]
+    }
+  }
+]

@@ -263,6 +263,7 @@ export function recordSkillCompletion(wiki: Wiki, project: string, input: {
   status: string;
   messages: ConversationMessage[];
   session?: string;
+  knowledgeReads?: KnowledgeReadsReceipt;
 }) {
   project = requireText(project, 'source project ID');
   const execution = requireText(input.execution, 'Skill execution ID');
@@ -277,6 +278,7 @@ export function recordSkillCompletion(wiki: Wiki, project: string, input: {
   const payload = {
     schema_version: 'skill-completion/1.0', id, execution_id: execution, skill_id: skill,
     skill_version: version, status: input.status, messages,
+    ...(input.knowledgeReads ? { knowledge_reads: validateKnowledgeReads(input.knowledgeReads) } : {}),
   };
   const normalized = JSON.stringify(payload);
   const path = ledgerPath(wiki);

@@ -383,8 +383,14 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   await writeFile(transcript, JSON.stringify([
     { id: 'verified', role: 'tool', timestamp: 0, content: 'Dry-run passed.' },
   ]));
+  const knowledgeReceipt = join(root, 'knowledge-reads.json');
+  await writeFile(knowledgeReceipt, JSON.stringify({
+    schema_version: 'knowledge-reads/1.0', constraints_bound: [],
+    searches: [{ search_id: 'search-1', source: 'memory', query: 'migration retry', filters: { scene: 'execute' }, returned_ids: ['memory-1'], total_hits: 1 }],
+    reads: [{ kind: 'memory', id: 'memory-1', from_search_id: 'search-1', version: 1 }],
+  }));
   const args = ['closeout', 'skill', 'host-invocation-1', '--skill', 'db-migration',
-    '--skill-version', 'git:abc123', '--status', 'failed', '--transcript', transcript];
+    '--skill-version', 'git:abc123', '--status', 'failed', '--transcript', transcript, '--knowledge-receipt', knowledgeReceipt];
   assert.deepEqual(await invoke([...args, '--record-only']), await invoke([...args, '--record-only']));
   const { receipt } = await invoke([...args, '--record-only']);
   assert.equal(calls, 0);
@@ -406,7 +412,7 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   const review = await invoke(['evolve', 'review', 'host-invocation-1']);
   assert.deepEqual(review.skill, { id: 'db-migration', version: 'git:abc123', status: 'failed' });
   assert.equal(review.receipt, receipt);
-  assert.equal(review.evidence, 1);
+  assert.equal(review.evidence, 2);
   assert.deepEqual(review.signals.map(({ kind, sources, runIds }) => [kind, sources, runIds]), [
     ['verified_fix', [`receipt:fixture-project:${receipt}#verified`], []],
   ]);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
 import { InputError, requireText } from './common.js';
@@ -19,7 +19,7 @@ import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki, validateWikiMemberUid } from './wiki-migration.js';
 import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.js';
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
-import { KnowledgeReads } from './knowledge-reads.js';
+import { KnowledgeReads, validateKnowledgeReads } from './knowledge-reads.js';
 import { decideSkillRoute } from './skill-route.js';
 import {
   applySkillDesign, createSkillDesignTask, readSkillDesignTask, replaySkillDesign,
@@ -46,7 +46,7 @@ const help = `Usage: agent-memory <command> [options]
   closeout harvest <receipt.json>          Extract Wiki candidates from a completion receipt (--project)
   closeout session <id>                    Harvest a committed Session receipt (--project, --receipt)
   closeout skill <execution-id>            Record and harvest a standalone Skill completion
-                                          (--skill, --skill-version, --status, --transcript, --project, --record-only)
+                                          (--skill, --skill-version, --status, --transcript, --knowledge-receipt, --project, --record-only)
   closeout resume <receipt-id>             Harvest an already recorded standalone Skill completion
   closeout scan [maestro-root]              Reconcile committed Session and standalone Skill receipts (--project)
   closeout show <receipt-id>                Show harvested candidates (--project)
@@ -78,6 +78,8 @@ Options:
   --namespace <name>   Memory namespace (default default)
   --memory-session <id> Memory session filter (context uses this instead of its context session)
   --trace               Include knowledge_reads search/read evidence in the result
+  --trace-file <path>   Load and persist a knowledge_reads receipt across CLI calls
+  --from-search <id>    Associate an exact read with an earlier search ID
   --limit <n>          Maximum results per source (default 10)
   --help               Show this message
 
@@ -111,12 +113,15 @@ const options = {
   'include-path-scoped': { type: 'boolean' },
   'include-memory': { type: 'boolean' },
   trace: { type: 'boolean' },
+  'trace-file': { type: 'string' },
+  'from-search': { type: 'string' },
   path: { type: 'string', multiple: true },
   history: { type: 'boolean' },
   project: { type: 'string' },
   uid: { type: 'string' },
   apply: { type: 'boolean' },
   transcript: { type: 'string' },
+  'knowledge-receipt': { type: 'string' },
   receipt: { type: 'string' },
   'skill-version': { type: 'string' },
   'repeat-count': { type: 'string' },
@@ -175,10 +180,20 @@ async function main() {
   const wikiOptions = { limit, hop: values.hop === undefined ? undefined : Number(values.hop), includeHistory: values.history };
   const memorySession = values['memory-session'] ?? (command === 'memory' || command === 'search' ? values.session : undefined);
   const memoryOptions = { limit, type: values.type, scene: values.scene, session: memorySession };
-  const knowledgeReads = values.trace ? new KnowledgeReads() : undefined;
+  const traceFile = values['trace-file'];
+  const initialTrace = traceFile && existsSync(traceFile)
+    ? validateKnowledgeReads(JSON.parse(readFileSync(traceFile, 'utf8').replace(/^\uFEFF/, '')))
+    : undefined;
+  const knowledgeReads = values.trace || traceFile
+    ? new KnowledgeReads(initialTrace)
+    : undefined;
   const print = (result: unknown) => process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   const withTrace = (result: unknown) => {
     if (!knowledgeReads) return result;
+    if (traceFile) {
+      mkdirSync(dirname(resolve(traceFile)), { recursive: true });
+      writeFileSync(traceFile, JSON.stringify(knowledgeReads.toJSON(), null, 2) + '\n');
+    }
     return result && typeof result === 'object' && !Array.isArray(result)
       ? { ...(result as Record<string, unknown>), knowledge_reads: knowledgeReads.toJSON() }
       : { result, knowledge_reads: knowledgeReads.toJSON() };
@@ -294,7 +309,9 @@ async function main() {
         });
         return print(withTrace(result));
       }
-      case 'get': return print(withTrace(wiki.getEntry(requireText(args[0], 'wiki entry ID'), { knowledgeReads })));
+      case 'get': return print(withTrace(wiki.getEntry(requireText(args[0], 'wiki entry ID'), {
+        knowledgeReads, fromSearchId: values['from-search'],
+      })));
       case 'constraints':
       case 'references':
       case 'reference': {
@@ -316,7 +333,9 @@ async function main() {
           return print(withTrace(result));
         }
         if (action === 'reference') {
-          return print(withTrace(wiki.getReference(requireText(args[0], 'Wiki entry ID'), context, { knowledgeReads })));
+          return print(withTrace(wiki.getReference(requireText(args[0], 'Wiki entry ID'), context, {
+            knowledgeReads, fromSearchId: values['from-search'],
+          })));
         }
         const result = wiki.constraints({ ...context, includePathScoped: values['include-path-scoped'] });
         if (knowledgeReads) for (const constraint of result) {
@@ -423,10 +442,13 @@ async function main() {
     if (action === 'skill') {
       const transcript = values.transcript ? JSON.parse(readFileSync(values.transcript, 'utf8').replace(/^\uFEFF/, '')) : [];
       if (!Array.isArray(transcript)) throw new InputError('Transcript must be a JSON message array');
+      const knowledgeReads = values['knowledge-receipt']
+        ? validateKnowledgeReads(JSON.parse(readFileSync(values['knowledge-receipt'], 'utf8').replace(/^\uFEFF/, '')))
+        : undefined;
       const recorded = recordSkillCompletion(wiki, project, {
         execution: requireText(args[0], 'Skill execution ID'),
         skill: requireText(values.skill, 'Skill ID'), version: requireText(values['skill-version'], 'Skill version'),
-        status: requireText(values.status, 'Skill status'), messages: transcript, session: values.session,
+        status: requireText(values.status, 'Skill status'), messages: transcript, session: values.session, knowledgeReads,
       });
       if (!('receipt' in recorded)) return print(recorded);
       if (values['record-only']) return print({ receipt: recorded.receipt.id });
@@ -512,7 +534,9 @@ async function main() {
           content: args.join(' '), id: values.id, type: values.type, scene: values.scene, session: values.session,
           priority: values.priority === undefined ? undefined : Number(values.priority),
         }));
-        case 'get': return print(withTrace(memory.get(requireText(args[0], 'id'), { knowledgeReads }) ?? null));
+        case 'get': return print(withTrace(memory.get(requireText(args[0], 'id'), {
+          knowledgeReads, fromSearchId: values['from-search'],
+        }) ?? null));
         case 'delete': return print({ deleted: memory.delete(requireText(args[0], 'id')) });
         case 'search': {
           const query = args.join(' ');

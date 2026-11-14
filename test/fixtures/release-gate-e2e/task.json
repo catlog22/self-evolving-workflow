@@ -1,0 +1,66 @@
+{
+  "schema_version": "evolve-e2e-test-task/1.0",
+  "test_id": "e2e-release-gate-memory-evolution",
+  "target_skill": {
+    "skill_id": "release-gate",
+    "package_path": "skills/release-gate",
+    "entry": "skills/release-gate/SKILL.md",
+    "initial_version": "0.1.0"
+  },
+  "seed_knowledge": {
+    "wiki_entries": [
+      {
+        "entry": "entries/release-checksum",
+        "title": "Release Artifact Checksum Constraint",
+        "mode": "constraint",
+        "status": "active",
+        "scope": ["skill:release-gate", "project"],
+        "categories": ["review"],
+        "keywords": ["checksum", "release", "gate"],
+        "body": "Every release gate check must verify sha256 artifact checksum before approval.",
+        "evidence": "policy:release-checksum-v1"
+      },
+      {
+        "entry": "entries/prod-freeze-protocol",
+        "title": "Production Freeze Window Protocol",
+        "mode": "reference",
+        "status": "active",
+        "scope": ["skill:release-gate", "task:release"],
+        "categories": ["arch"],
+        "keywords": ["freeze", "production", "rollback"],
+        "body": "When working memory reports an active freeze window for production, set decision to blocked and require rollback_plan.",
+        "evidence": "runbook:prod-freeze-v1"
+      }
+    ],
+    "memories": [
+      {
+        "id": "mem-prod-freeze-01",
+        "type": "error",
+        "scene": "release",
+        "session": "sess-incident-00",
+        "priority": 10,
+        "content": "Production release freeze active until database migration checksum drift is resolved; block all production deployments."
+      },
+      {
+        "id": "mem-staging-ok-01",
+        "type": "work_fact",
+        "scene": "release",
+        "session": "sess-incident-00",
+        "priority": 5,
+        "content": "Staging environment allows continuous deployment when artifact checksum passes."
+      }
+    ]
+  },
+  "fault_injection": {
+    "defect_kind": "missing_stage_search_and_conditional_read",
+    "description": "基线 Skill 未搜索 release Memory，也未读取生产冻结参考，导致 production 冻结期被误判为 approved。"
+  },
+  "expected_artifact_after_fix": {
+    "path": "outputs/release-gate.json",
+    "schema_version": "release-gate/1.0",
+    "production_decision": "blocked",
+    "staging_decision": "approved",
+    "required_memory_id": "mem-prod-freeze-01",
+    "required_knowledge_id": "entries/prod-freeze-protocol"
+  }
+}

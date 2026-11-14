@@ -165,8 +165,23 @@ export class KnowledgeReads {
   private readonly reads: KnowledgeReadRecord[] = [];
   private readonly constraints: KnowledgeConstraintRecord[] = [];
 
+  constructor(initial?: KnowledgeReadsReceipt) {
+    if (!initial) return;
+    const receipt = validateKnowledgeReads(initial);
+    this.searches.push(...receipt.searches);
+    this.reads.push(...receipt.reads);
+    this.constraints.push(...receipt.constraints_bound);
+    for (const search of this.searches) {
+      const match = /^search-(\d+)$/.exec(search.search_id);
+      if (match) this.sequence = Math.max(this.sequence, Number(match[1]));
+    }
+  }
+
   recordSearch(input: KnowledgeSearchInput): string {
-    const searchId = `search-${++this.sequence}`;
+    let searchId: string;
+    do {
+      searchId = `search-${++this.sequence}`;
+    } while (this.searches.some(search => search.search_id === searchId));
     const query = requireText(input.query, 'knowledge search query');
     const returnedIds = stringList(input.returnedIds, 'knowledge search returned IDs');
     this.searches.push({

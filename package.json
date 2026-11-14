@@ -45,6 +45,7 @@
     "test:codex-standalone": "npm run build && node test/codex-standalone.mjs",
     "test:codex-chain": "node test/codex-chain.mjs",
     "test:codex-campaigns": "node test/codex-campaigns.mjs",
+    "test:release-gate-flow": "npm run build && node test/release-gate-flow.mjs",
     "test:maestro-layout": "node test/maestro-layout.mjs",
     "test:maestro-closeout": "npm run build && node test/maestro-closeout.mjs",
     "prepack": "npm run build"
