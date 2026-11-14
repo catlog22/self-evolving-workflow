@@ -56,7 +56,7 @@ When prior debug artifacts of the same scope exist, check their root cause first
 - **Backward trace** from where the error first appears to where correct data turned wrong; fix at the source, not at the symptom.
 - **Generalize is mandatory** unless `skip_generalize == true`; prior-phase convergence is NOT a valid skip reason.
 - **Fix scope:** source code modifications during fix phase are in-scope but MUST be committed per action. Session artifacts target `{run_dir}/outputs/` only.
-- **In scope:** Single bug/issue full loop. **Out of scope:** Features → `--mode planex` | Quality review → `--mode review` | UI → `--mode ui` | Architecture → `/maestro-next plan`.
+- **In scope:** Single bug/issue full loop. **Out of scope:** Features → `--mode planex` | Quality review → `--mode review` | UI → `--mode ui` | Architecture → `/maestro --goal plan`.
 
 ## Run Artifact Metadata
 

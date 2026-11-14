@@ -31,7 +31,7 @@ Maestro Session 完成 / 独立 Skill 明确结束
 
 ## 2. Session/Run 与 Skill 编排
 
-本项目的重构 Skill 统一落在当前仓库的 `skills/` 下。`skills/analyze`、`skills/plan`、`skills/execute`、`skills/maestro`、`skills/maestro-skill-design`、`skills/maestro-odyssey` 和 `skills/team-swarm` 是当前项目的规范副本。外部 Maestro 工作树只作为运行时源码和验收来源，不作为本项目的写入目标。
+本项目的重构 Skill 统一落在当前仓库的 `skills/` 下。`skills/maestro/` 是唯一的编排 Skill，内部包含 `steps/brainstorm`、`steps/analyze`、`steps/plan`、`steps/execute` 和 `steps/review`，并由 `--goal` 构建长链。`skills/maestro-skill-design`、`skills/maestro-odyssey` 和 `skills/team-swarm` 保留为独立元 Skill 或长期协作 Skill。外部 Maestro 工作树只作为运行时源码和验收来源，不作为本项目的写入目标。
 
 ### 保留 Session/Run v3
 
@@ -81,7 +81,7 @@ skills/
 | `maestro --auto <任务>` | 使用同一循环和步骤链，允许授权范围内的有限重试与低风险调整。 |
 | `maestro --resume <session-id>` | 使用确切 Session ID 恢复，沿用原 Run、决策和产物绑定。 |
 
-迁移期保留旧 Next、Ralph 和 Maestro 的调用方式。旧命令以兼容入口委托统一实现，保留原参数、确认条件和恢复方式。旧 Next 只展示转交命令的分支继续只展示建议。旧 `-y` 依原入口处理，统一 `--auto` 由用户显式选择。兼容入口避免重复打开 Session 或重复创建 Run。 [Next 路由](/D:/evolve_workflow/skills/maestro-next/SKILL.md:30) · [Maestro 初始规划](/D:/evolve_workflow/skills/maestro/SKILL.md:45) · [Ralph 策略](/D:/evolve_workflow/skills/maestro-ralph/SKILL.md:43)
+迁移期的 Next 和 Ralph 入口不再作为独立 Skill 分发。原有路由、自动策略、目标修订和恢复规则统一收入 Maestro，由 `--auto` 与 `--goal` 选择执行模式。旧命令名只作为外部兼容映射，不再拥有独立的指令副本。 [Maestro 主入口](/D:/evolve_workflow/skills/maestro/SKILL.md:45) · [目标长链策略](/D:/evolve_workflow/skills/maestro/references/goal.md:8)
 
 ### 专用 Skill 与知识闭环
 
@@ -258,7 +258,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 | 5. 自进化闭环 | 封装 Memory 回溯接口。选一个项目 Skill，从结束回执提取信号、核对归因、分级生成附加内容，经真实宿主回放后应用并回滚。 | 信号可回查到原证据和 Skill 版本，缺少关键证据时保留待确认。旧版能复现问题，候选改善目标行为，原有成功场景通过。实际加载路径和哈希与候选一致，应用能拒绝基线漂移，回滚可复查。 |
 | 6. 扩大迁移范围 | 迁移元 Skill、Odyssey、Swarm 和其他步骤。按仓库或 Skill 比对旧规则，逐组切换。 | 宿主安装后可以从包内读取所需流程。Odyssey 可恢复原模式，Swarm 的角色及产物契约不变。新 Wiki 接管确认范围，旧运行记录走兼容读取。 |
 
-用 `maestro skills install maestro-odyssey team-swarm --workflow-root <repo>` 导入长期流程与协作 Skill。提交到 Git 后，把 `maestro-odyssey,team-swarm` 加入 `MAESTRO_PROJECT_SKILLS`。Odyssey 的七个 `odyssey-<mode>` 命令指向同一提交中的包，分派时选用对应模式的契约和必读文档。Swarm 绑定协调员与协议，角色通过包内链接打开，控制器和模板从同一提交取用。已存在的旧 Run 继续用兼容读取。 [Odyssey 入口](/D:/evolve_workflow/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve_workflow/skills/team-swarm/specs/swarm-protocol.md)
+用 `maestro skills install maestro-odyssey team-swarm --workflow-root <repo>` 导入长期流程与协作 Skill。提交到 Git 后，把 `maestro-odyssey,team-swarm` 加入 `MAESTRO_PROJECT_SKILLS`。Odyssey 的七个 `odyssey-<mode>` 命令指向同一提交中的包，分派时选用对应模式的契约和必读文档。Swarm 绑定协调员与协议，角色通过包内链接打开，控制器和模板从同一提交取用。已存在的旧 Run 继续用兼容读取。Maestro 的 brainstorm、analyze、plan、execute 和 review 则从同一主包的 `steps/` 目录解析。 [Odyssey 入口](/D:/evolve_workflow/skills/maestro-odyssey/SKILL.md) · [Swarm 协议](/D:/evolve_workflow/skills/team-swarm/specs/swarm-protocol.md)
 
 安装包验收已覆盖七种 Odyssey 模式和 Swarm 的项目导入、分派和恢复。契约测试逐项比对八个命令的旧版与新绑定哈希。 [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs) · [契约测试](/D:/evolve-maestro-runtime/src/run/contract.test.ts)
 
@@ -270,7 +270,7 @@ Swarm 在分派前保存每轮的 assignment 批次，恢复时沿用原起点�
 
 统一 Maestro 入口以 Skill 包分发，入口按需链接意图分类、建链、Run 循环、自动执行和目标修订。Next 与 Ralph 的兼容入口委托该包。已有 Run 可通过旧解析入口读取迁移后的准备说明和分类目录。安装包同时分发元 Skill 及其契约和回放说明。 [统一 Maestro Skill](/D:/evolve-maestro-runtime/.claude/skills/maestro/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
-`plan` 和 `execute` 的准备说明与流程已归入各自的 Skill 包，两步沿用原契约哈希。项目从已安装的 CLI 运行 `maestro skills install --workflow-root <repo>`，将 `analyze`、`plan`、`execute` 导入 `skills/`。导入会保留不同于安装包的本地内容并报出冲突。把 Skill 包提交到 Git 后，通过 `MAESTRO_PROJECT_SKILLS=analyze,plan,execute` 启用。旧 Run 用恢复包中的 `guidance_files` 查找兼容文件。 [Plan Skill](/D:/evolve_workflow/skills/plan/SKILL.md) · [Execute Skill](/D:/evolve_workflow/skills/execute/SKILL.md)
+`analyze`、`plan` 和 `execute` 的准备说明与流程已归入 Maestro 的 `steps/`，三步沿用原契约哈希。`brainstorm` 和 `review` 使用同一主包的步骤契约与链接。项目提交 `skills/maestro/` 后，由 Maestro 主入口解析这些步骤，旧 Run 用恢复包中的 `guidance_files` 查找兼容文件。 [Analyze Step](/D:/evolve_workflow/skills/maestro/steps/analyze/SKILL.md) · [Plan Step](/D:/evolve_workflow/skills/maestro/steps/plan/SKILL.md) · [Execute Step](/D:/evolve_workflow/skills/maestro/steps/execute/SKILL.md)
 
 常规 `run next` 在分派时按绑定契约的 `consumes` 别名接收同一 Session 的封存产物，核对发布回执、类型、角色、schema 和字节摘要。`upstream_aliases` 将别名映射到 `upstream` 中的 Artifact ID，路径相对于 Session 目录。恢复时沿用原映射，封存时从 `input_refs` 记录产物来源。缺失的可选槽位由 Skill 自身处理。安装包样本用三次 `run next` 验证 `current-analysis` 和 `current-plan` 自动交接，同时覆盖篡改拒绝、请求重放、`plan --tdd` 引用、旧 `plan` Run 恢复和 `execute` 产物兼容性检查。 [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs)
 
@@ -283,13 +283,13 @@ Swarm 在分派前保存每轮的 assignment 批次，恢复时沿用原起点�
 | 任务 | 工作和交付 | 依赖 |
 | --- | --- | --- |
 | **A1 固定基线** | 固定一份 Maestro2 来源版本，给完整分析、`-q`、`--gaps [ISS-ID]`、`--from <artifact-alias>` 及数字和文本主题留出对照样本。记录位置参数、门禁适用条件、产物和后续 `plan` 交接。必需产物是 `outputs/findings.json`，别名为 `current-analysis`。`risk-matrix.json` 和 `priors.json` 按现有契约可选。用测试区分现有 Runtime 真正执行的校验和流程要求执行端检查的步骤门禁。 | 无 |
-| **A2 整理 Skill 包** | 在 `skills/analyze/` 建立 `SKILL.md`，将 `prepare/analyze.md` 的参数声明和 `contract` 迁入 frontmatter，准备说明放入 `references/prepare.md`，`workflows/analyze.md` 放入 `references/workflow.md`。按触发条件链接边界评审、Issue 根因分析和收尾说明。保留完整分析及 `-q`、`--gaps` 的条件分支和检查项，共享收尾说明引用同一份固定版本。 | A1 |
+| **A2 整理 Skill 包** | 在 `skills/maestro/steps/analyze/` 建立 `SKILL.md`，将 `prepare/analyze.md` 的参数声明和 `contract` 迁入 frontmatter，准备说明放入 `references/prepare.md`，`workflows/analyze.md` 放入 `references/workflow.md`。按触发条件链接边界评审、Issue 根因分析和收尾说明。保留完整分析及 `-q`、`--gaps` 的条件分支和检查项，共享收尾说明引用同一份固定版本。 | A1 |
 | **A3 绑定版本与读取 Markdown** | 在协调端用同一解析入口完成步骤发现与调度。定位 `analyze` 包，从固定 Git 对象读取入口 frontmatter，生成规范化契约快照与可信绑定。宿主读取器按下文规则打开链接，记录实际读取的文件与版本。试迁只选择一个实际宿主和一个受 Git 管理的项目。 | A1、A2 |
 | **A4 切换 Session/Run 调用点** | 在新 `analyze` Run 创建时原子持久化绑定、契约快照和摘要。启动、恢复、检查及封存按下表改读已绑定信息。运行时仍复用状态机、产物校验、权限校验和回执。 | A3 |
 | **A5 接通旧 Run 和失败恢复** | 用持久化绑定区分新旧协议，验证旧运行中和已封存样本、同请求重放、缺失原版本以及显式改版重试。保留旧目录和兼容解析器，允许对新分派关闭试迁。 | A4 |
 | **A6 验收并清理试迁入口** | 按第 7.4 节跑真实宿主、构建后 CLI 和安装包验收。确认新路径已经切断旧指导读取，移除试迁中的重复解析调用，保留历史兼容入口。 | A5 |
 
-A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` 仍走现有产物解析和校验。Session 目标与 Run 的位置参数各有来源，产物输入继续使用已封存的同 Session Artifact 引用。A1–A6 已落地：`skills/analyze/` 提供入口、准备说明、工作流和条件引用，绑定在创建事务中固定 Skill 提交、目录树和契约，`run skill-read` 记录入口与 Markdown 链接的字节证据，旧 Run 继续沿兼容分支恢复。安装包验收覆盖 `analyze → plan → execute`、重放、旧 Run 恢复、产物交接和绑定失效。 [现有 `analyze` 契约](/D:/maestro2/prepare/analyze.md:4) · [现有分支和门禁](/D:/maestro2/workflows/analyze.md:36) · [版本化 Skill 实现](/D:/evolve_workflow/skills/analyze/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs:245)
+A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` 仍走现有产物解析和校验。Session 目标与 Run 的位置参数各有来源，产物输入继续使用已封存的同 Session Artifact 引用。A1–A6 已落地：`skills/maestro/steps/analyze/` 提供入口、准备说明、工作流和条件引用，绑定在创建事务中固定 Skill 提交、目录树和契约，`run skill-read` 记录入口与 Markdown 链接的字节证据，旧 Run 继续沿兼容分支恢复。安装包验收覆盖 `analyze → plan → execute`、重放、旧 Run 恢复、产物交接和绑定失效。 [现有 `analyze` 契约](/D:/maestro2/prepare/analyze.md:4) · [现有分支和门禁](/D:/maestro2/workflows/analyze.md:36) · [Maestro Analyze Step](/D:/evolve_workflow/skills/maestro/steps/analyze/SKILL.md) · [安装包验收](/D:/evolve-maestro-runtime/scripts/check-session-run-packaged-install.mjs:245)
 
 ### 7.2 要移除的 Session/Run 读取
 

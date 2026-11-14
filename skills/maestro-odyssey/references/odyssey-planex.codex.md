@@ -23,7 +23,7 @@ FIX↔VERIFY loop until all criteria pass. Back-half: `S_GENERALIZE → S_DISCOV
 ## Boundary
 
 **In scope:** Single requirement delivery loop — requirement parsing → all acceptance criteria passing + generalization.
-**Out of scope:** Multi-requirement orchestration → `/maestro-next roadmap` | Deep debugging → `--mode debug` | Code review → `--mode review` | UI optimization → `--mode ui`
+**Out of scope:** Multi-requirement orchestration → `/maestro --goal roadmap` | Deep debugging → `--mode debug` | Code review → `--mode review` | UI optimization → `--mode ui`
 
 ---
 

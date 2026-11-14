@@ -19,7 +19,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared phase
 ## Boundary
 
 **In scope:** Single bug/issue full loop — symptom → root cause → fix → confirm → generalize.
-**Out of scope:** Features → `--mode planex` | Quality review → `--mode review` | UI → `--mode ui` | Architecture → `/maestro-next plan`
+**Out of scope:** Features → `--mode planex` | Quality review → `--mode review` | UI → `--mode ui` | Architecture → `/maestro --goal plan`
 
 ---
 

@@ -66,7 +66,7 @@ When prior planex sessions of the same scope exist, check their acceptance crite
 - **Phase goal tracking** — mark each goal done/failed before transition; no silent skips.
 - **Generalize is mandatory** unless `skip_generalize == true`; prior-phase convergence is NOT a valid skip reason.
 - **Fix scope:** fixes target diagnosed gaps in specific failed criteria, not re-implementation. Targeted code fix, not wholesale rewrite.
-- **In scope:** Single requirement delivery loop. **Out of scope:** Multi-requirement orchestration → `/maestro-next roadmap` | Deep debugging → `--mode debug` | Code review → `--mode review` | UI optimization → `--mode ui`.
+- **In scope:** Single requirement delivery loop. **Out of scope:** Multi-requirement orchestration → `/maestro --goal roadmap` | Deep debugging → `--mode debug` | Code review → `--mode review` | UI optimization → `--mode ui`.
 
 ## Risk Checklist
 

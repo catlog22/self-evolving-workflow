@@ -1,22 +1,22 @@
 ---
-name: ralph
+name: maestro-goal-policy
 description: "Closed-loop policy over the canonical Session/Run chain — retry, confidence, drift, goal-audit and stopping policy"
 argument-hint: "<intent> [-y] [-c] [--amend]"
 contract:
 refs:
-  - path: ralph-amend-goal.md
+  - path: goal.md
 goal: true
 ---
 
-# Prepare: Ralph
+# Prepare: Maestro goal long-chain policy
 
-Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mapping）和 **建链规则**（Build Rules）。
+Maestro goal policy 是闭环长链策略层。本文件定义 **命令选择**（Stage Mapping）和 **建链规则**（Build Rules）。
 分派和恢复使用[执行循环](orchestrator-run-loop.md)，生命周期遵循 `~/.maestro/workflows/run-mode.md`。
 
 ## Execution Authority Invariants
 
 1. 首次 mutation 前执行 `maestro capabilities --json`，只接受 v3 六键 exact capability contract：`features.session_run_minimal_v3=true`、`features.entity_revision_cas=true`、`features.participant_identity=true`、`features.request_receipts_v2=true`、`features.execution_lease=false`、`features.operation_registry=false`；`session_schema_writes` 含 `session/3.0`、`execution_schema_writes` 为空、`run_response_writes` 含 `run-response/1.2`；不完整则 fail closed。
-2. Ralph 全程保留 exact `session_id + orchestration_revision`（run-target mutation 另含 `run_revision`）和单一 authorized `actor_id`，并把同一值传给 `--participant` 与 `--actor`。每个 orchestration mutation 使用 stable request ID unique to payload + 当前 `--expected-orchestration-revision`；run-target mutation 按 contract 另带 `--expected-run-revision`。每次 receipt（`run-response/1.2`）后刷新 fence，禁止按 Session status 或目录扫描猜 authority。
+2. Maestro 长链模式全程保留 exact `session_id + orchestration_revision`（run-target mutation 另含 `run_revision`）和单一 authorized `actor_id`，并把同一值传给 `--participant` 与 `--actor`。每个 orchestration mutation 使用 stable request ID unique to payload + 当前 `--expected-orchestration-revision`；run-target mutation 按 contract 另带 `--expected-run-revision`。每次 receipt（`run-response/1.2`）后刷新 fence，禁止按 Session status 或目录扫描猜 authority。
 3. chain/gate/decision 只能在 Session chain 内 mutation：dispatch 用 fenced `maestro run next`（birth packet 含 exact locator、`run_dir`/`upstream`/`guidance`/`knowledge_context`/`brief.command`、resolved `task`、structured executable `continuation`、`run_already_created=true`），重挂用 `maestro run brief`（`brief-result/3.0` Resume Packet 含相同 task/continuation contract 与 `orchestration_revision`），completion 用 fenced `maestro run complete ... --advance`（verdict `done`/`done_with_concerns`），决策用 `maestro run decide`（`proceed`/`fix`/`escalate`），链调整用 `session chain insert|replace|update|skip`，冲突先读 `maestro session status`，最终只走 `maestro session complete`。Run 封存后不可变，retry 经 `run next` 重新派发 pending step；无 Execution、无 lease、无 paused。
 
 ## Stage Mapping
@@ -140,7 +140,7 @@ CONFIDENCE_SCORE: 0-100
 ```json
 {
   "intent": "<intent>",
-  "engine": "ralph",
+  "engine": "maestro",
   "quality_mode": "standard",
   "auto_mode": false,
   "boundary_contract": {

@@ -84,7 +84,7 @@ chain 可随 `session open --chain` 建入无参数 steps；带 domain args 的 
 
 ## Decomposition Protocol（A_DECOMPOSE）
 
-设 `decomposition_owner = "maestro"`。下游 ralph 只消费不二次提问。
+设 `decomposition_owner = "maestro"`。游游步骤只消费不二次提问。
 
 1. 分类意图广度：narrow / 单步 / {init} 链 → 跳过分解
 2. broad/medium → 最多问 3 轮：Scope / Constraints / Definition of Done（`-y` 不跳过广泛歧义）
@@ -98,7 +98,7 @@ chain 可随 `session open --chain` 建入无参数 steps；带 domain args 的 
 
 ```
 📋 任务分解完成。可随时设定目标：
-/goal 完成以下子目标：
+/goal 完成以游子目标：
 - G1: {goal} — 完成条件: {done_when}
 - G2: ...
 达成条件: session.json 中 goals[*].status == "done" 且 chain[*].status ∈ {completed,skipped}
@@ -133,7 +133,7 @@ Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风
 3. **Creator owns decomposition** — Maestro 创建 boundary_contract + goals；后续 orchestrator 只消费不覆盖
 4. **Classification evidence** — 分类必须留痕（匹配 pattern、排除备选、confidence）
 5. **Verdict 驱动链推进** — 由 fenced `maestro run complete ... --advance --verdict done|done_with_concerns` 驱动 chain step 完成；链终结后 `session complete`
-6. **禁止以上下文消耗为由中断执行** — harness 自动处理 context compression
+6. **禁止以上游文消耗为由中断执行** — harness 自动处理 context compression
 7. **控制权优先级** — Maestro 拥有 initial chain 选择 + proposal disposition；Skill 拥有领域判断；Runtime 独占 mutation authority
 
 ## Legacy `session/1.x/2.x` Compatibility Branch

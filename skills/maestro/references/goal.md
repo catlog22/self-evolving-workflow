@@ -5,9 +5,9 @@
 </required_reading>
 
 Read the [Run loop](orchestrator-run-loop.md) when resuming the Session after the amendment.
-# Session Chain Goal Amendment Flow
+# Maestro Goal Long-Chain Flow
 
-The filename is retained for compatibility. Under `session/3.0`, goal/boundary/decomposition and pending-tail changes belong to the Session chain and its policy, never to a separate Execution or durable Session metadata command. Runs use the `run/3.0` schema driven by fenced `maestro run next`/`maestro run complete`.
+Under `session/3.0`, goal, boundary, decomposition and pending-tail changes belong to the Session chain and this Maestro policy. They never become a separate Execution or durable Session metadata command. Runs use the `run/3.0` schema driven by fenced `maestro run next` and `maestro run complete`.
 
 ## 1. Capability and Snapshot
 

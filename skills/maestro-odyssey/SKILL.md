@@ -5,7 +5,7 @@ description: Long-running iterative cycle — one entry, seven modes
   (debug|improve|planex|review|security|defensive|ui). Shared archaeology/audit
   → fix → verify → generalize → discover → persist skeleton with mode-specific
   dimensions. User-invoked campaign entry; single-step fixes route via
-  /maestro-next
+  /maestro
 argument-hint: <intent> --mode debug|improve|planex|review|security|defensive|ui [-y] [-c]
 allowed-tools:
   - Bash

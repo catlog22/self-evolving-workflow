@@ -1,8 +1,8 @@
 ---
 name: maestro
 disable-model-invocation: false
-description: Route, plan, execute, and recover work over one canonical Session/Run chain
-argument-hint: <intent> [--auto] [--resume <session-id>] [-y] [-c] [--amend]
+description: Route, brainstorm, analyze, plan, execute, review and recover work over one canonical Session/Run chain
+argument-hint: <intent> [--goal <goal>] [--auto] [--resume <session-id>] [-y] [-c] [--amend]
 allowed-tools:
   - Bash
   - Edit
@@ -37,14 +37,22 @@ If any required file above was not expanded into context by the host, or its con
 <deferred_reading>
 - [Chain catalog](references/maestro.md) — read before initial intent classification.
 - [Planning and chain creation](references/planning.md) — read when creating a Session chain.
+- [Goal long-chain policy](references/goal.md) — read when `--goal` or a multi-stage outcome is present.
+- [Brainstorm step](steps/brainstorm/SKILL.md) — read for exploration-first work.
+- [Analyze step](steps/analyze/SKILL.md) — read for investigation and evidence production.
+- [Review step](steps/review/SKILL.md) — read for quality review and findings.
 - [Run loop and recovery](references/orchestrator-run-loop.md) — read before dispatching or resuming a Run.
-- [Automatic execution policy](references/auto-policy.md) — read for `--auto` or legacy Ralph orchestration.
-- [Goal amendment](references/ralph-amend-goal.md) — read for `--amend`.
+- [Automatic execution policy](references/auto-policy.md) — read for `--auto` or goal long-chain mode.
+- [Goal amendment](references/goal.md) — read for `--amend`.
 </deferred_reading>
 
 <purpose>
 Route a user intent to the lightest sufficient execution path. For work requiring a durable chain, create one canonical topic Session through `maestro session open --chain <commands...>` and drive it through the shared Run loop. Recovery, verification and bounded retries use that same loop.
 </purpose>
+
+<goal_long_chain>
+`--goal <goal>` selects the long-chain mode. Read `references/goal.md`, derive a boundary contract, observable completion conditions and a goal-to-step lifecycle, then keep every required stage in one Session chain. Insert a final goal audit before `session complete` when the chain has decomposition. A goal mode may add `brainstorm`, `analyze`, `plan`, `execute` and `review` steps, but those steps remain child steps of this Maestro Skill and never become separate top-level Skill invocations.
+</goal_long_chain>
 
 <interface>
 Only these user flags are accepted:
@@ -53,17 +61,18 @@ Only these user flags are accepted:
 - `-c` — continue the unique live compatible Session.
 - `--resume <session-id>` — resume that exact Session using its status and current evidence. Resolve stuck Runs through the shared recovery procedure.
 - `--auto` — use the bounded recovery and retry policy for this invocation. It retains the current authorization scope and the risk limits below.
+- `--goal <goal>` — build a durable long-chain Session around the declared outcome.
 - `--amend` — amend that Session's goal; remaining text is the change request.
 
 Execution always dispatches run-executor (the default behavior); this never changes Session type or chain semantics.
 
 All other text is intent. Unknown flags are not silently reinterpreted. Platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred.
 
-The compatibility entries pass the original intent and flags with their invocation identity. The legacy Next path classifies and offers a route. A confirmed single-Run route or a single Run authorized by the original `-y` proceeds through the shared loop. Lightweight work recommends Companion, campaign work recommends the exact campaign Skill, and multiple-step work recommends Maestro. Propose `--auto` for a route that needs closed-loop recovery and confirm before execution. The legacy Ralph path keeps the final decision and bounded recovery policy. Its `-y` retains its original confirmation behavior. It may continue a compatible Session before opening a new one.
+All routing, chain creation, long-chain goal auditing and recovery stay inside this Maestro Skill. A confirmed single-Run route or a single Run authorized by the original `-y` proceeds through the shared loop. Lightweight work recommends Companion, campaign work recommends the exact campaign Skill, and multiple-step work stays in Maestro. Propose `--auto` for a route that needs bounded recovery and confirm before execution.
 </interface>
 
 <invariants>
-1. **One chain** — every task uses the same Session/Run protocol; no static/dynamic, Maestro/Ralph, or executor-specific Session type.
+1. **One chain** — every task uses the same Session/Run protocol; no static/dynamic or executor-specific Session type.
 2. **Session before execution** — open via `maestro session open "<objective>" --id <slug> --chain <commands...>` before allocating a step Run.
 3. **Creator owns decomposition** — Maestro creates `boundary_contract` and outcome-oriented goals; later orchestrators consume rather than overwrite them.
 4. **Runtime owns mutation** — prompt never writes session.json/run.json and never auto-uses admin chain commands.
@@ -140,7 +149,7 @@ Minimum chain rules:
 |---|---|
 | narrow fix/change | analyze → plan → execute → review/test as required |
 | broad rewrite/migration | analyze-macro → scope decision → plan/roadmap path |
-| brainstorm/explore | brainstorm, then only Skill-proposed continuation |
+| brainstorm/explore | `steps/brainstorm`, then only Skill-proposed continuation |
 | stress/grill | grill, then only Skill-proposed continuation |
 | formal specification | blueprint → plan path |
 | existing compatible Session | do not rebuild; enter shared loop |
@@ -168,7 +177,7 @@ Goals describe outcomes, not lifecycle stages.
 
 Follow the linked planning and chain-creation procedure for knowledge checks, Skill discovery, and chain creation.
 
-- With `--auto` or the legacy Ralph entry, a final quality, scope and goal decision is mandatory. Use the linked automatic execution policy for stage mapping, periodic checks for long chains, and the requirement for at least 2 independently releasable milestones before adding roadmap work. Regular chains retain their quality steps and gates.
+- With `--auto` or `--goal`, a final quality, scope and goal decision is mandatory. Use the linked automatic execution policy for stage mapping, periodic checks for long chains, and the requirement for at least 2 independently releasable milestones before adding roadmap work. Regular chains retain their quality steps and gates.
 - For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'.
 - Do not inline unescaped JSON.
 
@@ -186,7 +195,7 @@ Before any mutation run `maestro capabilities --json` and use the shared `sessio
 
 ### A_AMEND
 
-Read `ralph-amend-goal.md`, use `maestro session status --session {session_id} --json` for the snapshot, perform read-only impact analysis, confirm, then apply the amendment through a chain-aware typed proposal: goal/decomposition metadata is committed with fenced `maestro session chain insert|replace` (per-step `--goal-ref` / `--stage` / `--decision-ref`). `session meta update` is session/1.x/2.0 compatibility-only and must not be used in the canonical branch. Any pending-tail change must come from a planning Skill proposal.
+Read `goal.md`, use `maestro session status --session {session_id} --json` for the snapshot, perform read-only impact analysis, confirm, then apply the amendment through a chain-aware typed proposal: goal/decomposition metadata is committed with fenced `maestro session chain insert|replace` (per-step `--goal-ref` / `--stage` / `--decision-ref`). `session meta update` is session/1.x/2.0 compatibility-only and must not be used in the canonical branch. Any pending-tail change must come from a planning step inside this Maestro Skill.
 
 </actions>
 

@@ -4,7 +4,7 @@
 Canonical lifecycle reference: `@~/.maestro/workflows/run-mode.md`.
 Knowledge closeout reference: `@~/.maestro/ref/knowledge-closeout.md`. If not expanded by the host or no longer in context, Read @~/.maestro/ref/knowledge-closeout.md explicitly before terminal closeout; the completion owner executes its Read internally → Refresh → Present → Ask (human review) → Execute → Verify protocol. Intermediate Runs/workers return candidate IDs and warnings without an approval detour. Terminal owner closeout follows verified Session completion while the host is still interactive, before process shutdown; pending backlog never gates completion. Ask itself is human review, not generic approval to start another review; reuse explicit matching approval without asking again, or defer if no dialog-capable host is available.
 
-Maestro and Ralph share this loop. Session (`session/3.0`) is durable topic identity owning the chain, decisions, artifact registry, and the `orchestration_revision` CAS fence; each Run is an immutable step attempt; Runtime alone writes protocol records. There is no Execution, no lease, and no paused state.
+Maestro uses this loop. Session (`session/3.0`) is durable topic identity owning the chain, decisions, artifact registry, and the `orchestration_revision` CAS fence; each Run is an immutable step attempt; Runtime alone writes protocol records. There is no Execution, no lease, and no paused state.
 
 ## Public flags
 
