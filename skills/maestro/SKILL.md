@@ -40,6 +40,8 @@ If any required file above was not expanded into context by the host, or its con
 - [Goal long-chain policy](references/goal.md) — read when `--goal` or a multi-stage outcome is present.
 - [Brainstorm step](steps/brainstorm/SKILL.md) — read for exploration-first work.
 - [Analyze step](steps/analyze/SKILL.md) — read for investigation and evidence production.
+- [Plan step](steps/plan/SKILL.md) — read for decomposition and executable task planning.
+- [Execute step](steps/execute/SKILL.md) — read for implementation and self-checks.
 - [Review step](steps/review/SKILL.md) — read for quality review and findings.
 - [Run loop and recovery](references/orchestrator-run-loop.md) — read before dispatching or resuming a Run.
 - [Automatic execution policy](references/auto-policy.md) — read for `--auto` or goal long-chain mode.

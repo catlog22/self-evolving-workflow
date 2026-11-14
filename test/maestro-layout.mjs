@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = dirname(fileURLToPath(import.meta.url));
+const project = dirname(root);
+const maestro = join(project, 'skills', 'maestro');
+const steps = ['brainstorm', 'analyze', 'plan', 'execute', 'review'];
+const topLevelForbidden = ['maestro-next', 'maestro-ralph', 'analyze', 'plan', 'execute', 'brainstorm', 'review'];
+
+function markdown(path) {
+  assert.ok(existsSync(path), `Missing Markdown file: ${relative(project, path)}`);
+  return readFileSync(path, 'utf8');
+}
+
+function walk(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? walk(path) : [path];
+  });
+}
+
+const entry = markdown(join(maestro, 'SKILL.md'));
+assert.match(entry, /argument-hint:.*--goal <goal>/);
+assert.match(entry, /<goal_long_chain>/);
+assert.match(entry, /references\/goal\.md/);
+for (const step of steps) assert.match(entry, new RegExp(`steps/${step}/SKILL\\.md`));
+
+const goal = markdown(join(maestro, 'references', 'goal.md'));
+for (const marker of ['session/3.0', 'goal_ref', 'session complete', 'pending-tail']) assert.match(goal, new RegExp(marker));
+
+for (const step of steps) {
+  const stepEntry = markdown(join(maestro, 'steps', step, 'SKILL.md'));
+  assert.match(stepEntry, new RegExp(`name: ${step}\\b`));
+  assert.match(stepEntry, /contract_version: 2\.1/);
+}
+markdown(join(maestro, 'steps', 'review', 'references', 'prepare.md'));
+markdown(join(maestro, 'steps', 'review', 'references', 'workflow.md'));
+
+for (const packageName of topLevelForbidden) {
+  assert.equal(existsSync(join(project, 'skills', packageName)), false,
+    `Independent package remains: skills/${packageName}`);
+}
+
+const staleTokens = /maestro-next|maestro-ralph|ralph-amend-goal|skills\/(?:analyze|plan|execute)\//;
+for (const file of [...walk(join(project, 'skills')), ...walk(join(project, 'docs'))]) {
+  if (!file.endsWith('.md')) continue;
+  assert.doesNotMatch(readFileSync(file, 'utf8'), staleTokens, `Stale Skill reference: ${relative(project, file)}`);
+}
+
+for (const file of walk(maestro)) {
+  if (!file.endsWith('.md')) continue;
+  const directory = dirname(file);
+  for (const match of readFileSync(file, 'utf8').matchAll(/\]\(([^)]+)\)/g)) {
+    const href = match[1].split('#', 1)[0];
+    if (!href || /^(?:[a-z][a-z0-9+.-]*:|\/\/|@|\/)/i.test(href)) continue;
+    const target = join(directory, href.replaceAll('/', '\\'));
+    assert.ok(statSync(target, { throwIfNoEntry: false })?.isFile(),
+      `Broken local Markdown link ${relative(project, file)} -> ${href}`);
+  }
+}
+
+console.log(`Maestro layout passed: goal long-chain + ${steps.join(', ')} are inside one package; no legacy Next/Ralph or old step packages remain.`);
