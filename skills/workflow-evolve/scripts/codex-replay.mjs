@@ -7,10 +7,13 @@ import { fileURLToPath } from 'node:url';
 
 const { id, input, entry, commit } = JSON.parse(readFileSync(0, 'utf8'));
 const skill = /^skills\/([a-z0-9]+(?:-[a-z0-9]+)*)\/SKILL\.md$/.exec(entry)?.[1];
-const agentMemoryCli = process.env.AGENT_MEMORY_REPLAY_CLI || process.env.MAESTRO_REPLAY_CLI;
+// The replay host owns Session/Run lifecycle and Skill reads.  Older callers
+// used AGENT_MEMORY_REPLAY_CLI for that host, so keep it as a compatibility
+// alias while preferring the explicit Maestro name.
+const maestroCli = process.env.MAESTRO_REPLAY_CLI || process.env.AGENT_MEMORY_REPLAY_CLI;
 const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? 'codex.exe' : 'codex');
-if (!skill || !agentMemoryCli || !isAbsolute(agentMemoryCli)) {
-  throw new Error('Codex replay requires skills/<id>/SKILL.md and an absolute AGENT_MEMORY_REPLAY_CLI JavaScript path');
+if (!skill || !maestroCli || !isAbsolute(maestroCli)) {
+  throw new Error('Codex replay requires skills/<id>/SKILL.md and an absolute MAESTRO_REPLAY_CLI JavaScript path');
 }
 if (typeof input?.task !== 'string' || !input.task.trim() ||
     typeof input.expected !== 'string' || !input.expected.trim()) {
@@ -27,7 +30,7 @@ delete env.MAESTRO_EVOLVE_CONSTRAINTS;
 mkdirSync(join(root, '.workflow'), { recursive: true });
 
 function runAgentMemory(...args) {
-  const stdout = execFileSync(process.execPath, [agentMemoryCli, ...args, '--workflow-root', root, '--json'], {
+  const stdout = execFileSync(process.execPath, [maestroCli, ...args, '--workflow-root', root, '--json'], {
     env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const envelope = JSON.parse(stdout);
@@ -55,7 +58,7 @@ const prompt = [
 ].join('\n');
 const stdout = execFileSync(codex, ['-a', 'never', 'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check', '--json',
   '-c', `mcp_servers.evolve_replay.command=${JSON.stringify(process.execPath)}`,
-  '-c', `mcp_servers.evolve_replay.args=${JSON.stringify([server, agentMemoryCli, root, session, run.run_id])}`,
+  '-c', `mcp_servers.evolve_replay.args=${JSON.stringify([server, maestroCli, root, session, run.run_id])}`,
   '-c', 'mcp_servers.evolve_replay.required=true',
   '-c', 'mcp_servers.evolve_replay.default_tools_approval_mode="writes"', '--sandbox', 'read-only', '-'], {
   input: prompt, cwd: tmpdir(), env, encoding: 'utf8', windowsHide: true,

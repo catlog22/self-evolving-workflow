@@ -1,24 +1,79 @@
 ---
 name: workflow-evolve
-description: 回溯指定 Session 或独立 Skill 调用，找出可归因到 Skill 的执行问题，按优先级生成附加指令或 Markdown 引用。
+description: Analyze a Skill execution history, run a real Codex plus Agent Memory regression, and iteratively improve the Skill through an Agy-confirmed replay loop.
+argument-hint: <skill-entry> --iterations <n> --scenarios <file> [--session <id>|--execution <id>] [--auto]
+allowed-tools:
+  - Bash
+  - Edit
+  - Glob
+  - Grep
+  - Read
+  - Write
+  - request_user_input
+  - update_plan
+  - wait_agent
+session-mode: run
+required_links:
+  - references/auto-loop.md
+  - references/history-review.md
+  - references/agy-gate.md
+contract:
+  contract_version: 2.1
+  consumes: []
+  produces:
+    - path: outputs/evolution-report.json
+      kind: workflow-evolution-report
+      schema: workflow-evolution/1.0
+      role: primary
+      alias: latest-workflow-evolution
+      required: true
+  gates:
+    entry:
+      - explicit iteration count is a positive integer
+      - target Skill package is committed and replayable
+    exit:
+      - every applied round has an Agy confirmation receipt
+      - baseline and candidate scenarios pass
+      - failed applications are rolled back
+version: 0.2.0
 ---
 
-# Skill 自进化
+# Workflow Evolution
 
-1. 调用 `agent-memory --root <project> session review <session-id>`。默认只使用已提交的 Session/Run 回执和证据快照。只有用户明确提供并授权的会话导出才传入 `--transcript <messages.json>`。用信号的 `runIds` 找到对应执行和 `skillRef`，用 `skillReads` 核对实际打开的文件、哈希与封存回执，用 `knowledgeReads` 核对阶段搜索、命中 ID 和精确读取。对只来自会话片段的信号，先结合上下文确认对应的 Run。缺少版本记录时保留为待确认信号。
-   - 独立 Skill 调用用 `agent-memory --root <project> evolve review <execution-id> --project <source-project-id>`，从已提交的回执获取 Skill 版本、结束状态、`knowledge_reads` 和信号。有独立 Wiki 目录时传入记录该回执时使用的 `--wiki-root`。写入独立完成回执时用 `closeout skill ... --knowledge-receipt <knowledge-reads.json>` 保留搜索证据。
-2. 在对应 Git 版本中检查步骤、约束和适用条件。结合失败、修复和验证证据判断是否应修改 Skill。对缺少读取记录的文件，将其读取情况视为未知。把临时故障与执行器问题交给对应处理流程。只有能定位到具体 Skill 行为并回查证据时才生成草稿。
-   - 搜索缺口按四类归因。阶段没有执行规定搜索时补高优先级入口指令，零命中或过滤过窄时补普通优先级查询条件，命中但没有用稳定 ID 读取时补带 `--when` 的读取规则，读取后仍失败时优先提交 Wiki 更新候选。
-   - 先用 `agent-memory closeout route <closeout-id> <candidate-id> --skill <skill-id>` 判断沉淀目标。需要新契约、新产物、跨 Skill 路由或多步骤流程时生成设计任务，调用 `skill-design run`，再执行 `skill-design review → skill-design replay → skill-design apply`。局部行为修正继续走本 Skill 的 `draft`、`replay`、`apply`。
-3. 生成附加内容。把支持同一改动的用户纠正、失败与验证证据合在一份草稿中。运行 `agent-memory evolve draft <SKILL.md> "<执行指令或说明>" --priority <high|normal|low> --evidence "<证据引用>"`。有多个来源时重复传入 `--evidence`。
-   - `high` 用于每种合法调用都必须遵守的正确性要求或关键门禁。在入口放一条短指令，供每次执行前读取。
-   - `normal` 用于有明确触发条件的要求，包括只在部分调用生效的关键门禁。用包内链接承载说明，并用 `--when "<触发条件>"` 标出何时读取。
-   - `low` 用于可选技巧或小范围案例。放入独立参考文档，并追加到 `references/learnings/index.md`。入口首次增加索引链接，执行者在明确需要参考示例或排障时打开索引。
-4. 将草稿保存为 JSON。准备场景文件并运行 `agent-memory --root <project> evolve replay <draft.json> --runner <host-runner.mjs> --scenarios <cases.json>`。场景是 `{id,input,baseline}` 数组，至少覆盖一次原问题和一次既有成功流程。脚本从标准输入取得场景、入口和提交，通过真实宿主执行后返回 `{passed,loaded:[{path,sha256}]}`。命令用独立 Git worktree 对照旧版和候选版，核对宿主实际读取的内容，并返回回执 ID。
-   - 对 `low` 用显式查阅场景验证索引和具体文档，用常规场景检查索引未被读取。对 `normal` 分别检查触发和非触发场景。
-   - 对 `skills/<id>/SKILL.md` 下可用文本结果验收的任务，可选用包内 [Codex 回放脚本](scripts/codex-replay.mjs)。将 `AGENT_MEMORY_REPLAY_CLI` 指向当前 Agent Memory JavaScript 入口绝对路径。用 `input.task` 给宿主任务，用 `input.expected` 给回放脚本预期文本。回放脚本从 `run check` 获取实际文档哈希和可选的 `knowledge_reads`，场景可以声明 `knowledge_reads.searched_sources` 与 `knowledge_reads.loaded_ids` 作为搜索行为断言。需要工作区读写、产物检查或命令验收时，提供项目自己的脚本。
-5. 得到采用授权后，运行 `agent-memory --root <project> evolve apply <receipt-id>`，重新执行并核对宿主加载版本。用 `agent-memory --root <project> evolve rollback <receipt-id>` 恢复该次变更，保留 Git 历史。
+Use this Skill when a completed Session/Run or standalone Skill execution needs evidence-based improvement. The Skill keeps the existing Git worktree replay model, adds a real Codex and Agent Memory task, and runs a bounded loop whose changes are gated by Agy.
 
-## 元 Skill 路由
+The entry requires `--iterations <n>`. `--auto` enables unattended apply and rollback after the Agy gate while retaining history, replay and confirmation checks. With interactive apply, the loop stops after a confirmed replay and leaves the receipt ready for the next authorized action.
 
-`closeout route` 返回 `route=skill-design` 时，使用已有证据调用 `maestro-skill-design`。调用前必须把候选正文、来源 ID、目标 Skill、版本和结构条件作为设计输入。元 Skill 负责生成入口、Markdown 链接、契约、产物、恢复路径和验收场景，完成后再回到本 Skill 的回放与采用流程。没有结构条件时不得为了扩充 Skill 包而调用元 Skill。
+Follow [the automatic loop](references/auto-loop.md) for argument parsing, state, retries and stop conditions. Follow [history review](references/history-review.md) before drafting a change. Follow [the Agy gate](references/agy-gate.md) before replay and apply.
+
+## Entry contract
+
+```text
+workflow-evolve <skill-entry>
+  --iterations <positive integer>
+  --scenarios <JSON file with one baseline failure and one baseline pass>
+  [--runner <replay runner>]
+  --session <Session ID> | --execution <Skill execution ID> | --history <JSON transcript>
+  [--project <project ID>] [--max-retries <n>] [--auto]
+```
+
+The default runner is `scripts/codex-memory-replay.mjs`. It invokes the real `codex exec` CLI in read-only mode, requires the Codex task to call Agent Memory through `scripts/memory-codex-mcp.mjs`, and returns loaded Skill files plus a `knowledge-reads/1.0` receipt. Use `scripts/codex-replay.mjs` when the host provides a compatible Maestro Session/Run CLI. Set `MAESTRO_REPLAY_CLI` to that CLI. `AGENT_MEMORY_REPLAY_CLI` remains a compatibility alias for older callers.
+
+## Required evidence
+
+- Prepare the target Skill package as a clean commit before replay. `agent-memory evolve replay` creates isolated baseline and candidate worktrees from that commit.
+- Supply either a committed Session/Run, a standalone Skill execution ID, or an explicit transcript file. The history review records the source and the extracted signals used for the draft.
+- Preserve the Agy discussion and confirmation JSON for every round. Apply each draft after its Agy response carries `approved: true`.
+
+## Automatic invocation
+
+```powershell
+node skills/workflow-evolve/scripts/evolve-loop.mjs `
+  --skill skills/workflow-evolve/SKILL.md `
+  --iterations 3 `
+  --scenarios .workflow/evolution/scenarios.json `
+  --session <session-id> `
+  --auto
+```
+
+The script writes one state file and one directory per round under `.workflow/evolution/<timestamp>/.` The Run adapter publishes the final state as `outputs/evolution-report.json`.

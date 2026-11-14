@@ -281,9 +281,11 @@ export function replaySkillAddition(root: string, data: unknown, options: { runn
   const scenarios = loadScenarios(options.scenarios);
   const base = gitText(root, ['rev-parse', 'HEAD']);
   const baseline = git(root, ['show', `${base}:${entryPath}`]).toString('utf8');
+  const normalizedBaseline = baseline.replace(/^\uFEFF/, '');
   if (sha256(baseline) !== draft.baseline.sha256 &&
-      sha256(baseline.replace(/\r?\n/g, '\r\n')) !== draft.baseline.sha256 &&
-      sha256(baseline.replace(/\r\n/g, '\n')) !== draft.baseline.sha256) {
+      sha256(normalizedBaseline) !== draft.baseline.sha256 &&
+      sha256(normalizedBaseline.replace(/\r?\n/g, '\r\n')) !== draft.baseline.sha256 &&
+      sha256(normalizedBaseline.replace(/\r\n/g, '\n')) !== draft.baseline.sha256) {
     throw new InputError('Commit the Skill baseline before replay');
   }
   const packagePath = dirname(entryPath).replaceAll('\\', '/');
