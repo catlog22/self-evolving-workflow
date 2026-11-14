@@ -61,11 +61,7 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 | `merge` | Merge worktree back |
 | `overlay` | Create/edit command overlays |
 | `update` | Update maestro itself |
-| `harvest` | Extract knowledge from artifacts |
-| `domain_add` | Register a domain term into glossary |
-| `domain_list` | List registered domain terms *(CLI short-circuit: `Bash("maestro domain list")` — no chain)* |
-| `wiki` | Manage wiki graph |
-| `knowhow` | Manage knowhow entries |
+| `knowledge` | Read, close out, review, migrate and publish unified Wiki knowledge |
 | `impeccable_chain` | UI design — explore, general |
 | `impeccable_build` | Build new UI from scratch |
 | `impeccable_improve` | Improve/fix existing UI |
@@ -96,8 +92,9 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 4. Multiple lifecycle steps implied → prefer multi-step chains
 5. Single specific action → prefer single-step chains
 6. "问题" describing broken behavior → `debug`; tracked item with ISS-ID → `issue`; ambiguous → `debug`
-7. Simple task, no lifecycle context → `companion` (route to `/maestro-companion`)
-8. Global fallback → `companion` (route to `/maestro-companion`)
+7. Knowledge, Wiki, closeout, harvest, constraint, reference, Spec or Knowhow intent → `knowledge` (read `references/knowledge-route.md`)
+8. Simple task, no lifecycle context → `companion` (internal Maestro route)
+9. Global fallback → `companion` (internal Maestro route)
 
 ## task_type → chain
 
@@ -123,8 +120,8 @@ resolvePhase — priority order:
   4. null if chain is 'analyze-plan-execute' (uses {run_dir} instead)
   5. null if all chain commands are phase-independent:
      maestro-issue, maestro-issue discover, maestro-init,
-     maestro-fork, maestro-merge, roadmap, maestro-spec setup,
-     maestro-knowledge (knowhow/capture/harvest/wiki/domain),
+     maestro-fork, maestro-merge, roadmap,
+     knowledge (Wiki/closeout/migrate/review/publish),
      maestro-session-manage --complete
   6. Ask user
 
@@ -165,21 +162,21 @@ const chainMap = {
   'refactor':           [{ cmd: 'analyze', args: '"{description}" -q' }, { cmd: 'plan', args: '--dir {run_dir}' }, { cmd: 'execute', args: '--dir {run_dir}' }],
   'review':             [{ cmd: 'review', args: '{phase}' }],
   'retrospective':      [{ cmd: 'retrospective', args: '{phase}' }],
-  'learn':              [{ cmd: 'maestro-knowhow', args: '"{description}"' }],
+  'learn':              [{ cmd: 'knowledge', args: '"{description}"' }],
   'milestone_close':    [{ cmd: 'maestro-session-manage', args: '--complete' }],
   'milestone_audit':    [{ cmd: 'review', args: '"{description}"' }],
   'milestone_complete': [{ cmd: 'maestro-session-manage', args: '--complete' }],
-  'spec_setup':         [{ cmd: 'maestro-spec setup' }],
-  'spec_add':           [{ cmd: 'maestro-spec add', args: '"{description}"' }],
-  'spec_load':          [{ cmd: 'maestro-spec load' }],
-  'domain_add':         [{ cmd: 'maestro-knowledge domain', args: '"{description}"' }],
-  'knowhow_capture':    [{ cmd: 'maestro-knowhow', args: '"{description}"' }],
+  'spec_setup':         [{ cmd: 'knowledge', args: '"constraint setup {description}"' }],
+  'spec_add':           [{ cmd: 'knowledge', args: '"constraint add {description}"' }],
+  'spec_load':          [{ cmd: 'knowledge', args: '"constraint read {description}"' }],
+  'domain_add':         [{ cmd: 'knowledge', args: '"{description}"' }],
+  'knowhow_capture':    [{ cmd: 'knowledge', args: '"{description}"' }],
   'issue':              [{ cmd: 'maestro-issue', args: '"{description}"' }],
   'issue_discover':     [{ cmd: 'maestro-issue discover', args: '"{description}"' }],
   'issue_analyze':      [{ cmd: 'analyze', args: '--gaps "{description}"' }],
   'issue_plan':         [{ cmd: 'plan', args: '--gaps' }],
   'issue_execute':      [{ cmd: 'execute', args: '' }],
-  'knowhow':            [{ cmd: 'maestro-knowhow', args: '"{description}"' }],
+  'knowhow':            [{ cmd: 'knowledge', args: '"{description}"' }],
   'fork':               [{ cmd: 'maestro-fork', args: '-m {milestone_num}' }],
   'merge':              [{ cmd: 'maestro-merge', args: '-m {milestone_num}' }],
 
@@ -202,12 +199,13 @@ const chainMap = {
   'issue-full':           [{ cmd: 'analyze', args: '--gaps {issue_id}' }, { cmd: 'plan', args: '--gaps' }, { cmd: 'execute', args: '' }, { cmd: 'review', args: '{phase}' }, { cmd: 'maestro-issue', args: 'close {issue_id} --resolution fixed' }, { cmd: 'harvest', args: '--auto' }],
   'issue-quick':          [{ cmd: 'plan', args: '--gaps' }, { cmd: 'execute', args: '' }, { cmd: 'maestro-issue', args: 'close {issue_id} --resolution fixed' }],
 
-  'harvest':              [{ cmd: 'harvest', args: '"{description}"' }],
-  'wiki':                 [{ cmd: 'maestro-knowledge wiki' }],
-  'wiki_connect':         [{ cmd: 'wiki-connect' }],
-  'wiki_digest':          [{ cmd: 'wiki-digest' }],
+  'knowledge':            [{ cmd: 'knowledge', args: '"{description}"' }],
+  'harvest':              [{ cmd: 'knowledge', args: '"{description}"' }],
+  'wiki':                 [{ cmd: 'knowledge', args: '"{description}"' }],
+  'wiki_connect':         [{ cmd: 'knowledge', args: '"connect {description}"' }],
+  'wiki_digest':          [{ cmd: 'knowledge', args: '"digest {description}"' }],
   'business_test':        [{ cmd: 'auto-test', args: '{phase}' }],
-  'spec_remove':          [{ cmd: 'maestro-spec remove', args: '"{description}"' }],
+  'spec_remove':          [{ cmd: 'knowledge', args: '"constraint retire {description}"' }],
   'update':               [{ cmd: 'maestro-update' }],
   'overlay':              [{ cmd: 'maestro-overlay', args: '"{description}"' }],
 };
@@ -246,6 +244,8 @@ detectNextAction(state):
 `'status'` 是唯一的非 chain 落点：它没有 chainMap 条目，代表"无法判定下一步"。命中时执行
 `Bash("maestro session status")`（无 compatible Session 则 `maestro session list`），把输出呈现给用户后
 询问下一步——与 resolvePhase 第 6 步同一模式。不得据此自行推断并启动任何 chain。进入 Run 循环后所有 status/check/evidence 调用必须显式传 session_id。
+
+`knowledge` 是 Maestro 内部路由，不是独立 Skill。命中知识意图时读取 `references/knowledge-route.md`，按只读查询、Closeout、审查、发布或迁移选择 Agent Memory 入口。旧的 `harvest`、`wiki`、`knowhow` 和 Spec 意图作为别名进入该路由。
 
 ### Chain Reference
 

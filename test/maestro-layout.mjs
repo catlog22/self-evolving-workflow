@@ -24,8 +24,15 @@ function walk(directory) {
 const entry = markdown(join(maestro, 'SKILL.md'));
 assert.match(entry, /argument-hint:.*--goal <goal>/);
 assert.match(entry, /<goal_long_chain>/);
+assert.match(entry, /<knowledge_route>/);
 assert.match(entry, /references\/goal\.md/);
+assert.match(entry, /references\/knowledge-route\.md/);
 for (const step of steps) assert.match(entry, new RegExp(`steps/${step}/SKILL\\.md`));
+
+const knowledgeRoute = markdown(join(maestro, 'references', 'knowledge-route.md'));
+for (const marker of ['统一 Wiki', 'closeout', 'mode: constraint', 'mode: reference', 'wiki propose', 'workflow-evolve']) {
+  assert.match(knowledgeRoute, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+}
 
 const goal = markdown(join(maestro, 'references', 'goal.md'));
 for (const marker of ['session/3.0', 'goal_ref', 'session complete', 'pending-tail']) assert.match(goal, new RegExp(marker));
@@ -47,6 +54,12 @@ const staleTokens = /maestro-next|maestro-ralph|ralph-amend-goal|skills\/(?:anal
 for (const file of [...walk(join(project, 'skills')), ...walk(join(project, 'docs'))]) {
   if (!file.endsWith('.md')) continue;
   assert.doesNotMatch(readFileSync(file, 'utf8'), staleTokens, `Stale Skill reference: ${relative(project, file)}`);
+}
+
+for (const file of walk(maestro)) {
+  if (!file.endsWith('.md')) continue;
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /maestro-knowledge|maestro-knowhow|maestro-spec/,
+    `Independent knowledge route remains: ${relative(project, file)}`);
 }
 
 for (const file of walk(maestro)) {

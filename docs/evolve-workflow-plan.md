@@ -91,7 +91,7 @@ skills/
 | Odyssey | 保留长期诊断、修复和复验的迭代策略。各模式与共享阶段随 Odyssey 包分发，Session/Run 管理外层进度。 |
 | Swarm | 保留并行探索、评分及迭代收敛。协调器提交 Run 结果，角色、迭代文件和脚本由 Swarm 管理并随包分发。 |
 
-沉淀与自进化保留独立入口，完成回执进入第 4 节的沉淀流程。元 Skill 使用 Memory 回溯为改动定位证据，Skill 变更按第 5 节回放、应用和回滚。 [元 Skill](/D:/evolve_workflow/skills/maestro-skill-design/SKILL.md) · [Odyssey 模式](/D:/evolve_workflow/skills/maestro-odyssey/SKILL.md) · [Swarm 包内引用](/D:/evolve_workflow/skills/team-swarm/SKILL.md)
+知识查询、Session/Skill 收尾、候选审查、迁移和 Wiki 发布统一由 Maestro 内部知识路由负责。`workflow-closeout` 保留为旧调用名的兼容入口，不再维护第二套知识规则。自进化仍保留独立入口，只有能归因到 Skill 行为的信号才进入该流程。元 Skill 使用 Memory 回溯为改动定位证据，Skill 变更按第 5 节回放、应用和回滚。 [知识路由](/D:/evolve_workflow/skills/maestro/references/knowledge-route.md) · [元 Skill](/D:/evolve_workflow/skills/maestro-skill-design/SKILL.md) · [Odyssey 模式](/D:/evolve_workflow/skills/maestro-odyssey/SKILL.md) · [Swarm 包内引用](/D:/evolve_workflow/skills/team-swarm/SKILL.md)
 
 ## 3. 统一 Wiki
 

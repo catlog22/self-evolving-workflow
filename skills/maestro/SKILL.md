@@ -46,6 +46,7 @@ If any required file above was not expanded into context by the host, or its con
 - [Run loop and recovery](references/orchestrator-run-loop.md) — read before dispatching or resuming a Run.
 - [Automatic execution policy](references/auto-policy.md) — read for `--auto` or goal long-chain mode.
 - [Goal amendment](references/goal.md) — read for `--amend`.
+- [Knowledge route](references/knowledge-route.md) — read for Wiki, Closeout, migration and knowledge intents.
 </deferred_reading>
 
 <purpose>
@@ -55,6 +56,10 @@ Route a user intent to the lightest sufficient execution path. For work requirin
 <goal_long_chain>
 `--goal <goal>` selects the long-chain mode. Read `references/goal.md`, derive a boundary contract, observable completion conditions and a goal-to-step lifecycle, then keep every required stage in one Session chain. Insert a final goal audit before `session complete` when the chain has decomposition. A goal mode may add `brainstorm`, `analyze`, `plan`, `execute` and `review` steps, but those steps remain child steps of this Maestro Skill and never become separate top-level Skill invocations.
 </goal_long_chain>
+
+<knowledge_route>
+Knowledge, Wiki, closeout, migration, constraint and reference intents stay inside this Maestro Skill. Read `references/knowledge-route.md` and route them to the unified Agent Memory Wiki flow. `workflow-closeout` is a compatibility entry that points back to the same route. Do not dispatch independent legacy knowledge Skills.
+</knowledge_route>
 
 <interface>
 Only these user flags are accepted:
@@ -226,4 +231,4 @@ Read `goal.md`, use `maestro session status --session {session_id} --json` for t
 
 ## Legacy `session/1.x/2.x` Compatibility Branch
 
-The v2 command surface is **deprecated / compatibility-only** for explicitly selected old CLI/schema (see run-mode.md Legacy `session/1.x/2.x` Compatibility Branch): `maestro session create --chain-file`, `maestro session done --verdict`, `maestro session decide`, `maestro session meta update`, and the standalone `run prepare` dispatcher are never used by the canonical flow above. Normal orchestration calls only the v3 surface: `session open/status/list/chain insert|replace|skip/complete`, `run next/create/brief/check/complete --advance/decide/transition/cancel`, and `knowledge stage/review/promote`.
+The v2 command surface is **deprecated / compatibility-only** for explicitly selected old CLI/schema (see run-mode.md Legacy `session/1.x/2.x` Compatibility Branch): `maestro session create --chain-file`, `maestro session done --verdict`, `maestro session decide`, `maestro session meta update`, and the standalone `run prepare` dispatcher are never used by the canonical flow above. Normal orchestration calls only the v3 Session/Run surface. Knowledge operations follow [the internal knowledge route](references/knowledge-route.md) and use the Agent Memory Wiki proposal and application commands.
