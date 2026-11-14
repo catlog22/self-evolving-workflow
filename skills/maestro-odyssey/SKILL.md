@@ -226,7 +226,7 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 <next_step_routing>
 | Condition | Next |
 |-----------|------|
-| Single-file mechanical fix discovered | `/maestro-companion "<fix>"` |
+| Single-file mechanical fix discovered | Maestro internal Companion route |
 | Discovery issues created | `/maestro-issue list --source {mode}-odyssey` |
 | Deeper debug needed (from any mode) | `/maestro-odyssey <finding> --mode debug` |
 | Security findings need remediation | `/maestro-odyssey <finding> --mode improve` |

@@ -7,7 +7,8 @@ const root = dirname(fileURLToPath(import.meta.url));
 const project = dirname(root);
 const maestro = join(project, 'skills', 'maestro');
 const steps = ['brainstorm', 'analyze', 'plan', 'execute', 'review'];
-const topLevelForbidden = ['maestro-next', 'maestro-ralph', 'analyze', 'plan', 'execute', 'brainstorm', 'review'];
+const retiredCompanionName = ['maestro', 'companion'].join('-');
+const topLevelForbidden = ['maestro-next', 'maestro-ralph', retiredCompanionName, 'analyze', 'plan', 'execute', 'brainstorm', 'review'];
 
 function markdown(path) {
   assert.ok(existsSync(path), `Missing Markdown file: ${relative(project, path)}`);
@@ -25,9 +26,16 @@ const entry = markdown(join(maestro, 'SKILL.md'));
 assert.match(entry, /argument-hint:.*--goal <goal>/);
 assert.match(entry, /<goal_long_chain>/);
 assert.match(entry, /<knowledge_route>/);
+assert.match(entry, /<companion_route>/);
 assert.match(entry, /references\/goal\.md/);
 assert.match(entry, /references\/knowledge-route\.md/);
+assert.match(entry, /references\/companion-route\.md/);
 for (const step of steps) assert.match(entry, new RegExp(`steps/${step}/SKILL\\.md`));
+
+const companionRoute = markdown(join(maestro, 'references', 'companion-route.md'));
+for (const marker of ['内部路由', 'companion` 步骤', 'Session/Run', 'analyze', 'plan', 'execute', 'review']) {
+  assert.match(companionRoute, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+}
 
 const knowledgeRoute = markdown(join(maestro, 'references', 'knowledge-route.md'));
 for (const marker of ['统一 Wiki', 'closeout', 'mode: constraint', 'mode: reference', 'wiki propose', 'workflow-evolve']) {
@@ -50,7 +58,7 @@ for (const packageName of topLevelForbidden) {
     `Independent package remains: skills/${packageName}`);
 }
 
-const staleTokens = /maestro-next|maestro-ralph|ralph-amend-goal|skills\/(?:analyze|plan|execute)\//;
+const staleTokens = new RegExp(`maestro-next|maestro-ralph|${retiredCompanionName}|ralph-amend-goal|skills\\/(?:analyze|plan|execute)\\/`);
 for (const file of [...walk(join(project, 'skills')), ...walk(join(project, 'docs'))]) {
   if (!file.endsWith('.md')) continue;
   assert.doesNotMatch(readFileSync(file, 'utf8'), staleTokens, `Stale Skill reference: ${relative(project, file)}`);
@@ -74,4 +82,4 @@ for (const file of walk(maestro)) {
   }
 }
 
-console.log(`Maestro layout passed: goal long-chain + ${steps.join(', ')} are inside one package; no legacy Next/Ralph or old step packages remain.`);
+console.log(`Maestro layout passed: goal long-chain + ${steps.join(', ')} + internal Companion are inside one package; no legacy routing packages remain.`);

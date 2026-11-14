@@ -16,7 +16,7 @@ When `current-plan` is absent (entry gate skipped, not failed), execute enters *
 
 | Available upstream | Scope | Route |
 |---|---|---|
-| `latest-review` (review-findings) | ≤3 findings, each ≤2 files | **Companion**: seal this run as `needs-retry` with verdict note "degraded to companion", then `/maestro-companion` with the finding list as intent |
+| `latest-review` (review-findings) | ≤3 findings, each ≤2 files | **Companion**: seal this run as `needs-retry` with verdict note "degraded to companion", then use Maestro's internal Companion route with the finding list as intent |
 | `latest-review` (review-findings) | >3 findings or cross-module | **Odyssey planex**: seal this run as `needs-retry`, then `/odyssey-planex` with the review findings as requirement |
 | `latest-debug` (diagnosis + fix-directions) | fix-directions present | **Companion** if ≤2 files; **Odyssey planex** otherwise |
 | No upstream at all | — | **Abort**: report E001 "No plan and no alternative upstream; run plan first" |

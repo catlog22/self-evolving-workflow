@@ -33,7 +33,7 @@ IF latest-review (review-findings) is available:
   IF ≤3 findings AND each touches ≤2 files:
     → Companion path: write report.md with degradation note,
       run `maestro run cancel {run_id} --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
-      then surface: /maestro-companion "<finding summaries as intent>"
+      then surface the finding summaries to Maestro's internal Companion route
   ELSE:
     → Odyssey planex path: write report.md with degradation note,
       run `maestro run cancel {run_id} --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,

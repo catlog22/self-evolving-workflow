@@ -77,7 +77,7 @@ skills/
 
 | 入口用法 | 行为 |
 | --- | --- |
-| `maestro <任务>` | 轻量任务可直接执行。需要状态恢复、门禁或产物交接时，建立一条 Session 步骤链并执行已确认步骤。 |
+| `maestro <任务>` | 轻量任务进入 Maestro 内部 Companion 路由。需要状态恢复、门禁或产物交接时，建立一条 Session 步骤链并执行已确认步骤。 |
 | `maestro --auto <任务>` | 使用同一循环和步骤链，允许授权范围内的有限重试与低风险调整。 |
 | `maestro --resume <session-id>` | 使用确切 Session ID 恢复，沿用原 Run、决策和产物绑定。 |
 

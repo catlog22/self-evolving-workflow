@@ -43,7 +43,7 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 
 | task_type | When user intent is about... |
 |-----------|---------------------------|
-| `companion` | Simple/small task with a mechanically clear intent and no artifact handoff |
+| `companion` | Internal Maestro route for a simple task with a mechanically clear intent and no artifact handoff |
 | `plan` | Plan, design, architect a phase |
 | `execute` | Implement, develop, code a phase (includes built-in verification gate) |
 | `analyze` | Understand, investigate, evaluate code |
@@ -93,8 +93,8 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 5. Single specific action → prefer single-step chains
 6. "问题" describing broken behavior → `debug`; tracked item with ISS-ID → `issue`; ambiguous → `debug`
 7. Knowledge, Wiki, closeout, harvest, constraint, reference, Spec or Knowhow intent → `knowledge` (read `references/knowledge-route.md`)
-8. Simple task, no lifecycle context → `companion` (internal Maestro route)
-9. Global fallback → `companion` (internal Maestro route)
+8. Simple task, no lifecycle context → `companion` (read `references/companion-route.md`)
+9. Global fallback → `companion` (read `references/companion-route.md`)
 
 ## task_type → chain
 
@@ -143,6 +143,7 @@ const chainMap = {
   // （见 chain catalog 与 detectNextAction）。旧的 'codebase_rebuild'/'codebase_refresh'/'spec_map'
   // 一并并入 'sync'，不再是独立 task_type。
   'init':               [{ cmd: 'maestro-init' }],
+  'companion':          [{ cmd: 'companion', args: '"{description}"' }],
   'grill':              [{ cmd: 'grill', args: '"{description}"' }],
   'blueprint':          [{ cmd: 'blueprint', args: '"{description}"' }],
   'analyze-macro':      [{ cmd: 'analyze', args: '"{description}"' }],
@@ -273,7 +274,7 @@ detectNextAction(state):
 | `"status"` | *(exact)* status | *(CLI short-circuit)* `maestro session status` |
 | `"plan phase 2"` | plan | plan 2 |
 | `"execute"` | execute | execute |
-| `"Add API endpoint"` | companion | `/maestro-companion "Add API endpoint"` |
+| `"Add API endpoint"` | companion | Maestro internal Companion route |
 | `"run tests"` | test | test |
 | `"debug auth crash"` | debug | debug "auth crash" |
 | `"修复登录问题"` | debug | debug "登录" |

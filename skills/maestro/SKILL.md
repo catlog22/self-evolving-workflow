@@ -47,6 +47,7 @@ If any required file above was not expanded into context by the host, or its con
 - [Automatic execution policy](references/auto-policy.md) — read for `--auto` or goal long-chain mode.
 - [Goal amendment](references/goal.md) — read for `--amend`.
 - [Knowledge route](references/knowledge-route.md) — read for Wiki, Closeout, migration and knowledge intents.
+- [Companion route](references/companion-route.md) — read for small, mechanically clear tasks.
 </deferred_reading>
 
 <purpose>
@@ -60,6 +61,10 @@ Route a user intent to the lightest sufficient execution path. For work requirin
 <knowledge_route>
 Knowledge, Wiki, closeout, migration, constraint and reference intents stay inside this Maestro Skill. Read `references/knowledge-route.md` and route them to the unified Agent Memory Wiki flow. `workflow-closeout` is a compatibility entry that points back to the same route. Do not dispatch independent legacy knowledge Skills.
 </knowledge_route>
+
+<companion_route>
+Small, mechanically clear tasks stay inside this Maestro Skill through `references/companion-route.md`. Companion uses the canonical Session/Run lifecycle with one bounded `companion` step. It never becomes an independent Skill and escalates to `analyze`, `plan`, `execute` or `review` when its self-check fails.
+</companion_route>
 
 <interface>
 Only these user flags are accepted:
@@ -75,7 +80,7 @@ Execution always dispatches run-executor (the default behavior); this never chan
 
 All other text is intent. Unknown flags are not silently reinterpreted. Platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred.
 
-All routing, chain creation, long-chain goal auditing and recovery stay inside this Maestro Skill. A confirmed single-Run route or a single Run authorized by the original `-y` proceeds through the shared loop. Lightweight work recommends Companion, campaign work recommends the exact campaign Skill, and multiple-step work stays in Maestro. Propose `--auto` for a route that needs bounded recovery and confirm before execution.
+All routing, chain creation, long-chain goal auditing and recovery stay inside this Maestro Skill. A confirmed single-Run route or a single Run authorized by the original `-y` proceeds through the shared loop. Lightweight work uses the internal Companion route, campaign work recommends the exact campaign Skill, and multiple-step work stays in Maestro. Propose `--auto` for a route that needs bounded recovery and confirm before execution.
 </interface>
 
 <invariants>
@@ -100,6 +105,7 @@ S_CONTINUE — locate the unique live Session
 S_RECOVER — run the shared recovery procedure for the selected Session
 S_AMEND — audited goal amendment
 S_CLASSIFY — select the smallest sufficient initial chain
+S_COMPANION — execute the internal bounded Companion route
 S_DECOMPOSE — derive boundary, criteria and observable goals
 S_CREATE — open via `session open --chain`
 S_CONFIRM — confirm classification unless `-y`
@@ -130,6 +136,7 @@ S_AMEND:
 S_CLASSIFY:
   → S_RUN_LOOP WHEN: existing compatible Session found (do not rebuild)
   → END WHEN: lightweight direct task completed and verified
+  → S_COMPANION WHEN: intent satisfies the Companion self-check
   → S_DECOMPOSE WHEN: multi-step chain
   → S_CREATE WHEN: narrow/single-step chain
   → S_FALLBACK WHEN: confidence < 60
@@ -142,6 +149,8 @@ S_CREATE → S_FALLBACK WHEN: creation fails (delete temp file, report error)
 S_CONFIRM → S_RUN_LOOP WHEN: confirmed
 S_CONFIRM → S_CLASSIFY WHEN: revised intent may reshape the chain
 S_CONFIRM → END WHEN: cancelled
+S_COMPANION → END WHEN: bounded Run completed and verified
+S_COMPANION → S_CLASSIFY WHEN: self-check fails or the task expands
 </transitions>
 
 <actions>
@@ -162,6 +171,10 @@ Minimum chain rules:
 | existing compatible Session | do not rebuild; enter shared loop |
 
 Roadmap is inferred only for multi-release evidence. Quality depth follows project specs, UI evidence needs frontend verification, and every executable command is resolved by Run Runtime.
+
+### A_COMPANION
+
+Read `references/companion-route.md`. Confirm the task has one bounded concern, a named target and a direct verification path. Create one Session chain with a single `companion` step, then use the shared Run loop. If the task requires investigation, planning, multiple execution stages, a typed handoff or a separate gate, return to classification and choose the smallest sufficient full route.
 
 ### A_DECOMPOSE
 
