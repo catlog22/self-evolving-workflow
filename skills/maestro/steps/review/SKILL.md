@@ -2,6 +2,10 @@
 name: review
 description: Review a change or artifact inside the Maestro chain and produce typed findings
 argument-hint: '<target> [--tier quick] [-y]'
+wiki_categories: [review, coding]
+search_profile:
+  wiki: [constraints, references]
+  memory: [error, correction, verified_fix]
 session-mode: run
 contract:
   consumes:

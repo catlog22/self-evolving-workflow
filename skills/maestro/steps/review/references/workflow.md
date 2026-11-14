@@ -77,7 +77,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared Codex
 7. Discoveries
 8. Learnings
 
-Specs: `maestro load --type spec --category review`.
+Specs: `agent-memory wiki constraints --skill review --category review`.
 
 ---
 
@@ -202,7 +202,7 @@ Review findings with severity >= medium.
 
 ## Knowledge Persistence (§8)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Follow-up = governed candidate staging, NEVER a direct corpus write. Use the Agent Memory Wiki proposal flow after the Run is sealed. Search and read evidence are carried in `knowledge_reads`, while the candidate itself is staged through the unified knowledge route.
 
 
 | Category | Content | Follow-up |

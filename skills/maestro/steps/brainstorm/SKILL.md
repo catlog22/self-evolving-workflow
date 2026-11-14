@@ -2,6 +2,10 @@
 name: brainstorm
 description: Explore a problem space and produce bounded options for the Maestro chain
 argument-hint: '<intent> [--from <artifact-alias>] [-y]'
+wiki_categories: [arch, learning]
+search_profile:
+  wiki: references
+  memory: optional
 session-mode: run
 contract:
   consumes: []
@@ -19,7 +23,7 @@ contract:
 
 Brainstorm is a planning step inside the Maestro Skill. Explore the problem space, record assumptions and alternatives, and leave a bounded option set for the next chain step.
 
-1. Read the current Session objective, boundary contract and available Wiki evidence.
+1. Read the current Session objective, boundary contract and available Wiki evidence. Search `agent-memory context "<intent keywords>" --skill brainstorm --category arch --include-memory` when prior decisions or learning examples may affect the options.
 2. Separate observed facts, user constraints, open questions and proposed options.
 3. Compare options against scope, risk, reversibility and verification cost.
 4. Write `outputs/brainstorm.json` with source evidence for every material conclusion.

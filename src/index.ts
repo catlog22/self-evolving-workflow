@@ -22,7 +22,7 @@ export {
   type AgentMemoryPrompt,
   type AgentMemoryPromptKind,
 } from './agent-memory-prompts.js';
-export { Wiki, type WikiHit, type WikiSearchOptions } from './wiki.js';
+export { Wiki, type WikiHit, type WikiReadOptions, type WikiSearchOptions } from './wiki.js';
 export type { WikiContext, WikiEntryMetadata } from './wiki-entry.js';
 export { reviewSession, reviewSkillExecution, type ReviewedRun, type SkillSignal } from './retrospective.js';
 export { draftSkillAddition, type SkillPriority } from './skill-addition.js';
@@ -38,5 +38,20 @@ export {
   type SearchResults,
 } from './search.js';
 export { createSearchServer } from './http.js';
+export {
+  KNOWLEDGE_READS_VERSION,
+  KnowledgeReads,
+  contentSha256,
+  validateKnowledgeReads,
+  type KnowledgeConstraintInput,
+  type KnowledgeConstraintRecord,
+  type KnowledgeReadInput,
+  type KnowledgeReadKind,
+  type KnowledgeReadRecord,
+  type KnowledgeReadsReceipt,
+  type KnowledgeSearchInput,
+  type KnowledgeSearchRecord,
+  type KnowledgeSearchSource,
+} from './knowledge-reads.js';
 export { InputError, NotFoundError } from './common.js';
 export type { LlmClient, ChatParams } from './upstream/llm.js';

@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CodeGraph, MemoryStore, Wiki, context, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
+import { CodeGraph, KnowledgeReads, MemoryStore, Wiki, context, createSearchServer, draftSkillAddition, reviewSession, search } from 'evolve-agent-memory';
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -50,7 +50,7 @@ test('Skill evolution replays a failed and a passing case, applies the verified 
     "const {entry,input} = JSON.parse(readFileSync(0, 'utf8'));",
     'const body = readFileSync(entry);',
     "const sha256 = createHash('sha256').update(body).digest('hex');",
-    "console.log(JSON.stringify({passed: input === 'existing' || body.includes('Verify preflight.'),loaded:[{path: entry,sha256}]}));",
+    "console.log(JSON.stringify({passed: input === 'existing' || body.includes('Verify preflight.'),loaded:[{path: entry,sha256}],knowledge_reads:{schema_version:'knowledge-reads/1.0',constraints_bound:[],searches:[{search_id:'search-1',source:'memory',query:'preflight',filters:{scene:'execute'},returned_ids:['memory-preflight'],total_hits:1}],reads:[{kind:'memory',id:'memory-preflight',from_search_id:'search-1',version:1}]}}));",
   ].join('\n'));
   const draft = join(support, 'draft.json');
   const scenarios = join(support, 'scenarios.json');
@@ -58,7 +58,7 @@ test('Skill evolution replays a failed and a passing case, applies the verified 
     entry, priority: 'high', instruction: 'Verify preflight.', sources: ['receipt:preflight'],
   })));
   await writeFile(scenarios, JSON.stringify([
-    { id: 'missing-preflight', input: 'reproduce', baseline: false },
+    { id: 'missing-preflight', input: 'reproduce', baseline: false, knowledge_reads: { searched_sources: ['memory'], loaded_ids: ['memory-preflight'] } },
     { id: 'existing-flow', input: 'existing', baseline: true },
   ]));
   const receipt = await cliJson(root, 'evolve', 'replay', draft, '--runner', runner, '--scenarios', scenarios);
@@ -536,9 +536,15 @@ test('Session review connects failure and retry receipts to the original Skill v
       { path: 'references/prepare.md', sha256: `sha256:${'e'.repeat(64)}` },
     ],
   };
+  const knowledgeReads = {
+    schema_version: 'knowledge-reads/1.0',
+    constraints_bound: [{ knowledge_id: 'entries/preflight', scope: ['skill:analyze'], categories: ['arch'], content_sha256: `sha256:${'f'.repeat(64)}` }],
+    searches: [{ search_id: 'search-1', source: 'memory', query: 'preflight retry', filters: { scene: 'analyze' }, returned_ids: ['memory-preflight'], total_hits: 1 }],
+    reads: [{ kind: 'memory', id: 'memory-preflight', from_search_id: 'search-1', content_sha256: `sha256:${'a'.repeat(64)}`, version: 1 }],
+  };
   await writeReceipt(6, 'orchestration', session, {
     operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-3',
-    summary: 'Preflight re-run passed.', skill_reads: skillReads,
+    summary: 'Preflight re-run passed.', skill_reads: skillReads, knowledge_reads: knowledgeReads,
   });
   const result = await reviewSession(root, session, { model: () => ({
     async chat({ system, prompt }) {
@@ -549,6 +555,8 @@ test('Session review connects failure and retry receipts to the original Skill v
       assert.match(prompt, /run-2 \(analyze\) retries run-1/);
       assert.match(prompt, /run-3 completed.*Preflight re-run passed/);
       assert.match(prompt, /run-3 opened Skill documents: SKILL.md, references\/prepare.md/);
+      assert.match(prompt, /Knowledge searches: search-1 memory/);
+      assert.match(prompt, /memory:memory-preflight from search-1/);
       return JSON.stringify([{ memories: [
         { type: 'retry', content: 'Run was retried.', source_message_ids: ['receipt:tr_4#run:run-2'] },
         { type: 'correction', content: quote, source_message_ids: [anchor] },
@@ -564,6 +572,7 @@ test('Session review connects failure and retry receipts to the original Skill v
     {
       id: 'run-3', command: 'analyze', skillRef, retryOf: 'run-2', source: 'receipt:tr_5#run:run-3',
       skillReads: { source: 'receipt:tr_6#skill-reads:run-3', files: skillReads.reads },
+      knowledgeReads: { source: 'receipt:tr_6#knowledge-reads:run-3', receipt: knowledgeReads },
     },
   ]);
   assert.deepEqual(result.signals.find(signal => signal.kind === 'retry').runIds, ['run-1', 'run-2']);
@@ -719,6 +728,35 @@ test('Shared module API, CLI and HTTP return the same scoped search', async t =>
   assert.equal((await fetch(url + '?q=recall&limit=-1')).status, 400);
   assert.equal((await fetch(url + '/missing?q=recall')).status, 404);
   assert.equal((await fetch(url, { method: 'POST' })).status, 405);
+});
+
+test('Stage search tracing keeps context sessions separate from historical Memory filters', async t => {
+  const root = await temp(t);
+  const db = join(root, 'memory.db');
+  const memory = new MemoryStore(db);
+  await memory.put({ id: 'old-memory', content: 'The migration retry needs a dry run.', type: 'error', scene: 'execute', session: 'old-session' });
+  memory.close();
+
+  const contextResult = await cliJson(root, 'context', 'migration retry', '--db', db, '--session', 'new-session', '--include-memory', '--trace');
+  assert.deepEqual(contextResult.working_memories.map(item => item.memory_id), ['old-memory']);
+  assert.equal(contextResult.knowledge_reads.searches[0].source, 'memory');
+  assert.deepEqual(contextResult.knowledge_reads.searches[0].returned_ids, ['old-memory']);
+
+  const filtered = await cliJson(root, 'memory', 'search', 'migration retry', '--db', db, '--session', 'old-session', '--trace');
+  assert.deepEqual(filtered.results.map(item => item.id), ['old-memory']);
+  assert.equal(filtered.knowledge_reads.searches[0].source, 'memory');
+
+  const tracker = new KnowledgeReads();
+  const store = new MemoryStore(db);
+  const searchResult = await search({ memory: store }, 'migration retry', {
+    scope: 'memory', memory: { scene: 'execute' }, knowledgeReads: tracker,
+  });
+  const searchId = tracker.toJSON().searches[0].search_id;
+  store.get(searchResult.memory.results[0].id, { knowledgeReads: tracker, fromSearchId: searchId });
+  const receipt = tracker.toJSON();
+  assert.equal(receipt.reads[0].id, 'old-memory');
+  assert.equal(receipt.reads[0].from_search_id, searchId);
+  store.close();
 });
 
 test('CLI ingestion and memory extraction use an OpenAI-compatible endpoint', async t => {

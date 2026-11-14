@@ -152,6 +152,12 @@ sources:
 
 标准读取时序是 `search → get/query`。Search 只承担发现职责，返回摘要和 ID。Get/Query 承担精确读取职责，返回完整内容。Search 结果中的 ID 是后续操作的稳定引用，不能反向成为 Search 的必填参数。约束读取使用上下文匹配，不用条目 ID 替代作用域解析。
 
+### 阶段化搜索与 `knowledge_reads`
+
+各阶段通过 Skill frontmatter 的 `search_profile` 声明默认检索画像。`brainstorm` 关注架构参考与学习案例，`analyze` 关注架构约束和纠正经验，`plan` 关注拆解方法与碰撞风险，`execute` 关注目标路径和错误修复经验，`review` 关注评审规范、回归和历史缺陷。`session-priors` 只缓存已经读取的 ID 和已解决的作用域，不阻断后续阶段新增作用域的搜索。
+
+查询默认保持无状态。显式使用 `--trace` 时，Agent Memory 返回 `knowledge_reads/1.0`，记录 `constraints_bound`、`searches` 和 `reads`。`searches` 记录查询词、过滤条件、返回 ID 和命中数。`reads` 记录通过稳定 ID 完成的 Wiki 或 Memory 精确读取，并保存 `from_search_id`、内容哈希和版本。Run 封存时把该结构放进 `result.knowledge_reads`，Review 和自进化据此区分漏搜、零命中、命中未读与读取后仍失败。
+
 ### Agent Memory 多 Agent 接口规划
 
 Agent Memory 作为宿主无关的工具基础设施。Codex、Agy、Claude 和其他 Agent 保留自己的 system prompt，通过 CLI、HTTP 或 MCP 调用统一接口。Agent Memory 的 `agent-memory/2.0` 提取提示词只用于后台窄推理算子，不注入宿主 system prompt。
@@ -243,7 +249,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 | --- | --- |
 | `signals[].kind`、`summary` | 查看用户纠正、改变执行路径的错误、重试、中止、经验证的修复和可重复的流程问题。允许返回零信号。 |
 | `signals[].sources`、`runIds` | 回查本次输入中存在的消息、快照或回执锚点。用回执中的关系串联失败、介入动作、重试和验证。没有 Run 关联的信号待核对。 |
-| `runs[].skillRef`、`skillReads` | 按原提交、目录树与包路径检查入口和相关步骤。用封存回执中的 Markdown 路径和哈希确认实际读取情况。旧记录缺少这些字段时，将对应事实记为未知。独立调用的 `skill` 字段提供版本和终态。 |
+| `runs[].skillRef`、`skillReads`、`knowledgeReads` | 按原提交、目录树与包路径检查入口和相关步骤。用封存回执中的 Markdown 路径、知识搜索、稳定 ID 和哈希确认实际读取情况。旧记录缺少这些字段时，将对应事实记为未知。独立调用的 `skill` 字段提供版本和终态。 |
 
 ### 自进化 Skill 核对归因
 
@@ -301,7 +307,7 @@ Session 自动沉淀由宿主配置启用。`MAESTRO_EVOLVE_CLI` 指向已安装
 
 新 Run 按全局、共享仓库、项目、团队、个人的顺序合并约束。团队与个人沿用本地 Git 邮箱对应的成员记录。个人层只读取该成员的目录，快照记录层和 UID。仍有适用旧约束且对应层尚未导入时，分派沿用旧读取路径。旧脚手架的示例和空种子无需切换。已完成的 Run 使用分派时的快照。 [新旧分层验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
-`agent-memory wiki constraints` 和 `maestro run wiki-constraints` 均支持 `--keyword`。已导入的结构化条目继续使用原关键词，旧 Wiki 页面可从保存的迁移属性读取。运行中的查询只读取该 Run 固定的约束及其关键词。 [新旧读取验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
+`agent-memory wiki constraints` 支持 `--keyword`、`--skill`、`--task` 和 `--path`。已导入的结构化条目继续使用原关键词，旧 Wiki 页面可从保存的迁移属性读取。运行中的查询只读取该 Run 固定的约束及其关键词。 [新旧读取验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
 ## 7. 迁移顺序与验收
 

@@ -8,8 +8,9 @@ import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 import { graphMultiHopSearch } from './upstream/graph-search.js';
 import { slugify } from './upstream/slug.js';
 import { tokenizeWiki } from './wiki-tokens.js';
-import { appliesToContext, readWikiEntryMetadata, type WikiContext, type WikiEntryMetadata } from './wiki-entry.js';
+import { appliesToContext, contextSpecificity, readWikiEntryMetadata, type WikiContext, type WikiEntryMetadata } from './wiki-entry.js';
 import type { WikiIngestOptions } from './wiki-ingest.js';
+import type { KnowledgeReads } from './knowledge-reads.js';
 
 interface Page {
   id: string;
@@ -32,6 +33,11 @@ export interface WikiSearchOptions {
   decay?: number;
   includeHistory?: boolean;
   entryMode?: 'constraint' | 'reference';
+}
+
+export interface WikiReadOptions {
+  knowledgeReads?: KnowledgeReads;
+  fromSearchId?: string;
 }
 
 export interface WikiHit extends Page {
@@ -138,12 +144,20 @@ export class Wiki {
     if (!existsSync(join(this.root, 'wiki'))) return [];
     return readWikiPages(this.root).filter(page =>
       page.entry?.mode === 'constraint' && page.entry.status === 'active' && appliesToContext(page.entry, context, page.body)
-    ).map(({ links: _links, ...page }) => page);
+    ).sort((left, right) => contextSpecificity(right.entry!, context) - contextSpecificity(left.entry!, context))
+      .map(({ links: _links, ...page }) => page);
   }
 
-  getEntry(id: string) {
+  getEntry(id: string, options: WikiReadOptions = {}) {
     if (!existsSync(join(this.root, 'wiki'))) return null;
-    return findEntry(readWikiPages(this.root), id);
+    const entry = findEntry(readWikiPages(this.root), id);
+    if (entry && options.knowledgeReads) {
+      options.knowledgeReads.recordRead({
+        kind: 'wiki', id: entry.id, fromSearchId: options.fromSearchId,
+        content: entry.body,
+      });
+    }
+    return entry;
   }
 
   private visibleReferences(context: WikiContext) {
@@ -151,8 +165,15 @@ export class Wiki {
       page.entry.status === 'active' && appliesToContext(page.entry, context, page.body));
   }
 
-  getReference(id: string, context: WikiContext = {}) {
-    return findEntry(this.visibleReferences(context), id);
+  getReference(id: string, context: WikiContext = {}, options: WikiReadOptions = {}) {
+    const entry = findEntry(this.visibleReferences(context), id);
+    if (entry && options.knowledgeReads) {
+      options.knowledgeReads.recordRead({
+        kind: 'wiki', id: entry.id, fromSearchId: options.fromSearchId,
+        content: entry.body,
+      });
+    }
+    return entry;
   }
 
   references(query: string, context: WikiContext = {}, options: WikiSearchOptions = {}) {
@@ -173,7 +194,10 @@ export class Wiki {
             appliesToContext(page.entry, context, page.body);
         });
         const limit = searchLimit(options.limit);
-        const results = filtered.slice(0, limit);
+        const results = filtered
+          .map(hit => ({ ...hit, score: hit.score + contextSpecificity(pages.get(hit.id)!.entry!, context) / 100 }))
+          .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+          .slice(0, limit);
         const included = new Set(results.map(result => result.id));
         return {
           results,

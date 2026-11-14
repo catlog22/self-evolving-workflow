@@ -11,6 +11,7 @@ import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 import { unionSources } from './upstream/merge.js';
 import { readCompletionTranscriptRefs, readTranscriptSnapshots } from './transcript-evidence.js';
 import { applyWikiChange, proposeWikiChange } from './wiki-change.js';
+import { validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
 
 export interface Completion {
   id: string;
@@ -18,6 +19,7 @@ export interface Completion {
   timestamp: string;
   messages: ConversationMessage[];
   skill?: { id: string; version: string; status: SkillCompletionStatus };
+  knowledgeReads?: KnowledgeReadsReceipt;
 }
 
 type SkillCompletionStatus = 'succeeded' | 'failed' | 'cancelled';
@@ -110,6 +112,7 @@ export function parseReceipt(value: unknown): Completion {
       session: requireText(receipt.execution_id, 'execution ID'),
       timestamp: requireText(receipt.recorded_at, 'completion time'),
       messages: receipt.messages,
+      ...(receipt.knowledge_reads === undefined ? {} : { knowledgeReads: validateKnowledgeReads(receipt.knowledge_reads) }),
       ...skill,
     };
   }

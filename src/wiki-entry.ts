@@ -95,3 +95,15 @@ export function appliesToContext(entry: WikiEntryMetadata, context: WikiContext,
     return context.includePathScoped || (context.paths ?? []).some(path => posix.matchesGlob(path.replaceAll('\\', '/'), scope.slice(5)));
   });
 }
+
+export function contextSpecificity(entry: WikiEntryMetadata, context: WikiContext): number {
+  let score = 0;
+  if (context.skill && entry.scope.includes(`skill:${context.skill}`)) score += 8;
+  if (context.task && entry.scope.includes(`task:${context.task}`)) score += 6;
+  if (context.paths?.length && entry.scope.some(scope => scope.startsWith('path:') &&
+      context.paths!.some(path => posix.matchesGlob(path.replaceAll('\\', '/'), scope.slice(5))))) score += 4;
+  if (context.categories?.length && entry.categories?.some(category => context.categories!.includes(category))) score += 2;
+  if (context.repository && entry.repositories?.includes(context.repository)) score += 2;
+  if (context.keyword && entry.keywords?.includes(context.keyword.toLowerCase())) score += 1;
+  return score;
+}

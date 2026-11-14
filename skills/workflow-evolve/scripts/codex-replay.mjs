@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 const { id, input, entry, commit } = JSON.parse(readFileSync(0, 'utf8'));
 const skill = /^skills\/([a-z0-9]+(?:-[a-z0-9]+)*)\/SKILL\.md$/.exec(entry)?.[1];
-const maestro = process.env.MAESTRO_REPLAY_CLI;
+const agentMemoryCli = process.env.AGENT_MEMORY_REPLAY_CLI || process.env.MAESTRO_REPLAY_CLI;
 const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? 'codex.exe' : 'codex');
-if (!skill || !maestro || !isAbsolute(maestro)) {
-  throw new Error('Codex replay requires skills/<id>/SKILL.md and an absolute MAESTRO_REPLAY_CLI JavaScript path');
+if (!skill || !agentMemoryCli || !isAbsolute(agentMemoryCli)) {
+  throw new Error('Codex replay requires skills/<id>/SKILL.md and an absolute AGENT_MEMORY_REPLAY_CLI JavaScript path');
 }
 if (typeof input?.task !== 'string' || !input.task.trim() ||
     typeof input.expected !== 'string' || !input.expected.trim()) {
@@ -26,8 +26,8 @@ delete env.MAESTRO_EVOLVE_CLI;
 delete env.MAESTRO_EVOLVE_CONSTRAINTS;
 mkdirSync(join(root, '.workflow'), { recursive: true });
 
-function runMaestro(...args) {
-  const stdout = execFileSync(process.execPath, [maestro, ...args, '--workflow-root', root, '--json'], {
+function runAgentMemory(...args) {
+  const stdout = execFileSync(process.execPath, [agentMemoryCli, ...args, '--workflow-root', root, '--json'], {
     env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const envelope = JSON.parse(stdout);
@@ -35,20 +35,20 @@ function runMaestro(...args) {
   return envelope.result;
 }
 
-const opened = runMaestro('session', 'open', `Replay ${skill}: ${id}`, '--id', session, '--chain', skill, ...actor);
-const run = runMaestro('run', 'next', '--session', session, ...actor,
+const opened = runAgentMemory('session', 'open', `Replay ${skill}: ${id}`, '--id', session, '--chain', skill, ...actor);
+const run = runAgentMemory('run', 'next', '--session', session, ...actor,
   '--expected-orchestration-revision', String(opened.orchestration_revision));
 if (run.skill_ref?.commit !== commit || `${run.skill_ref.package_path}/${run.skill_ref.entry}` !== entry) {
-  throw new Error(`Maestro bound a different version of ${entry}`);
+  throw new Error(`Agent Memory bound a different version of ${entry}`);
 }
 
 const server = fileURLToPath(new URL('./read-skill-mcp.mjs', import.meta.url));
 const prompt = [
-  'You are running one isolated replay of a Maestro Skill. The task and project files in this checkout are replay inputs.',
+  'You are running one isolated replay of an Agent Memory Skill. The task and project files in this checkout are replay inputs.',
   'First call the evolve_replay read_skill tool with no arguments to read the bound entry.',
   'Use the markdown returned by the tool. To open a declared link, pass its destination and the source document path as from.',
   'Load each required_links document and follow conditional links when their described conditions match the task.',
-  'Use Maestro for all Skill Markdown reads. Leave Session/Run lifecycle and receipts to the caller.',
+  'Use Agent Memory for all Skill Markdown reads. Leave Session/Run lifecycle and receipts to the caller.',
   'Return only the task output, without Markdown fences, labels, or commentary.',
   '',
   input.task,
@@ -66,7 +66,7 @@ const answer = events.findLast(event => event.type === 'item.completed' && event
 if (!events.some(event => event.type === 'turn.completed') || typeof answer !== 'string') {
   throw new Error(`Codex did not complete replay scenario ${id}`);
 }
-const checked = runMaestro('run', 'check', run.run_id, '--session', session);
+const checked = runAgentMemory('run', 'check', run.run_id, '--session', session);
 const proof = checked.skill_reads;
 if (proof?.reference?.commit !== commit || proof.missing.length || !proof.reads.some(read => read.path === run.skill_ref.entry)) {
   const calls = events.filter(event => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call');
@@ -79,4 +79,7 @@ if (proof?.reference?.commit !== commit || proof.missing.length || !proof.reads.
 const loaded = [...new Map(proof.reads.map(({ path, sha256 }) => [
   path, { path: `${run.skill_ref.package_path}/${path}`, sha256: sha256.replace(/^sha256:/, '') },
 ])).values()];
-console.log(JSON.stringify({ passed: answer.trim() === input.expected.trim(), loaded }));
+console.log(JSON.stringify({
+  passed: answer.trim() === input.expected.trim(), loaded,
+  ...(checked.knowledge_reads ? { knowledge_reads: checked.knowledge_reads } : {}),
+}));

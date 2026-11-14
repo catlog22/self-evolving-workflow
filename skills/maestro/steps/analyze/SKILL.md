@@ -1,6 +1,9 @@
 ---
 name: analyze
 wiki_categories: [arch]
+search_profile:
+  wiki: [constraints, references]
+  memory: [correction, error, verified_fix]
 description: Perform multi-dimensional analysis of a topic or existing implementation, producing findings and a risk-matrix consumable by plan
 argument-hint: '[topic] [-y] [-q] [--from <artifact-alias>] [--gaps [ISS-ID]]'
 required_links:

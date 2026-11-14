@@ -19,6 +19,7 @@ import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
 import { migrateLegacyWiki, validateWikiMemberUid } from './wiki-migration.js';
 import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.js';
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
+import { KnowledgeReads } from './knowledge-reads.js';
 
 const help = `Usage: agent-memory <command> [options]
 
@@ -64,6 +65,8 @@ Options:
   --wiki-root <dir>    Override the parent of wiki/
   --db <path>          Memory DB (default <root>/.agent-memory/memory.db)
   --namespace <name>   Memory namespace (default default)
+  --memory-session <id> Memory session filter (context uses this instead of its context session)
+  --trace               Include knowledge_reads search/read evidence in the result
   --limit <n>          Maximum results per source (default 10)
   --help               Show this message
 
@@ -84,6 +87,7 @@ const options = {
   type: { type: 'string' },
   scene: { type: 'string' },
   session: { type: 'string' },
+  'memory-session': { type: 'string' },
   id: { type: 'string' },
   priority: { type: 'string' },
   port: { type: 'string' },
@@ -95,6 +99,7 @@ const options = {
   repository: { type: 'string' },
   'include-path-scoped': { type: 'boolean' },
   'include-memory': { type: 'boolean' },
+  trace: { type: 'boolean' },
   path: { type: 'string', multiple: true },
   history: { type: 'boolean' },
   project: { type: 'string' },
@@ -149,8 +154,16 @@ async function main() {
   const openMemory = () => new MemoryStore(db, { namespace: values.namespace });
   const limit = values.limit === undefined ? undefined : Number(values.limit);
   const wikiOptions = { limit, hop: values.hop === undefined ? undefined : Number(values.hop), includeHistory: values.history };
-  const memoryOptions = { limit, type: values.type, scene: values.scene, session: values.session };
+  const memorySession = values['memory-session'] ?? (command === 'memory' || command === 'search' ? values.session : undefined);
+  const memoryOptions = { limit, type: values.type, scene: values.scene, session: memorySession };
+  const knowledgeReads = values.trace ? new KnowledgeReads() : undefined;
   const print = (result: unknown) => process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  const withTrace = (result: unknown) => {
+    if (!knowledgeReads) return result;
+    return result && typeof result === 'object' && !Array.isArray(result)
+      ? { ...(result as Record<string, unknown>), knowledge_reads: knowledgeReads.toJSON() }
+      : { result, knowledge_reads: knowledgeReads.toJSON() };
+  };
 
   function sourcesFor(scope: SearchScope): SearchSources {
     return {
@@ -186,7 +199,9 @@ async function main() {
     const scope = parseScope(values.scope ?? 'all');
     const sources = sourcesFor(scope);
     try {
-      print(await search(sources, query, { scope, limit, wiki: wikiOptions, memory: memoryOptions }));
+      print(withTrace(await search(sources, query, {
+        scope, limit, wiki: wikiOptions, memory: memoryOptions, knowledgeReads,
+      })));
     } finally {
       sources.memory?.close();
     }
@@ -203,7 +218,7 @@ async function main() {
     }
     const sources = sourcesFor(scope);
     try {
-      print(await buildContext(sources, query, {
+      print(withTrace(await buildContext(sources, query, {
         limit,
         context: {
           skill: values.skill,
@@ -211,17 +226,20 @@ async function main() {
           paths: values.path,
           categories: values.category,
           repository: values.repository,
+          keyword: values.keyword,
+          includePathScoped: values['include-path-scoped'],
         },
         wiki: wikiOptions,
         memory: memoryOptions,
         includeWorkingMemory: values['include-memory'],
+        knowledgeReads,
         contextScope: {
           ...(values.session ? { session_id: values.session } : {}),
           ...(values.skill ? { skill_id: values.skill } : {}),
           ...(values.task ? { task_kind: values.task } : {}),
           ...(values.path?.length ? { paths: values.path } : {}),
         },
-      }));
+      })));
     } finally {
       sources.memory?.close();
     }
@@ -232,7 +250,15 @@ async function main() {
     switch (action) {
       case 'build': return print(await code.build());
       case 'sync': return print(await code.sync());
-      case 'search': return print(await code.search(args.join(' '), limit));
+      case 'search': {
+        const query = args.join(' ');
+        const result = await code.search(query, limit);
+        if (knowledgeReads) knowledgeReads.recordSearch({
+          source: 'code', query,
+          returnedIds: result.flatMap(item => typeof item.node?.id === 'string' ? [item.node.id] : []),
+        });
+        return print(withTrace(result));
+      }
       case 'callers':
       case 'callees': return print(await code.neighbors(requireText(args[0], 'symbol id'), action, Number(values.depth ?? '1')));
       case 'trace': return print(await code.trace(requireText(args[0], 'from id'), requireText(args[1], 'to id')));
@@ -241,8 +267,15 @@ async function main() {
   if (command === 'wiki') {
     switch (action) {
       case 'build': return print(wiki.build());
-      case 'search': return print(wiki.search(args.join(' '), wikiOptions));
-      case 'get': return print(wiki.getEntry(requireText(args[0], 'wiki entry ID')));
+      case 'search': {
+        const query = args.join(' ');
+        const result = wiki.search(query, wikiOptions);
+        if (knowledgeReads) knowledgeReads.recordSearch({
+          source: 'wiki', query, filters: wikiOptions, returnedIds: result.results.map(hit => hit.id),
+        });
+        return print(withTrace(result));
+      }
+      case 'get': return print(withTrace(wiki.getEntry(requireText(args[0], 'wiki entry ID'), { knowledgeReads })));
       case 'constraints':
       case 'references':
       case 'reference': {
@@ -254,9 +287,26 @@ async function main() {
         if (repository !== undefined && !isRepositoryId(repository)) throw new InputError('Expected a persisted repository UUID');
         const context: WikiContext = { skill: values.skill, task: values.task, paths: values.path, categories, repository,
           keyword: values.keyword };
-        if (action === 'references') return print(wiki.references(args.join(' '), context, wikiOptions));
-        if (action === 'reference') return print(wiki.getReference(requireText(args[0], 'Wiki entry ID'), context));
-        return print(wiki.constraints({ ...context, includePathScoped: values['include-path-scoped'] }));
+        if (action === 'references') {
+          const query = args.join(' ');
+          const result = wiki.references(query, context, wikiOptions);
+          if (knowledgeReads) knowledgeReads.recordSearch({
+            source: 'wiki_references', query, filters: { ...context, ...wikiOptions },
+            returnedIds: result.results.map(hit => hit.id),
+          });
+          return print(withTrace(result));
+        }
+        if (action === 'reference') {
+          return print(withTrace(wiki.getReference(requireText(args[0], 'Wiki entry ID'), context, { knowledgeReads })));
+        }
+        const result = wiki.constraints({ ...context, includePathScoped: values['include-path-scoped'] });
+        if (knowledgeReads) for (const constraint of result) {
+          knowledgeReads.bindConstraint({
+            knowledgeId: constraint.id, scope: constraint.entry?.scope ?? [],
+            categories: constraint.entry?.categories, content: constraint.body,
+          });
+        }
+        return print(withTrace(result));
       }
       case 'migrate': {
         const scope = values.scope ?? 'project';
@@ -401,9 +451,16 @@ async function main() {
           content: args.join(' '), id: values.id, type: values.type, scene: values.scene, session: values.session,
           priority: values.priority === undefined ? undefined : Number(values.priority),
         }));
-        case 'get': return print(memory.get(requireText(args[0], 'id')) ?? null);
+        case 'get': return print(withTrace(memory.get(requireText(args[0], 'id'), { knowledgeReads }) ?? null));
         case 'delete': return print({ deleted: memory.delete(requireText(args[0], 'id')) });
-        case 'search': return print(await memory.search(args.join(' '), memoryOptions));
+        case 'search': {
+          const query = args.join(' ');
+          const result = await memory.search(query, memoryOptions);
+          if (knowledgeReads) knowledgeReads.recordSearch({
+            source: 'memory', query, filters: memoryOptions, returnedIds: result.results.map(hit => hit.id),
+          });
+          return print(withTrace(result));
+        }
         case 'extract': {
           const messages: unknown = JSON.parse(readFileSync(requireText(args[0], 'messages file'), 'utf8').replace(/^\uFEFF/, ''));
           if (!Array.isArray(messages)) throw new InputError('Messages file must contain a JSON array');

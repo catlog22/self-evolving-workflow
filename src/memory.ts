@@ -8,6 +8,7 @@ import { formatExtractionPrompt, getExtractMemoriesAgentPrompt } from './upstrea
 import type { LlmClient } from './upstream/llm.js';
 import { rrfMerge } from './upstream/search-utils.js';
 import { bm25RankToScore, buildFtsQuery, tokenizeForFts } from './upstream/tokenize.js';
+import type { KnowledgeReads } from './knowledge-reads.js';
 
 export interface ConversationMessage {
   id: string;
@@ -168,10 +169,17 @@ export class MemoryStore {
     }));
   }
 
-  get(id: string): MemoryRecord | undefined {
+  get(id: string, options: { knowledgeReads?: KnowledgeReads; fromSearchId?: string } = {}): MemoryRecord | undefined {
     const row = this.db.prepare(`SELECT ${recordFields} FROM memory_records m WHERE namespace = ? AND id = ?`)
       .get(this.namespace, id) as Row | undefined;
-    return row && record(row);
+    const result = row && record(row);
+    if (result && options.knowledgeReads) {
+      options.knowledgeReads.recordRead({
+        kind: 'memory', id: result.id, fromSearchId: options.fromSearchId,
+        content: result.content, version: result.version,
+      });
+    }
+    return result;
   }
 
   delete(id: string): boolean {

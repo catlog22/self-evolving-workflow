@@ -78,10 +78,10 @@ Parse mode/flags (see above). Load upstream and project context:
    - open constraints → analyze first
    - open questions → discussion seeds
    - `architecture_template_evidence` → architecture analysis context; reuse it without a new search/load
-2. Architecture rules: use the Run's `wiki_constraints` when present, including an empty result. When a file is selected, use `maestro run wiki-constraints <run-id> --session <session-id> --path <file> --json`. The legacy Run branch uses `maestro spec load --category arch`.
+2. Architecture rules: use the Run's `wiki_constraints` when present, including an empty result. When a file is selected, use `agent-memory wiki constraints --skill analyze --category arch --path <file> --json`. The current package has no separate legacy knowledge loader.
 3. domain glossary: read `.workflow/domain/glossary.yaml` (if it exists), use canonical terms throughout the analysis; record new term candidates in the report.
 4. Existing same-milestone analyze artifacts: read their decisions, skip already-decided areas.
-5. When a prior method or example would help, use `maestro wiki references "<topic>" --skill analyze --json` with Evolve configured. Open selected entries with `maestro wiki reference <id> --repo <source UUID or alias> --skill analyze --json`. Repeat the same task or path options on both calls when the reference is scoped to them.
+5. When a prior method or example would help, use `agent-memory wiki references "<topic>" --skill analyze --category arch --json`. Open selected entries with `agent-memory wiki reference <id> --skill analyze --category arch --json`. Repeat the same task or path options on both calls when the reference is scoped to them. For execution lessons, use `agent-memory memory search "<topic>" --type error --scene analyze` and read selected IDs with `agent-memory memory get <id>`.
 
 **quick routing**: after loading context, jump directly to Step 6.
 
@@ -267,11 +267,11 @@ Gate: each ❌ Missed item must either (a) get an added round or (b) be user-con
 { "risks": [], "assumptions": [], "open_questions": [] }
 ```
 
-**5.4b Write priors.json** (session-scoped shared context): record the spec / doc-index / wiki hits gathered during exploration so downstream plan/execute can reuse them without re-searching. Registered as alias `session-priors` by the contract. Do not put architecture templates in `priors.json`; template evidence remains reference-only in `findings.json#architecture_template_evidence`.
+**5.4b Write priors.json** (session-scoped shared context): record the spec / doc-index / wiki hits gathered during exploration so downstream plan/execute can reuse their already-read IDs. Include the resolved search scope and loaded IDs. Downstream stages still search their own added category, task and path scope. Do not put architecture templates in `priors.json`; template evidence remains reference-only in `findings.json#architecture_template_evidence`.
 
 Write it whenever this run resolved any spec, doc-index, or wiki hit — Required Context makes that the normal case, so skipping should be rare and deliberate. The only skip condition is that all three lists would be empty.
 
-**Never write an empty-but-present priors.json.** Downstream plan and execute treat its presence as "priors already resolved" and suppress their own search. Omit the file when there are no priors to carry forward.
+**Never write an empty-but-present priors.json.** A non-empty file is an incremental cache, not permission to suppress later stage searches. Omit the file when there are no priors to carry forward.
 ```json
 { "specs": [], "doc_index": [], "wiki": [] }
 ```
@@ -404,5 +404,5 @@ Record as it occurs:
 
 ## Knowledge Hooks
 
-- Attribute every knowledge hit you actually use: `maestro knowledge record <knowledge-ids...> --signal consumed|cited --source search` — exposure becomes evidence only when recorded.
+- Attribute every knowledge hit you actually use through the `--trace` result and the Run's `knowledge_reads` receipt. Search exposure becomes evidence only when the stable ID is recorded, and exact consumption uses `agent-memory wiki reference <id>` or `agent-memory memory get <id>`.
 - Write domain terms and accepted decisions to `report.md` frontmatter (`decisions`/`constraints`); sealing stages them as spec candidates automatically.

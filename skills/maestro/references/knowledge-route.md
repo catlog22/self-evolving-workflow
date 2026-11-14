@@ -51,6 +51,8 @@ agent-memory --root <project> wiki search "<query>"
 agent-memory --root <project> wiki get <entry-id>
 agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id>
 agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id> --include-memory
+agent-memory --root <project> context "<query>" --session <current-session-id> --memory-session <historical-session-id> --include-memory
+agent-memory --root <project> search "<query>" --scope memory --scene <scene> --type <type> --trace
 ```
 
 没有命中时保留查询条件和空结果。不要把缺少参考误写成新的约束。
@@ -65,9 +67,21 @@ agent-memory --root <project> context "<query>" --skill <id> --task <kind> --ses
 
 标准调用顺序是 `search → get/query`。搜索只返回摘要和 ID，精确读取才返回完整正文、作用域和来源。
 
+### 搜索回执
+
+阶段 Skill 可以在搜索和精确读取完成后使用 `--trace` 获取 `knowledge_reads/1.0`。默认查询保持无状态，只有显式传入 `--trace` 才在结果中附加回执数据。回执包含 `constraints_bound`、`searches` 和 `reads`，由 Run 封存时写入 `result.knowledge_reads`。
+
+- `searches[]` 记录查询词、阶段过滤条件、返回 ID 和命中数，不接收条目 ID。
+- `reads[]` 记录 `wiki reference <id>`、`wiki get <id>` 或 `memory get <id>` 的精确读取，必须带稳定 ID。
+- `reads[].from_search_id` 必须指向本次搜索或 `priors`，用于核对搜索到读取的链路。
+- `content_sha256` 和 `version` 用于确认读取内容与回执时点一致。
+- 没有执行搜索时不生成伪造记录。零命中使用 `returned_ids: []` 保留为可分析信号。
+
 ### L3 初始化与无侵入回溯
 
 初始化时调用 `agent-memory context` 加载 L3 Wiki 约束和参考，返回 `agent-memory-envelope/1.0`。宿主保留自己的 system prompt、模型调用和工具链，初始化过程不读取宿主历史文件。
+
+`context --session` 只标记当前工作上下文。需要限定历史 Working Memory 时显式使用 `--memory-session`，避免把新 Session ID 错当成历史记忆过滤条件。
 
 任务结束后使用已提交的 Session/Run 回执执行 Review 和自进化。原始 CLI 历史不是常规输入。未来如果需要补充历史，按 `host_kind` 和显式配置的历史根目录选择性读取，并把结果转换成现有 `transcript-evidence/1.0`，只服务于一次明确的回溯请求。
 
@@ -122,7 +136,7 @@ agent-memory --root <project> wiki migrate <legacy-root> --project <source-proje
 
 ## 与其他 Skill 的关系
 
-- `maestro` 负责识别意图并读取本路由。
+- 当前 Agent Memory 主包负责识别意图并读取本路由。
 - `workflow-closeout` 只提供旧名称兼容，不维护第二份知识规则。
 - `workflow-evolve` 只处理有证据归因到 Skill 行为的修改、回放、应用和回滚。
 - `maestro-odyssey`、`team-swarm` 和 `maestro-skill-design` 可以产生证据或候选，但知识落点仍由本路由决定。

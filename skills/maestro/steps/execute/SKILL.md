@@ -1,6 +1,9 @@
 ---
 name: execute
 wiki_categories: [coding]
+search_profile:
+  wiki: [constraints, references]
+  memory: [error, correction, verified_fix]
 description: Implement code changes following the DAG and waves of current-plan, producing implementation results and a local smoke self-check
 argument-hint: '[scope] [-y] [--task TASK-ID] [--method agent|cli|auto] [--executor <tool>] [--auto-commit]'
 contract:

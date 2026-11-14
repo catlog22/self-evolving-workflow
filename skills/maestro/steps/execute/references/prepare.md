@@ -39,7 +39,7 @@ Degradation close: complete the Run honestly with `maestro run complete <run_id>
 - With `current-plan`: for a structured Maestro Plan, read waves, dependency graph, collision report, and each task's convergence.criteria. For `source_format: pi-markdown`, use the derived task/dependency view from the authoritative `markdown` body and preserve every stated acceptance check as convergence criteria.
 - With `session-priors`, reuse its document and reference context. For legacy Runs, reuse matching prior specs.
 - Before dispatching a task, select coding rules for its exact paths as described in the workflow. For frontend or UI tasks include the `ui` category. The Run's Wiki snapshot remains authoritative even when the returned list is empty.
-- The architecture doc `.workflow/codebase/ARCHITECTURE.md` and wiki search results: injected as shared context into the executor; reuse the `session-priors` copy when present, else search; may continue if missing (record a warning).
+- The architecture doc `.workflow/codebase/ARCHITECTURE.md` and Wiki search results are injected as shared context into the executor. Reuse already-read IDs from `session-priors`, then run the incremental path-scoped query `agent-memory wiki references "<task keywords>" --skill execute --category coding --path <target>` when the task adds a new path. On a failure or retry, run `agent-memory memory search "<error keywords>" --type error --scene execute` and read selected IDs with `agent-memory memory get <id>`.
 
 ## Boundaries and Invariants
 

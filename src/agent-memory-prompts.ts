@@ -50,6 +50,7 @@ export function buildSessionSignalPrompt(): AgentMemoryPrompt {
   return createAgentMemoryPrompt('session-signal', [
     'Review the execution timeline as an evidence analyst.',
     'Extract user corrections, errors that changed the approach, blocked or aborted actions, retries, verified fixes, and repeatable workflow issues.',
+    'Use knowledge search evidence when present. Distinguish a missing stage search, a zero-hit or over-filtered search, a relevant hit that was not opened with its stable ID, and a read entry that was stale or insufficient. Treat search exposure as a candidate only. Treat a Wiki or Memory get/reference record as consumption evidence. A missing knowledge receipt is inconclusive.',
     'Omit routine progress, unsupported causes, and speculation. A record that a Skill document was opened confirms only that it was read. A missing read record is inconclusive. A successful completion alone does not prove a fix.',
     'Return exactly a JSON array with this shape: [{"memories":[{"type":"correction","content":"...","source_message_ids":["exact supplied ID"]}]}].',
     'Allowed types are correction, error, retry, aborted, verified_fix and workflow_issue. Cite every signal with exact supplied message IDs. Return [] when no signal qualifies.',

@@ -9,6 +9,7 @@ import { InputError, NotFoundError, requireText, searchLimit } from './common.js
 import type { MemorySearchOptions, MemoryStore } from './memory.js';
 import type { Wiki, WikiSearchOptions } from './wiki.js';
 import type { WikiContext } from './wiki-entry.js';
+import type { KnowledgeReads } from './knowledge-reads.js';
 
 export interface SearchSources {
   code?: CodeGraph;
@@ -23,6 +24,7 @@ export interface SearchOptions {
   limit?: number;
   wiki?: Omit<WikiSearchOptions, 'limit'>;
   memory?: Omit<MemorySearchOptions, 'limit'>;
+  knowledgeReads?: KnowledgeReads;
 }
 
 export interface ContextOptions {
@@ -32,6 +34,7 @@ export interface ContextOptions {
   memory?: Omit<MemorySearchOptions, 'limit'>;
   contextScope?: AgentMemoryContextScope;
   includeWorkingMemory?: boolean;
+  knowledgeReads?: KnowledgeReads;
 }
 
 export interface SearchResults {
@@ -55,6 +58,27 @@ export async function search(sources: SearchSources, query: string, options: Sea
     scope === 'all' || scope === 'code' ? sources.code?.search(text, limit) : undefined,
     scope === 'all' || scope === 'memory' ? sources.memory?.search(text, { ...options.memory, limit }) : undefined,
   ]);
+  const tracker = options.knowledgeReads;
+  if (tracker && wiki) {
+    tracker.recordSearch({
+      source: 'wiki', query: text, filters: options.wiki,
+      returnedIds: wiki.results.map(hit => hit.id),
+    });
+  }
+  if (tracker && code) {
+    const returnedIds = Array.isArray(code) ? code.flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
+      const id = (item as { id?: unknown; node?: { id?: unknown } }).id ?? (item as { node?: { id?: unknown } }).node?.id;
+      return typeof id === 'string' ? [id] : [];
+    }) : [];
+    tracker.recordSearch({ source: 'code', query: text, returnedIds });
+  }
+  if (tracker && memory) {
+    tracker.recordSearch({
+      source: 'memory', query: text, filters: options.memory,
+      returnedIds: memory.results.map(hit => hit.id),
+    });
+  }
   return { ...(code && { code }), ...(wiki && { wiki }), ...(memory && { memory }) };
 }
 
@@ -69,6 +93,30 @@ export async function context(
   const workingMemories = options.includeWorkingMemory && sources.memory
     ? (await sources.memory.search(text, { ...options.memory, limit })).results
     : [];
+  const tracker = options.knowledgeReads;
+  if (tracker) {
+    for (const constraint of constraints) {
+      tracker.bindConstraint({
+        knowledgeId: constraint.id,
+        scope: constraint.entry?.scope ?? [],
+        categories: constraint.entry?.categories,
+        content: constraint.body,
+      });
+    }
+    if (sources.wiki) {
+      tracker.recordSearch({
+        source: 'wiki_references', query: text,
+        filters: { ...wikiContext, ...options.wiki },
+        returnedIds: references.map(hit => hit.id),
+      });
+    }
+    if (options.includeWorkingMemory && sources.memory) {
+      tracker.recordSearch({
+        source: 'memory', query: text, filters: options.memory,
+        returnedIds: workingMemories.map(memory => memory.id),
+      });
+    }
+  }
   return createAgentMemoryEnvelope({
     contextScope: options.contextScope,
     constraints: constraints.map(page => ({

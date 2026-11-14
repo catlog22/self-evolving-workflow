@@ -1,6 +1,9 @@
 ---
 name: plan
 wiki_categories: [arch]
+search_profile:
+  wiki: [constraints, references]
+  memory: [work_method, error, retry]
 description: Decompose confirmed analysis or requirements into an executable DAG, waves, and collision-free tasks
 argument-hint: '[scope] [--gaps] [--tdd] [--revise [instructions]] [--check <plan-dir>] [-y]'
 contract:

@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { InputError, requireText } from './common.js';
 import { draftSkillAddition, learningDocument, learningIndex } from './skill-addition.js';
+import { validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
 
 interface Scenario {
   id: string;
   input: unknown;
   baseline: boolean;
+  knowledgeReads?: { searchedSources?: string[]; loadedIds?: string[] };
 }
 
 interface ReplayReceipt {
@@ -30,6 +32,7 @@ interface ReplayReceipt {
 interface Observation {
   passed: boolean;
   loaded: Array<{ path: string; sha256: string }>;
+  knowledgeReads?: KnowledgeReadsReceipt;
 }
 
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -92,7 +95,21 @@ function loadScenarios(data: unknown): Scenario[] {
       throw new InputError(`Invalid or duplicate replay scenario: ${id}`);
     }
     ids.add(id);
-    return { id, input: scenario.input, baseline: scenario.baseline };
+    let knowledgeReads: Scenario['knowledgeReads'];
+    if (scenario.knowledge_reads !== undefined) {
+      const expected = record(scenario.knowledge_reads);
+      const sources = expected.searched_sources;
+      const ids = expected.loaded_ids;
+      if ((sources !== undefined && (!Array.isArray(sources) || sources.some(item => typeof item !== 'string'))) ||
+          (ids !== undefined && (!Array.isArray(ids) || ids.some(item => typeof item !== 'string')))) {
+        throw new InputError(`Invalid knowledge read expectations: ${id}`);
+      }
+      knowledgeReads = {
+        ...(sources === undefined ? {} : { searchedSources: [...new Set(sources as string[])] }),
+        ...(ids === undefined ? {} : { loadedIds: [...new Set(ids as string[])] }),
+      };
+    }
+    return { id, input: scenario.input, baseline: scenario.baseline, knowledgeReads };
   });
   if (!scenarios.some(item => item.baseline) || !scenarios.some(item => !item.baseline)) {
     throw new InputError('Replay requires both a baseline failure and a baseline pass');
@@ -129,7 +146,20 @@ function runScenario(
     return { path, sha256: expected };
   });
   if (!loaded.some(item => item.path === entry)) throw new InputError(`Replay did not load the selected Skill: ${entry}`);
-  return { passed: proof.passed, loaded };
+  const knowledgeReads = proof.knowledge_reads === undefined ? undefined : validateKnowledgeReads(proof.knowledge_reads);
+  return { passed: proof.passed, loaded, ...(knowledgeReads ? { knowledgeReads } : {}) };
+}
+
+function assertKnowledgeReads(observation: Observation, expected: Scenario['knowledgeReads'], scenario: string): void {
+  if (!expected) return;
+  const receipt = observation.knowledgeReads;
+  if (!receipt) throw new InputError(`Replay omitted knowledge reads: ${scenario}`);
+  if (expected.searchedSources?.some(source => !receipt.searches.some(search => search.source === source))) {
+    throw new InputError(`Replay omitted expected knowledge search: ${scenario}`);
+  }
+  if (expected.loadedIds?.some(id => !receipt.reads.some(read => read.id === id))) {
+    throw new InputError(`Replay omitted expected knowledge read: ${scenario}`);
+  }
 }
 
 function repoRoot(root: string) {
@@ -190,6 +220,7 @@ export function replaySkillAddition(root: string, data: unknown, options: { runn
           (!scenario.baseline && !expectedReads.every(path => proposed.loaded.some(item => item.path === path)))) {
         throw new InputError(`Skill replay failed: ${scenario.id}`);
       }
+      assertKnowledgeReads(proposed, scenario.knowledgeReads, scenario.id);
       return { id: scenario.id, inputSha256: sha256(JSON.stringify(scenario.input)), baseline, candidate: proposed };
     });
     if (sha256(readFileSync(runner)) !== runnerSha256) throw new InputError('Replay runner changed during validation');

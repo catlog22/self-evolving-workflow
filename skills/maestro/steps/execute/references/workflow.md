@@ -116,9 +116,9 @@ domainRouting   = Step 1 || build from delegate-config domain tags (frontend/bac
 
 ## Step 3: Load project rules
 
-For a Run with `wiki_constraints`, use `maestro run wiki-constraints <run-id> --session <session-id> --path <file> --json` for each task's known files. Repeat `--path` for multiple files. UI tasks use `--category coding --category ui`. An empty result still uses the Run's Wiki snapshot.
+For a Run with `wiki_constraints`, use `agent-memory wiki constraints --skill execute --path <file> --category coding --json` for each task's known file. Repeat `--path` for multiple files. UI tasks add `--category ui`. An empty result still uses the Run's Wiki snapshot.
 
-For the legacy branch, use `maestro spec load --category coding` and also load `maestro spec load --category ui` for UI work when the applicable rules are absent from priors. Pass task rules to each executor in Step 4.
+Pass task rules to each executor in Step 4. The current package does not maintain a second Spec loader.
 
 ---
 
@@ -279,8 +279,7 @@ outputs/self-check.json (Step 7)
 ```
 Read all outputs/summaries/*.md, extract strategy adjustments, patterns, pitfalls.
 Deduplicate against the rules resolved in Step 3.
-Stage reusable learnings with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>`;
-never append spec entries directly — routine Run completion must not call `maestro spec add`.
+Stage reusable learnings through the unified Agent Memory Wiki proposal route after the Run is sealed. Never write Wiki files directly from routine Run completion.
 ```
 
 Full knowledge extraction (constraints → spec, decisions → knowhow, terminology → domain glossary) is not done here; it is handled uniformly at session wrap-up.
@@ -370,5 +369,5 @@ Resume behavior:
 
 ## Knowledge Hooks
 
-- `maestro load` records consumed automatically; attribute search hits with `maestro knowledge record <ids...> --source search`.
-- Stage reusable recipes/pitfalls: `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>`; never write spec/knowhow directly.
+- `--trace` records consumed IDs in `knowledge_reads`; exact reads use `agent-memory wiki reference <id>` or `agent-memory memory get <id>`.
+- Stage reusable recipes and pitfalls through `agent-memory wiki propose`; never write Wiki files directly.
