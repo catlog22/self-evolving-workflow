@@ -137,6 +137,52 @@ sources:
 
 `sources` 用于回查任务证据，写入前校验引用能定位到对应回执。已有图谱从正文 `[[…]]` 解析页面间关系。自动补证只追加 `sources`，Wiki 页面间的关联在正文显式表达。 [Wiki 索引与关系解析](/D:/evolve_workflow/src/wiki.ts:42)
 
+### Search 与 Get/Query 接口边界
+
+统一知识接口把候选发现和精确读取分开。Search 不接收条目 ID，Get、Query 和 Reference 必须接收条目 ID。
+
+| 接口类别 | 规划签名 | ID 要求 | 返回内容 |
+| --- | --- | --- | --- |
+| 候选搜索 | `search(query, filters?)` | 不接收 `knowledge_id` | 摘要、稳定 `knowledge_id`、相关性、来源摘要和关系 ID |
+| 参考搜索 | `wiki references(query, context)` | 不接收 `knowledge_id` | 满足 `mode=reference`、状态和作用域的候选摘要 |
+| 约束解析 | `wiki constraints(context)` | 不接收条目 ID | 当前上下文生效的约束全文、`knowledge_id`、内容哈希和作用域 |
+| 精确读取 | `get(knowledge_id)` 或 `query({ id: knowledge_id })` | 必须接收稳定 ID | 单条完整正文、属性、来源和历史状态 |
+| 受控参考读取 | `reference(knowledge_id, context)` | 必须接收稳定 ID | 通过当前作用域和共享授权复验后的参考正文 |
+| 变更接口 | `propose`、`changes`、`apply` | 必须使用规范化条目 ID、候选 ID 或变更 ID | 提案状态、基线哈希、变更前后内容和应用回执 |
+
+标准读取时序是 `search → get/query`。Search 只承担发现职责，返回摘要和 ID。Get/Query 承担精确读取职责，返回完整内容。Search 结果中的 ID 是后续操作的稳定引用，不能反向成为 Search 的必填参数。约束读取使用上下文匹配，不用条目 ID 替代作用域解析。
+
+### Agent Memory 多 Agent 接口规划
+
+Agent Memory 作为宿主无关的工具基础设施。Codex、Agy、Claude 和其他 Agent 保留自己的 system prompt，通过 CLI、HTTP 或 MCP 调用统一接口。Agent Memory 的 `agent-memory/2.0` 提取提示词只用于后台窄推理算子，不注入宿主 system prompt。
+
+检索结果统一封装为 `agent-memory-envelope/1.0`，规划字段如下。
+
+```json
+{
+  "schema_version": "agent-memory-envelope/1.0",
+  "trust_boundary": "untrusted_evidence_data_only",
+  "context_scope": {
+    "session_id": "<optional>",
+    "skill_id": "<optional>",
+    "task_kind": "<optional>",
+    "paths": []
+  },
+  "constraints": [],
+  "references": [],
+  "working_memories": []
+}
+```
+
+字段规则如下。
+
+- `knowledge_id` 表示正式 Wiki 条目，Search 结果必须返回，Get/Query 以它作为精确定位。
+- `source_id` 表示消息、回执或文件证据。普通 Search 只返回来源摘要，审查和 Closeout 返回完整来源。
+- `session_id` 表示工作上下文。它可以过滤 L1 Memory 和回溯证据，不作为正式 Wiki 条目的唯一身份。
+- `authority` 区分 `binding`、`advisory` 和 `unverified_episodic`。检索内容作为工具数据或用户上下文进入宿主，不能覆盖宿主 system prompt。
+
+多 Agent 适配顺序先实现确定性读取，再接入回执和后台沉淀。第一步统一 Search、Get/Query 和 Envelope 字段。第二步接入 Codex、Agy、Claude 的 CLI/MCP 适配。第三步补齐 transcript 快照和 Closeout 回执适配。以上接口先写入规划，暂不实现。
+
 ## 4. 多层沉淀 Skill
 
 ### 触发与证据

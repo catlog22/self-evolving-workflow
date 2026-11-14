@@ -53,6 +53,16 @@ agent-memory --root <project> wiki get <entry-id>
 
 没有命中时保留查询条件和空结果。不要把缺少参考误写成新的约束。
 
+### Search 与 Get/Query 的 ID 边界
+
+- `search(query, filters?)` 负责候选发现，不接收 `knowledge_id`。查询词、作用域、Skill、任务、路径和分类是它的输入。
+- 搜索结果返回稳定的 `knowledge_id`，供后续精确读取和审计使用。
+- `get(id)`、`query({ id })` 和 `reference(id)` 负责单条读取，必须接收稳定 ID。Wiki 可以兼容已登记的 `aliases`，写入操作不接受别名。
+- `constraints(context)` 根据 Skill、任务、路径和分类解析适用约束，不要求条目 ID。返回结果仍带 `knowledge_id`，用于 Run 快照和消费记录。
+- `propose`、`changes` 和 `apply` 属于变更接口，必须使用规范化条目 ID、候选 ID 或变更 ID，并校验基线哈希。
+
+标准调用顺序是 `search → get/query`。搜索只返回摘要和 ID，精确读取才返回完整正文、作用域和来源。
+
 ### `closeout`
 
 先消费已提交回执，再读取候选。模型提取使用 Agent Memory 的统一系统提示词，候选保留来源消息 ID 和回执身份。
