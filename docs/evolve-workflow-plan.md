@@ -31,6 +31,8 @@ Maestro Session 完成 / 独立 Skill 明确结束
 
 ## 2. Session/Run 与 Skill 编排
 
+本项目的重构 Skill 统一落在当前仓库的 `skills/` 下。`skills/analyze`、`skills/plan`、`skills/execute`、`skills/maestro`、`skills/maestro-skill-design`、`skills/maestro-odyssey` 和 `skills/team-swarm` 是当前项目的规范副本。外部 Maestro 工作树只作为运行时源码和验收来源，不作为本项目的写入目标。
+
 ### 保留 Session/Run v3
 
 Session 管理目标、步骤链、决策和同一 Session 内的产物关系。Run 记录一次执行尝试，按既有操作检查输入与产物，完成时提交封存回执。继续使用 `run next`、`run brief`、`run check`、`run complete --advance`、`run decide` 和 `session complete`。协调器消费 Runtime 返回的定位、修订号和结构化续步，同一任务在单步、多步和恢复之间沿用同一 Session。 [Session 状态机](/D:/maestro2/src/run/v3/session-machine.ts:8) · [Run 生命周期](/D:/maestro2/workflows/run-mode.md:14)
