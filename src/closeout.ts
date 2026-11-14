@@ -94,6 +94,45 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function knowledgeReadsMessage(receipt: KnowledgeReadsReceipt): string {
+  const searches = receipt.searches.map(search =>
+    `${search.search_id} ${search.source} "${search.query}" (${search.total_hits} hits: ${search.returned_ids.join(', ') || 'none'})`).join('; ');
+  const reads = receipt.reads.map(read =>
+    `${read.kind}:${read.id}${read.from_search_id ? ` from ${read.from_search_id}` : ''}`).join(', ') || 'none';
+  const constraints = receipt.constraints_bound.map(item => item.knowledge_id).join(', ') || 'none';
+  return `Knowledge searches: ${searches || 'none'}. Knowledge reads: ${reads}. Bound constraints: ${constraints}.`;
+}
+
+function appendRunEvidence(completion: Completion, directory: string): void {
+  const known = new Set(completion.messages.map(message => message.id));
+  for (const { receipt, result } of readSessionTransitions(directory)) {
+    if (typeof result.run_id !== 'string' ||
+        (receipt.target_type === 'orchestration' && receipt.target_id !== completion.session) ||
+        (receipt.target_type === 'run' && receipt.target_id !== result.run_id) ||
+        (receipt.target_type !== 'orchestration' && receipt.target_type !== 'run')) continue;
+    const run = result.run_id;
+    const timestamp = requireText(receipt.recorded_at, 'Run transition time');
+    const sealed = result.status === 'sealed' &&
+      ((receipt.target_type === 'orchestration' && result.operation === 'run-complete-and-seal') ||
+       (receipt.target_type === 'run' && result.operation === 'run-recovery-seal'));
+    if (sealed && typeof result.summary === 'string') {
+      const id = `run:${run}:summary`;
+      if (!known.has(id)) {
+        completion.messages.push({ id, role: 'tool', timestamp, content: `Run ${run} completed. Summary: ${requireText(result.summary, 'Run summary')}.` });
+        known.add(id);
+      }
+    }
+    if (sealed && result.knowledge_reads !== undefined) {
+      const knowledgeReads = validateKnowledgeReads(result.knowledge_reads);
+      const id = `run:${run}:knowledge-reads`;
+      if (!known.has(id)) {
+        completion.messages.push({ id, role: 'tool', timestamp, content: knowledgeReadsMessage(knowledgeReads) });
+        known.add(id);
+      }
+    }
+  }
+}
+
 export function parseReceipt(value: unknown): Completion {
   const receipt = object(value);
   if (receipt.schema_version === 'skill-completion/1.0') {
@@ -339,6 +378,7 @@ export async function harvestCompletion(wiki: Wiki, project: string, value: unkn
       if (!sessionDirectory) throw new InputError('Use closeout session to resolve anchored transcript evidence from the Maestro project');
       completion.messages.push(...readTranscriptSnapshots(sessionDirectory, readCompletionTranscriptRefs(refs)));
     }
+    if (sessionDirectory) appendRunEvidence(completion, sessionDirectory);
   }
   return harvestResolvedCompletion(wiki, project, completion, model);
 }

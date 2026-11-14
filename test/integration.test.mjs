@@ -601,6 +601,50 @@ test('Session review connects failure and retry receipts to the original Skill v
   }), /Invalid Session request receipt/);
 });
 
+test('Session closeout harvests sealed Run knowledge_reads into the LLM evidence', async t => {
+  const root = await temp(t);
+  const session = 'closeout-knowledge';
+  const receipts = join(root, '.workflow', 'sessions', session, 'receipts');
+  await mkdir(join(receipts, 'transitions'), { recursive: true });
+  await mkdir(join(receipts, 'requests'));
+  const knowledgeReads = {
+    schema_version: 'knowledge-reads/1.0', constraints_bound: [],
+    searches: [{ search_id: 'search-1', source: 'memory', query: 'release freeze', filters: {}, returned_ids: ['memory-freeze'], total_hits: 1 }],
+    reads: [{ kind: 'memory', id: 'memory-freeze', from_search_id: 'search-1', content_sha256: `sha256:${'1'.repeat(64)}`, version: 1 }],
+  };
+  const filename = '000000000001-tr_sealed.json';
+  const requestId = 'req-sealed';
+  await writeFile(join(receipts, 'transitions', filename), JSON.stringify({
+    schema_version: 'transition-receipt/2.0', session_id: session, activity_revision: 1,
+    request_id: requestId, transition_id: 'tr_sealed', participant_id: 'actor',
+    target_type: 'orchestration', target_id: session, revision_before: 0, revision_after: 1,
+    recorded_at: '2026-11-13T04:00:00Z', result: {
+      operation: 'run-complete-and-seal', status: 'sealed', run_id: 'run-knowledge',
+      summary: 'Release freeze check completed.', knowledge_reads: knowledgeReads,
+    }, evidence_refs: [],
+  }));
+  await writeFile(join(receipts, 'requests', `${requestId}.json`), JSON.stringify({
+    schema_version: 'request-receipt/2.0', request_id: requestId, participant_id: 'actor',
+    payload_hash: `sha256:${'2'.repeat(64)}`, transition_receipt_ref: `receipts/transitions/${filename}`,
+  }));
+  const completion = {
+    schema_version: 'transition-receipt/2.0', transition_id: 'tr_complete', session_id: session,
+    target_type: 'orchestration', target_id: session, recorded_at: '2026-11-13T04:01:00Z',
+    result: { status: 'completed', evolve_evidence: [] },
+  };
+  const { harvestCompletion } = await import('../dist/closeout.js');
+  const wiki = new Wiki(root);
+  const harvested = await harvestCompletion(wiki, 'closeout-project', completion, () => ({
+    async chat({ prompt }) {
+      assert.match(prompt, /run-knowledge/);
+      assert.match(prompt, /memory-freeze from search-1/);
+      return JSON.stringify([{ memories: [{ content: 'Release freeze was checked before closeout.', type: 'verified_fix', source_message_ids: ['run:run-knowledge:knowledge-reads'] }] }]);
+    },
+  }), join(root, '.workflow', 'sessions', session));
+  assert.equal(harvested.candidates.length, 1);
+  assert.equal(harvested.candidates[0].sources[0], `receipt:closeout-project:${completion.transition_id}#run:run-knowledge:knowledge-reads`);
+});
+
 test('Wiki ingest preserves source attribution and locked pages', async t => {
   const root = await temp(t);
   const source = join(root, 'notes.md');
@@ -851,6 +895,64 @@ test('Skill-design route generates a task, reviews a meta design, replays it, an
   assert.match(await readFile(entry, 'utf8'), /Verify release preflight/);
   applySkillDesign(root, designed.id, true);
   assert.equal(await readFile(entry, 'utf8'), original);
+});
+
+test('Skill-design supports a new multi-file package with linked Markdown references', async t => {
+  const root = await temp(t);
+  const support = await temp(t);
+  const git = (...args) => run('git', args, { cwd: root });
+  await git('init', '-q');
+  await git('config', 'user.name', 'Skill package test');
+  await git('config', 'user.email', 'skill-package@example.invalid');
+  await git('config', 'core.autocrlf', 'false');
+  await writeFile(join(root, 'README.md'), 'baseline\n');
+  await git('add', '.');
+  await git('commit', '-qm', 'package baseline');
+  const decision = decideSkillRoute({
+    content: 'Create a new multi-file release Skill package.',
+    sources: ['receipt:package#summary'], skillId: 'release-package',
+    requiresNewContract: true, stepCount: 4,
+  });
+  const task = createSkillDesignTask(root, {
+    closeoutId: 'c'.repeat(64), candidateId: 'd'.repeat(64), content: decision.meta_skill.instruction,
+    sources: ['receipt:package#summary'], decision, skillId: 'release-package', skillVersion: '0.1.0',
+  });
+  const packageEntry = new URL('../dist/index.js', import.meta.url).href;
+  const designRunner = join(support, 'package-design-runner.mjs');
+  await writeFile(designRunner, [
+    "import { readFileSync } from 'node:fs';",
+    "const {task} = JSON.parse(readFileSync(0, 'utf8'));",
+    "const packagePath = `skills/${task.target.skill_id}`;",
+    "const entry = `${packagePath}/SKILL.md`;",
+    "const changes = [{ path: entry, content: '---\\nname: release-package\\n---\\n\\n# Release\\n\\n[Checks](references/checks.md)\\n' }, { path: `${packagePath}/references/checks.md`, content: '# Checks\\n' }];",
+    "console.log(JSON.stringify({ schema_version: 'skill-design/1.0', task_id: task.id, draft: { mode: 'package', skill_id: task.target.skill_id, package_path: packagePath, entry, sources: task.source.evidence, changes } }));",
+  ].join('\n'));
+  const designed = await runSkillDesign(root, task.id, designRunner);
+  const reviewed = reviewSkillDesign(root, designed.id);
+  assert.equal(reviewed.status, 'reviewed');
+  const replayRunner = join(support, 'package-replay-runner.mjs');
+  await writeFile(replayRunner, [
+    "import { readFileSync } from 'node:fs';",
+    "import { existsSync } from 'node:fs';",
+    "import { createHash } from 'node:crypto';",
+    "const {entry, input, mode} = JSON.parse(readFileSync(0, 'utf8'));",
+    "const sha256 = value => createHash('sha256').update(value).digest('hex');",
+    "if (mode !== 'package') throw new Error('expected package mode');",
+    "if (!existsSync(entry)) console.log(JSON.stringify({ passed: input === 'existing', loaded: [] }));",
+    "else { const body = readFileSync(entry, 'utf8'); const reference = readFileSync('skills/release-package/references/checks.md', 'utf8'); console.log(JSON.stringify({ passed: body.includes('[Checks]'), loaded: [{ path: entry, sha256: sha256(body) }, { path: 'skills/release-package/references/checks.md', sha256: sha256(reference) }] })); }",
+  ].join('\n'));
+  const scenarios = [
+    { id: 'missing-package', input: 'missing', baseline: false },
+    { id: 'existing-package', input: 'existing', baseline: true },
+  ];
+  const replayed = replaySkillDesign(root, designed.id, { runner: replayRunner, scenarios });
+  assert.equal(replayed.status, 'replayed');
+  const applied = applySkillDesign(root, designed.id);
+  assert.equal(applied.design_id, designed.id);
+  assert.match(await readFile(join(root, 'skills', 'release-package', 'SKILL.md'), 'utf8'), /\[Checks\]/);
+  assert.equal(await readFile(join(root, 'skills', 'release-package', 'references', 'checks.md'), 'utf8'), '# Checks\n');
+  applySkillDesign(root, designed.id, true);
+  await assert.rejects(readFile(join(root, 'skills', 'release-package', 'SKILL.md'), 'utf8'));
 });
 
 test('CLI ingestion and memory extraction use an OpenAI-compatible endpoint', async t => {

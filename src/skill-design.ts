@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { InputError, requireText } from './common.js';
 import type { SkillRouteDecision } from './skill-route.js';
 import { draftSkillAddition } from './skill-addition.js';
-import { changeSkillVersion, replaySkillAddition } from './skill-replay.js';
+import { changeSkillVersion, replaySkillAddition, replaySkillPackage } from './skill-replay.js';
 
 export const SKILL_DESIGN_TASK_VERSION = 'skill-design-task/1.0';
 export const SKILL_DESIGN_RECEIPT_VERSION = 'skill-design-receipt/1.0';
@@ -148,6 +148,7 @@ export function createSkillDesignTask(root: string, input: {
         'Preserve the evidence and target Skill identity.',
         'Keep the design in a candidate artifact until review passes.',
         'Return a replayable draft with at least one failing and one passing scenario.',
+        'For a new or contract-changing Skill, return mode package with every new Markdown file in changes.',
         'Use Markdown links for conditional procedure documents.',
       ],
     },
@@ -193,6 +194,34 @@ export function reviewSkillDesign(root: string, designId: string) {
   const receipt = readReceipt(root, designId);
   const task = readTask(root, receipt.task_id);
   const draft = receipt.design.draft;
+  if (draft.mode === 'package') {
+    const skillId = requireText(draft.skill_id, 'Skill package ID');
+    const packagePath = `skills/${skillId}`;
+    const entry = `${packagePath}/SKILL.md`;
+    if (task.target.skill_id !== skillId || task.target.entry !== entry || draft.package_path !== packagePath || draft.entry !== entry) {
+      throw new InputError('Skill package target does not match its task');
+    }
+    if (!Array.isArray(draft.changes) || !draft.changes.length) throw new InputError('Skill package design has no files');
+    const paths = draft.changes.map((value, index) => {
+      const change = object(value, `Skill package file ${index}`);
+      const path = requireText(change.path, `Skill package file ${index} path`).replaceAll('\\', '/');
+      if (!path.startsWith(`${packagePath}/`) || path.split('/').some(part => !part || part === '.' || part === '..') ||
+          typeof change.content !== 'string') {
+        throw new InputError(`Invalid Skill package file: ${path}`);
+      }
+      return path;
+    });
+    if (new Set(paths).size !== paths.length || !paths.includes(entry)) {
+      throw new InputError('Skill package design must contain one unique SKILL.md entry');
+    }
+    if (!Array.isArray(draft.sources) || !draft.sources.length || draft.sources.some(source => typeof source !== 'string' || !source.trim())) {
+      throw new InputError('Skill package design requires evidence sources');
+    }
+    receipt.status = 'reviewed';
+    receipt.review = { status: 'passed', checks: ['package target matches task', 'package files are scoped and unique', 'entry and Markdown links are replayable'] };
+    saveReceipt(root, receipt);
+    return receipt;
+  }
   const baseline = object(draft.baseline, 'Skill design baseline');
   const entry = resolve(requireText(baseline.path, 'Skill design baseline path'));
   if (!task.target.entry || entry.replaceAll('\\', '/') !== resolve(root, task.target.entry).replaceAll('\\', '/')) {
@@ -224,7 +253,9 @@ export function replaySkillDesign(root: string, designId: string, options: { run
   if (receipt.status !== 'reviewed' && receipt.status !== 'replayed') {
     throw new InputError('Review the Skill design before replay');
   }
-  const replay = replaySkillAddition(root, receipt.design.draft, options) as unknown as Record<string, unknown>;
+  const replay = (receipt.design.draft.mode === 'package'
+    ? replaySkillPackage(root, receipt.design.draft, options)
+    : replaySkillAddition(root, receipt.design.draft, options)) as unknown as Record<string, unknown>;
   receipt.status = 'replayed';
   receipt.replay_receipt_id = requireText(replay.id, 'replay receipt ID');
   saveReceipt(root, receipt);

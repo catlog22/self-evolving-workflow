@@ -60,6 +60,7 @@ const stdout = execFileSync(codex, ['-a', 'never', 'exec', '--ephemeral', '--ign
   '-c', 'mcp_servers.evolve_replay.default_tools_approval_mode="writes"', '--sandbox', 'read-only', '-'], {
   input: prompt, cwd: tmpdir(), env, encoding: 'utf8', windowsHide: true,
   stdio: ['pipe', 'pipe', 'pipe'], timeout: 110_000, maxBuffer: 8 * 1024 * 1024,
+  shell: process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(codex),
 });
 const events = stdout.trim().split(/\r?\n/).map(line => JSON.parse(line));
 const answer = events.findLast(event => event.type === 'item.completed' && event.item?.type === 'agent_message')?.item.text;

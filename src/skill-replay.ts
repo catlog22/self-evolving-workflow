@@ -15,9 +15,11 @@ interface Scenario {
 }
 
 interface ReplayReceipt {
+  mode?: 'addition' | 'package';
   base: string;
   candidate: string;
   entry: string;
+  package_path?: string;
   files: string[];
   sources: string[];
   runnerSha256: string;
@@ -85,6 +87,57 @@ function loadDraft(root: string, data: unknown) {
   return { draft: regenerated, entryPath };
 }
 
+function packagePathForSkill(skillId: string): string {
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(skillId)) throw new InputError('Invalid Skill ID for package design');
+  return `skills/${skillId}`;
+}
+
+function markdownLinks(content: string): string[] {
+  const links: string[] = [];
+  for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+    const target = match[1].trim().replace(/^<|>$/g, '').split(/\s+/, 1)[0];
+    if (!target || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+    links.push(target.split('#', 1)[0]);
+  }
+  return links.filter(Boolean);
+}
+
+function loadPackageDraft(root: string, data: unknown) {
+  const draft = record(data);
+  if (draft.mode !== 'package') throw new InputError('Expected a multi-file Skill package draft');
+  const skillId = requireText(draft.skill_id, 'Skill package ID');
+  const packagePath = packagePathForSkill(skillId);
+  const entryPath = `${packagePath}/SKILL.md`;
+  if (draft.package_path !== packagePath || draft.entry !== entryPath) {
+    throw new InputError('Skill package target does not match its Skill ID');
+  }
+  if (!Array.isArray(draft.changes) || !draft.changes.length) {
+    throw new InputError('Skill package draft requires at least one file');
+  }
+  const changes = draft.changes.map((value, index) => {
+    const change = record(value);
+    const path = repoPath(root, requireText(change.path, `Skill package file ${index}`));
+    if (!path.startsWith(`${packagePath}/`)) throw new InputError(`Skill package file is outside the package: ${path}`);
+    const content = change.content;
+    if (typeof content !== 'string') throw new InputError(`Skill package file content is invalid: ${path}`);
+    return { path, content };
+  });
+  if (new Set(changes.map(change => change.path)).size !== changes.length) {
+    throw new InputError('Skill package draft contains duplicate files');
+  }
+  const entry = changes.find(change => change.path === entryPath);
+  if (!entry) throw new InputError(`Skill package draft must include ${entryPath}`);
+  const changed = new Map(changes.map(change => [change.path, change.content]));
+  for (const link of markdownLinks(entry.content)) {
+    const path = repoPath(root, resolve(root, dirname(entryPath), link));
+    if (!path.startsWith(`${packagePath}/`)) throw new InputError(`Skill Markdown link leaves the package: ${link}`);
+    if (!changed.has(path) && !existsSync(resolve(root, path))) {
+      throw new InputError(`Skill Markdown link has no package document: ${link}`);
+    }
+  }
+  return { draft, skillId, packagePath, entryPath, changes };
+}
+
 function loadScenarios(data: unknown): Scenario[] {
   if (!Array.isArray(data) || data.length < 2) throw new InputError('Provide a failure replay and a passing regression scenario');
   const ids = new Set<string>();
@@ -149,6 +202,42 @@ function runScenario(
     return { path, sha256: expected };
   });
   if (!loaded.some(item => item.path === entry)) throw new InputError(`Replay did not load the selected Skill: ${entry}`);
+  const knowledgeReads = proof.knowledge_reads === undefined ? undefined : validateKnowledgeReads(proof.knowledge_reads);
+  return { passed: proof.passed, loaded, ...(knowledgeReads ? { knowledgeReads } : {}) };
+}
+
+function runPackageScenario(
+  worktree: string,
+  commit: string,
+  runner: string,
+  entry: string,
+  packagePath: string,
+  scenario: Scenario,
+  requireEntry: boolean,
+): Observation {
+  const output = execFileSync(process.execPath, [runner], {
+    cwd: worktree,
+    windowsHide: true,
+    input: JSON.stringify({ id: scenario.id, input: scenario.input, entry, package_path: packagePath, commit, mode: 'package' }),
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 120_000,
+  });
+  const proof = record(JSON.parse(output));
+  if (typeof proof.passed !== 'boolean' || !Array.isArray(proof.loaded)) {
+    throw new InputError(`Replay runner omitted its result or loaded files: ${scenario.id}`);
+  }
+  const loaded = proof.loaded.map(value => {
+    const item = record(value);
+    const path = repoPath(worktree, requireText(item.path, 'loaded file'));
+    if (!path.startsWith(`${packagePath}/`)) throw new InputError(`Replay loaded a file outside the selected Skill: ${path}`);
+    const expected = sha256(git(worktree, ['show', `${commit}:${path}`]));
+    if (expected !== item.sha256) throw new InputError(`Replay loaded different Skill bytes: ${path}`);
+    return { path, sha256: expected };
+  });
+  if (requireEntry && !loaded.some(item => item.path === entry)) {
+    throw new InputError(`Replay did not load the selected Skill: ${entry}`);
+  }
   const knowledgeReads = proof.knowledge_reads === undefined ? undefined : validateKnowledgeReads(proof.knowledge_reads);
   return { passed: proof.passed, loaded, ...(knowledgeReads ? { knowledgeReads } : {}) };
 }
@@ -266,6 +355,78 @@ export function replaySkillAddition(root: string, data: unknown, options: { runn
   }
 }
 
+export function replaySkillPackage(root: string, data: unknown, options: { runner: string; scenarios: unknown }) {
+  root = repoRoot(root);
+  const { draft, packagePath, entryPath, changes } = loadPackageDraft(root, data);
+  const runner = realpathSync(options.runner);
+  const runnerSha256 = sha256(readFileSync(runner));
+  const scenarios = loadScenarios(options.scenarios);
+  const base = gitText(root, ['rev-parse', 'HEAD']);
+  if (gitText(root, ['status', '--porcelain', '--untracked-files=all', '--', packagePath])) {
+    throw new InputError('Commit the Skill package before replay');
+  }
+  let entryExists = true;
+  try { git(root, ['cat-file', '-e', `${base}:${entryPath}`]); } catch { entryExists = false; }
+  const scratch = mkdtempSync(join(tmpdir(), 'evolve-replay-'));
+  const index = join(scratch, 'index');
+  const gitIndex = { env: { ...process.env, GIT_INDEX_FILE: index } };
+  const oldTree = join(scratch, 'baseline');
+  const newTree = join(scratch, 'candidate');
+  let oldAdded = false;
+  let newAdded = false;
+  let failure: unknown;
+  try {
+    git(root, ['read-tree', base], gitIndex);
+    for (const change of changes) {
+      const blob = gitText(root, ['hash-object', '-w', '--stdin'], { input: change.content.replace(/\r\n/g, '\n') });
+      git(root, ['update-index', '--add', '--cacheinfo', `100644,${blob},${change.path}`], gitIndex);
+    }
+    const tree = gitText(root, ['write-tree'], gitIndex);
+    const candidate = gitText(root, ['commit-tree', tree, '-p', base, '-m', 'chore: 生成 Skill 包回放候选']);
+    if (!gitText(root, ['diff', '--name-only', base, candidate])) throw new InputError('Skill package draft has no changes');
+    git(root, ['worktree', 'add', '--detach', oldTree, base]);
+    oldAdded = true;
+    git(root, ['worktree', 'add', '--detach', newTree, candidate]);
+    newAdded = true;
+    const observations = scenarios.map(scenario => {
+      const baseline = runPackageScenario(oldTree, base, runner, entryPath, packagePath, scenario, entryExists);
+      const proposed = runPackageScenario(newTree, candidate, runner, entryPath, packagePath, scenario, true);
+      if (baseline.passed !== scenario.baseline || !proposed.passed) throw new InputError(`Skill package replay failed: ${scenario.id}`);
+      assertKnowledgeReads(proposed, scenario.knowledgeReads, scenario.id);
+      return { id: scenario.id, inputSha256: sha256(JSON.stringify(scenario.input)), baseline, candidate: proposed };
+    });
+    if (sha256(readFileSync(runner)) !== runnerSha256) throw new InputError('Replay runner changed during validation');
+    const receipt: ReplayReceipt = {
+      mode: 'package', base, candidate, entry: entryPath, package_path: packagePath,
+      files: changes.map(change => change.path), sources: Array.isArray(draft.sources) ? draft.sources.map(source => requireText(source, 'evidence reference')) : [],
+      runnerSha256, scenarios: observations,
+    };
+    const content = JSON.stringify(receipt);
+    const id = sha256(content);
+    const path = receiptPath(root, id);
+    mkdirSync(dirname(path), { recursive: true });
+    git(root, ['update-ref', 'refs/evolve/replays/' + id, candidate]);
+    if (!existsSync(path)) writeFileSync(path, content, { flag: 'wx' });
+    else if (readFileSync(path, 'utf8') !== content) throw new InputError('Skill replay receipt differs');
+    return { id, ...receipt };
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    const cleanup = [
+      ...(newAdded ? [() => git(root, ['worktree', 'remove', '--force', newTree])] : []),
+      ...(oldAdded ? [() => git(root, ['worktree', 'remove', '--force', oldTree])] : []),
+      () => rmSync(index, { force: true }),
+      () => rmdirSync(scratch),
+    ];
+    const errors: string[] = [];
+    for (const remove of cleanup) {
+      try { remove(); } catch (error) { errors.push(String(error)); }
+    }
+    if (errors.length) throw new Error([...(failure ? [String(failure)] : []), ...errors].join('\n'), { cause: failure });
+  }
+}
+
 export function changeSkillVersion(root: string, id: string, rollback = false) {
   root = repoRoot(root);
   const content = readFileSync(receiptPath(root, id), 'utf8');
@@ -286,7 +447,7 @@ export function changeSkillVersion(root: string, id: string, rollback = false) {
     return { id, commit: head, replayed: true };
   }
   if (head !== (rollback ? receipt.candidate : receipt.base)) throw new InputError('Project version changed since Skill replay');
-  const packagePath = dirname(receipt.entry).replaceAll('\\', '/');
+  const packagePath = receipt.package_path ?? dirname(receipt.entry).replaceAll('\\', '/');
   if (gitText(root, ['status', '--porcelain', '--untracked-files=all', '--', packagePath])) {
     throw new InputError('Skill package has local changes');
   }
