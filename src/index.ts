@@ -1,4 +1,14 @@
 export { CodeGraph } from './code.js';
+export {
+  AGENT_MEMORY_PROMPT_VERSION,
+  buildCloseoutHarvestPrompt,
+  buildSessionSignalPrompt,
+  buildWikiMergePrompt,
+  buildWikiRelationPrompt,
+  createAgentMemoryPrompt,
+  type AgentMemoryPrompt,
+  type AgentMemoryPromptKind,
+} from './agent-memory-prompts.js';
 export { Wiki, type WikiHit, type WikiSearchOptions } from './wiki.js';
 export type { WikiContext, WikiEntryMetadata } from './wiki-entry.js';
 export { reviewSession, reviewSkillExecution, type ReviewedRun, type SkillSignal } from './retrospective.js';

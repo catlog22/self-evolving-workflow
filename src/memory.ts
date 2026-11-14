@@ -2,8 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
+import type { AgentMemoryPrompt } from './agent-memory-prompts.js';
 import { InputError, openDb, requireText, searchLimit, transaction } from './common.js';
-import { formatExtractionPrompt, getExtractMemoriesSystemPrompt } from './upstream/l1-extraction.js';
+import { formatExtractionPrompt, getExtractMemoriesAgentPrompt } from './upstream/l1-extraction.js';
 import type { LlmClient } from './upstream/llm.js';
 import { rrfMerge } from './upstream/search-utils.js';
 import { bm25RankToScore, buildFtsQuery, tokenizeForFts } from './upstream/tokenize.js';
@@ -232,6 +233,8 @@ export class MemoryStore {
     llm: LlmClient;
     session: string;
     mode?: 'chat' | 'code';
+    agentMemoryPrompt?: AgentMemoryPrompt;
+    systemPrompt?: string;
   }): Promise<MemoryRecord[]> {
     return this.putMany(await extractMemoryInputs(messages, options));
   }
@@ -241,15 +244,17 @@ export async function extractMemoryInputs(messages: ConversationMessage[], optio
   llm: LlmClient;
   session: string;
   mode?: 'chat' | 'code';
+  agentMemoryPrompt?: AgentMemoryPrompt;
   systemPrompt?: string;
 }): Promise<MemoryInput[]> {
   const session = requireText(options.session, 'session');
   if (!messages.length) return [];
   const ids = validateConversationMessages(messages);
+  const agentMemoryPrompt = options.agentMemoryPrompt ?? getExtractMemoriesAgentPrompt(options.mode);
   const raw = await options.llm.chat({
-    system: options.systemPrompt ?? getExtractMemoriesSystemPrompt(options.mode),
+    system: options.systemPrompt ?? agentMemoryPrompt.system,
     prompt: formatExtractionPrompt({ newMessages: messages }),
-    label: 'memory-extract',
+    label: agentMemoryPrompt.label,
   });
   return parseExtraction(raw, session, ids);
 }

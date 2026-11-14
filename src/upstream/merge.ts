@@ -16,6 +16,7 @@
  * 保证 raw/rm 级联清理可用（§3.7-3）。
  */
 
+import { buildWikiMergePrompt } from "../agent-memory-prompts.js";
 import type { LlmClient } from "./llm.js";
 import { parseFrontmatter, buildPage } from "./frontmatter.js";
 
@@ -109,23 +110,23 @@ export async function mergePage(
   return { action: "write", content: merged };
 }
 
-const MERGE_SYSTEM = `You are a knowledge base maintainer. Merge two markdown pages on the same topic into one.
+const MERGE_SYSTEM = buildWikiMergePrompt('wiki-merge', `You are a knowledge base maintainer. Merge two markdown pages on the same topic into one.
 Merge principles:
 - Preserve facts from the old page that still hold true — do not lose information.
 - Incorporate new information from the new page.
 - If old and new conflict, keep both and explicitly note the disagreement.
 - Maintain YAML frontmatter format (type is required). Do NOT output a \`locked\` field.
 - Preserve and merge [[wikilink]] cross-references in the body.
-- Output the complete merged page directly (including frontmatter) — no extra commentary, no FILE blocks.`;
+- Output the complete merged page directly (including frontmatter) — no extra commentary, no FILE blocks.`).system;
 
-const APPEND_SYSTEM = `You are a knowledge base maintainer. Given an [existing page body] and [new material],
+const APPEND_SYSTEM = buildWikiMergePrompt('wiki-append', `You are a knowledge base maintainer. Given an [existing page body] and [new material],
 output only the incremental information that the existing page does NOT yet contain,
 written as a concise markdown fragment (may include [[wikilink]]).
 Requirements:
 - Do not repeat content already in the existing page.
 - Do not paraphrase or rewrite the entire page — only produce the "new" part.
 - Do not output frontmatter, FILE blocks, or any explanation.
-- If the new material adds nothing beyond what the existing page already covers, return an empty string.`;
+- If the new material adds nothing beyond what the existing page already covers, return an empty string.`).system;
 
 /** 调 LLM 做整页重写合并，并强制 sources 取旧 ∪ 新 并集。 */
 async function rewriteMerge(

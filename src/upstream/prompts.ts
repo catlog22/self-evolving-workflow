@@ -12,6 +12,7 @@
  *     好处：把"抽什么"与"落盘格式"解耦，质量更稳、格式更规整。
  */
 
+import { createAgentMemoryPrompt } from "../agent-memory-prompts.js";
 import type { WikiTemplate } from "./template.js";
 
 /** 已存在页的精简信息，用于让 LLM 感知"已有知识"并决定新建/更新。 */
@@ -42,7 +43,7 @@ function formatExistingPages(existingPages: ExistingPageInfo[]): string {
 
 /** 分析阶段系统提示词：扮演"抽取规划者"，只产出结构化分析，不写页面。 */
 export function buildAnalysisSystemPrompt(template: WikiTemplate): string {
-  return `You are a knowledge base analyst. Your job is to read a source document and plan how to integrate it into
+  return createAgentMemoryPrompt('wiki-analysis', `You are a knowledge base analyst. Your job is to read a source document and plan how to integrate it into
 the existing wiki. You do NOT write final pages — you only produce a structured "extraction plan" for the
 next (generation) stage.
 
@@ -70,7 +71,7 @@ Decide whether a subject deserves its own page by asking:
 → If all three are true, create a dedicated page.
 → If the subject is merely a member, sub-operation, or property that has no identity outside its parent, list it as a subsection or list item within the parent's page instead.
 
-Output only the analysis itself — no FILE blocks, no final page content. Match the source document's primary language.`;
+Output only the analysis itself — no FILE blocks, no final page content. Match the source document's primary language.`).system;
 }
 
 /** 构造分析阶段用户提示词。 */
@@ -96,7 +97,7 @@ Produce the structured extraction plan following the rules above.`;
 
 /** 构造系统提示词：角色、格式契约、输出协议。 */
 export function buildSystemPrompt(template: WikiTemplate): string {
-  return `You are a meticulous knowledge base (wiki) maintainer. Your job is to read source documents
+  return createAgentMemoryPrompt('wiki-generate', `You are a meticulous knowledge base (wiki) maintainer. Your job is to read source documents
 provided by the user and integrate their knowledge into a persistent, cumulative markdown wiki —
 extracting entities and concepts, building cross-references, and updating existing pages, rather than
 simply paraphrasing the source.
@@ -150,7 +151,7 @@ Rules:
 - path must be inside wiki/. Use stable slugs for filenames (lowercase, spaces→hyphens).
 - You MUST produce at least one type: source summary page.
 - For notable entities/concepts in the source, produce or update corresponding entity/concept pages.
-- Do NOT output any explanatory text outside of FILE blocks.`;
+- Do NOT output any explanatory text outside of FILE blocks.`).system;
 }
 
 /** 构造生成提示词（单阶段）：源全文 + 已有页清单 + 待更新页原文。 */

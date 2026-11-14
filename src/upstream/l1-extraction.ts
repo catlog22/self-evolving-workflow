@@ -8,6 +8,7 @@
  */
 
 import type { ConversationMessage } from "../memory.js";
+import { createAgentMemoryPrompt, type AgentMemoryPrompt } from "../agent-memory-prompts.js";
 
 // ============================
 // System Prompt
@@ -373,7 +374,14 @@ metadata 字段说明：
 请严格按上述 JSON 数组格式输出，不要输出任何额外的 Markdown 代码块修饰符（如 \`\`\`json）或解释文本。`;
 
 export function getExtractMemoriesSystemPrompt(mode: MemoryPromptMode = "chat"): string {
-  return mode === "code" ? EXTRACT_WORK_MEMORIES_SYSTEM_PROMPT : EXTRACT_MEMORIES_SYSTEM_PROMPT;
+  return getExtractMemoriesAgentPrompt(mode).system;
+}
+
+export function getExtractMemoriesAgentPrompt(mode: MemoryPromptMode = "chat"): AgentMemoryPrompt {
+  return createAgentMemoryPrompt(
+    'memory-extract',
+    mode === "code" ? EXTRACT_WORK_MEMORIES_SYSTEM_PROMPT : EXTRACT_MEMORIES_SYSTEM_PROMPT,
+  );
 }
 
 // ============================
