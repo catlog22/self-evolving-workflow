@@ -35,19 +35,19 @@ const help = `Usage: agent-memory <command> [options]
   wiki build                               Index Markdown pages under wiki/
   wiki ingest <file.md|file.txt>            Generate and merge wiki pages
   wiki search <query>                      Search wiki pages (--hop 0)
-  wiki get <id>                            Read a Wiki entry, including history
+  wiki get <id>                            Read a Wiki entry, including history (--resolved for scoped reference)
   wiki references <query>                  Search active applicable references (--repository, --skill, --task, --path)
-  wiki reference <id>                      Read an active applicable reference (same scope options)
+  wiki reference <id>                      Compatibility alias for wiki get <id> --resolved
   wiki constraints                         Resolve active constraints (--skill, --task, --path, --category, --repository, --keyword)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --scope project|global|team|personal, --uid, --apply)
   wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
   wiki changes [change-id]                 Read change previews and application receipts (--entry)
   wiki apply <change-id>                   Apply an approved Wiki change
-  closeout harvest <receipt.json>          Extract Wiki candidates from a completion receipt (--project)
+  closeout harvest <receipt.json|id>       Extract Wiki candidates from a receipt or recorded Skill completion (--project)
   closeout session <id>                    Harvest a committed Session receipt (--project, --receipt)
   closeout skill <execution-id>            Record and harvest a standalone Skill completion
                                           (--skill, --skill-version, --status, --transcript, --knowledge-receipt, --project, --record-only)
-  closeout resume <receipt-id>             Harvest an already recorded standalone Skill completion
+  closeout resume <receipt-id>             Compatibility alias for closeout harvest <receipt-id>
   closeout scan [maestro-root]              Reconcile committed Session and standalone Skill receipts (--project)
   closeout show <receipt-id>                Show harvested candidates (--project)
   closeout route <closeout-id> <candidate-id> Decide Wiki, Skill addition, or meta Skill design
@@ -77,9 +77,13 @@ Options:
   --db <path>          Memory DB (default <root>/.agent-memory/memory.db)
   --namespace <name>   Memory namespace (default default)
   --memory-session <id> Memory session filter (context uses this instead of its context session)
+  --context-file <path> Load shared Skill/Task/Path/Wiki context from JSON
   --trace               Include knowledge_reads search/read evidence in the result
-  --trace-file <path>   Load and persist a knowledge_reads receipt across CLI calls
+  --reads <path>        Load and persist a knowledge_reads receipt across CLI calls
+  --trace-file <path>   Compatibility alias for --reads
   --from-search <id>    Associate an exact read with an earlier search ID
+  --resolved            Read Wiki references using the active scope context
+  --json                Compatibility flag. Agent Memory output is always JSON
   --limit <n>          Maximum results per source (default 10)
   --help               Show this message
 
@@ -101,6 +105,7 @@ const options = {
   scene: { type: 'string' },
   session: { type: 'string' },
   'memory-session': { type: 'string' },
+  'context-file': { type: 'string' },
   id: { type: 'string' },
   priority: { type: 'string' },
   port: { type: 'string' },
@@ -114,7 +119,9 @@ const options = {
   'include-memory': { type: 'boolean' },
   trace: { type: 'boolean' },
   'trace-file': { type: 'string' },
+  reads: { type: 'string' },
   'from-search': { type: 'string' },
+  resolved: { type: 'boolean' },
   path: { type: 'string', multiple: true },
   history: { type: 'boolean' },
   project: { type: 'string' },
@@ -142,6 +149,7 @@ const options = {
   runner: { type: 'string' },
   scenarios: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
+  json: { type: 'boolean' },
 } as const;
 
 function modelClient(): LlmClient {
@@ -165,6 +173,57 @@ function modelClient(): LlmClient {
   };
 }
 
+interface CliWikiContext {
+  skill?: string;
+  task?: string;
+  paths?: string[];
+  categories?: string[];
+  repository?: string;
+  keyword?: string;
+  includePathScoped?: boolean;
+}
+
+function readContextFile(path: string): CliWikiContext {
+  const value: unknown = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InputError('Context file must contain a JSON object');
+  const input = value as Record<string, unknown>;
+  const list = (field: 'paths' | 'categories'): string[] | undefined => {
+    if (input[field] === undefined) return undefined;
+    if (!Array.isArray(input[field]) || input[field].some(item => typeof item !== 'string' || !item.trim())) {
+      throw new InputError(`Context file ${field} must be a list of non-empty strings`);
+    }
+    return [...new Set((input[field] as string[]).map(item => item.trim()))];
+  };
+  const text = (field: 'skill' | 'task' | 'repository' | 'keyword'): string | undefined => {
+    if (input[field] === undefined) return undefined;
+    if (typeof input[field] !== 'string' || !input[field].trim()) throw new InputError(`Context file ${field} must be a non-empty string`);
+    return input[field].trim();
+  };
+  if (input.includePathScoped !== undefined && typeof input.includePathScoped !== 'boolean') {
+    throw new InputError('Context file includePathScoped must be boolean');
+  }
+  return {
+    skill: text('skill'), task: text('task'), paths: list('paths'), categories: list('categories'),
+    repository: text('repository'), keyword: text('keyword'),
+    ...(input.includePathScoped === undefined ? {} : { includePathScoped: input.includePathScoped as boolean }),
+  };
+}
+
+function cliWikiContext(values: Record<string, unknown>): CliWikiContext {
+  const file = typeof values['context-file'] === 'string' ? readContextFile(values['context-file']) : {};
+  const paths = Array.isArray(values.path) ? values.path as string[] : file.paths;
+  const categories = Array.isArray(values.category) ? values.category as string[] : file.categories;
+  return {
+    skill: typeof values.skill === 'string' ? values.skill : file.skill,
+    task: typeof values.task === 'string' ? values.task : file.task,
+    paths, categories,
+    repository: typeof values.repository === 'string' ? values.repository : file.repository,
+    keyword: typeof values.keyword === 'string' ? values.keyword : file.keyword,
+    includePathScoped: typeof values['include-path-scoped'] === 'boolean'
+      ? values['include-path-scoped'] : file.includePathScoped,
+  };
+}
+
 async function main() {
   const { values, positionals } = parseArgs({ options, allowPositionals: true });
   if (values.help || !positionals.length) {
@@ -173,6 +232,7 @@ async function main() {
   }
   const [command, action, ...args] = positionals;
   const root = resolve(values.root ?? '.');
+  const contextValues = cliWikiContext(values as Record<string, unknown>);
   const wiki = new Wiki(values['wiki-root'] ?? root);
   const db = values.db ?? join(root, '.agent-memory', 'memory.db');
   const openMemory = () => new MemoryStore(db, { namespace: values.namespace });
@@ -180,7 +240,10 @@ async function main() {
   const wikiOptions = { limit, hop: values.hop === undefined ? undefined : Number(values.hop), includeHistory: values.history };
   const memorySession = values['memory-session'] ?? (command === 'memory' || command === 'search' ? values.session : undefined);
   const memoryOptions = { limit, type: values.type, scene: values.scene, session: memorySession };
-  const traceFile = values['trace-file'];
+  if (values.reads !== undefined && values['trace-file'] !== undefined && values.reads !== values['trace-file']) {
+    throw new InputError('Use either --reads or --trace-file, not both');
+  }
+  const traceFile = values.reads ?? values['trace-file'];
   const initialTrace = traceFile && existsSync(traceFile)
     ? validateKnowledgeReads(JSON.parse(readFileSync(traceFile, 'utf8').replace(/^\uFEFF/, '')))
     : undefined;
@@ -244,10 +307,10 @@ async function main() {
   if (command === 'context') {
     const query = requireText([action, ...args].join(' '), 'query');
     const scope = parseScope(values.scope ?? 'all');
-    if (values.category && !values.category.every(isWikiCategory)) {
+    if (contextValues.categories && !contextValues.categories.every(isWikiCategory)) {
       throw new InputError('Unknown Wiki context category');
     }
-    if (values.repository !== undefined && !isRepositoryId(values.repository)) {
+    if (contextValues.repository !== undefined && !isRepositoryId(contextValues.repository)) {
       throw new InputError('Expected a persisted repository UUID');
     }
     const sources = sourcesFor(scope);
@@ -255,13 +318,13 @@ async function main() {
       print(withTrace(await buildContext(sources, query, {
         limit,
         context: {
-          skill: values.skill,
-          task: values.task,
-          paths: values.path,
-          categories: values.category,
-          repository: values.repository,
-          keyword: values.keyword,
-          includePathScoped: values['include-path-scoped'],
+          skill: contextValues.skill,
+          task: contextValues.task,
+          paths: contextValues.paths,
+          categories: contextValues.categories as WikiContext['categories'],
+          repository: contextValues.repository,
+          keyword: contextValues.keyword,
+          includePathScoped: contextValues.includePathScoped,
         },
         wiki: wikiOptions,
         memory: memoryOptions,
@@ -269,9 +332,9 @@ async function main() {
         knowledgeReads,
         contextScope: {
           ...(values.session ? { session_id: values.session } : {}),
-          ...(values.skill ? { skill_id: values.skill } : {}),
-          ...(values.task ? { task_kind: values.task } : {}),
-          ...(values.path?.length ? { paths: values.path } : {}),
+          ...(contextValues.skill ? { skill_id: contextValues.skill } : {}),
+          ...(contextValues.task ? { task_kind: contextValues.task } : {}),
+          ...(contextValues.paths?.length ? { paths: contextValues.paths } : {}),
         },
       })));
     } finally {
@@ -309,20 +372,21 @@ async function main() {
         });
         return print(withTrace(result));
       }
-      case 'get': return print(withTrace(wiki.getEntry(requireText(args[0], 'wiki entry ID'), {
-        knowledgeReads, fromSearchId: values['from-search'],
-      })));
+      case 'get':
+        if (!values.resolved) return print(withTrace(wiki.getEntry(requireText(args[0], 'wiki entry ID'), {
+          knowledgeReads, fromSearchId: values['from-search'],
+        })));
       case 'constraints':
       case 'references':
       case 'reference': {
-        const categories = values.category;
-        const repository = values.repository;
+        const categories = contextValues.categories;
+        const repository = contextValues.repository;
         if (categories && !categories.every(isWikiCategory)) {
           throw new InputError(action === 'constraints' ? 'Unknown Wiki constraint category' : 'Unknown Wiki reference category');
         }
         if (repository !== undefined && !isRepositoryId(repository)) throw new InputError('Expected a persisted repository UUID');
-        const context: WikiContext = { skill: values.skill, task: values.task, paths: values.path, categories, repository,
-          keyword: values.keyword };
+        const context: WikiContext = { skill: contextValues.skill, task: contextValues.task, paths: contextValues.paths,
+          categories: categories as WikiContext['categories'], repository, keyword: contextValues.keyword };
         if (action === 'references') {
           const query = args.join(' ');
           const result = wiki.references(query, context, wikiOptions);
@@ -332,12 +396,12 @@ async function main() {
           });
           return print(withTrace(result));
         }
-        if (action === 'reference') {
+        if (action === 'reference' || (action === 'get' && values.resolved)) {
           return print(withTrace(wiki.getReference(requireText(args[0], 'Wiki entry ID'), context, {
             knowledgeReads, fromSearchId: values['from-search'],
           })));
         }
-        const result = wiki.constraints({ ...context, includePathScoped: values['include-path-scoped'] });
+        const result = wiki.constraints({ ...context, includePathScoped: contextValues.includePathScoped });
         if (knowledgeReads) for (const constraint of result) {
           knowledgeReads.bindConstraint({
             knowledgeId: constraint.id, scope: constraint.entry?.scope ?? [],
@@ -420,15 +484,17 @@ async function main() {
       return print({ ...decision, design_task: task });
     }
     const project = requireText(values.project, 'source project ID');
-    if (action === 'resume') {
-      const id = requireText(args[0], 'Skill completion receipt ID');
-      const saved = readSkillCompletions(wiki, project, id)[0];
-      if (!saved) throw new InputError('Standalone Skill completion receipt not found');
+    if (action === 'harvest' || action === 'resume') {
+      const source = requireText(args[0], action === 'harvest' ? 'receipt path or ID' : 'receipt ID');
+      if (action === 'harvest' && existsSync(source)) {
+        return print(await harvestCompletion(
+          wiki, project, JSON.parse(readFileSync(source, 'utf8').replace(/^\uFEFF/, '')), modelClient,
+        ));
+      }
+      const saved = readSkillCompletions(wiki, project, source)[0];
+      if (!saved) throw new InputError(`Standalone Skill completion receipt not found: ${source}`);
       return print(await harvestCompletion(wiki, project, saved.receipt, modelClient));
     }
-    if (action === 'harvest') return print(await harvestCompletion(
-      wiki, project, JSON.parse(readFileSync(requireText(args[0], 'receipt path'), 'utf8')), modelClient,
-    ));
     if (action === 'show') return print(readHarvest(wiki, project, requireText(args[0], 'completion receipt ID')));
     if (action === 'session') {
       const session = requireText(args[0], 'Session ID');

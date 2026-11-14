@@ -402,6 +402,8 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   const repeated = await invoke(args);
   assert.equal(repeated.id, pending[0].id);
   assert.equal(repeated.replayed, true);
+  const harvestedById = await invoke(['closeout', 'harvest', receipt]);
+  assert.equal(harvestedById.replayed, true);
   assert.deepEqual(await invoke(['closeout', 'show', repeated.receipt]), {
     id: repeated.id,
     candidates: pending[0].candidates,
@@ -811,6 +813,34 @@ test('Stage search tracing keeps context sessions separate from historical Memor
   assert.equal(receipt.reads[0].id, 'old-memory');
   assert.equal(receipt.reads[0].from_search_id, searchId);
   store.close();
+});
+
+test('CLI context profiles and compatibility JSON flags reduce repeated context arguments', async t => {
+  const root = await temp(t);
+  const profile = join(root, 'context.json');
+  await writeFile(profile, JSON.stringify({
+    skill: 'analyze', task: 'plan', paths: ['src/solver.ts'], categories: ['arch'], includePathScoped: false,
+  }));
+  const fromProfile = await cliJson(root, 'context', 'solver layout', '--context-file', profile, '--json');
+  const fromFlags = await cliJson(root, 'context', 'solver layout', '--skill', 'analyze', '--task', 'plan',
+    '--path', 'src/solver.ts', '--category', 'arch', '--json');
+  assert.deepEqual(fromProfile.context_scope, fromFlags.context_scope);
+  assert.deepEqual(fromProfile.constraints, fromFlags.constraints);
+  assert.deepEqual(fromProfile.references, fromFlags.references);
+  const reads = join(root, 'reads.json');
+  await cliJson(root, 'context', 'solver layout', '--context-file', profile, '--reads', reads);
+  assert.ok((await readFile(reads, 'utf8')).includes('knowledge-reads/1.0'));
+  await mkdir(join(root, 'wiki'), { recursive: true });
+  assert.equal((await cliJson(root, 'wiki', 'build', '--json')).pages, 0);
+  await mkdir(join(root, 'wiki', 'entries'), { recursive: true });
+  await writeFile(join(root, 'wiki', 'entries', 'solver-guide.md'), [
+    '---', 'title: Solver guide', 'mode: reference', 'status: active', 'scope: [skill:analyze]',
+    'sources: [fixture:solver]', '---', '', 'Use the sparse solver path.', '',
+  ].join('\n'));
+  await cliJson(root, 'wiki', 'build');
+  const legacyReference = await cliJson(root, 'wiki', 'reference', 'entries/solver-guide', '--skill', 'analyze');
+  const resolvedGet = await cliJson(root, 'wiki', 'get', 'entries/solver-guide', '--resolved', '--skill', 'analyze');
+  assert.deepEqual(resolvedGet, legacyReference);
 });
 
 test('Knowledge closeout routes local fixes and structural changes to the right Skill flow', () => {

@@ -54,7 +54,8 @@ agent-memory --root <project> wiki get <entry-id>
 agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id>
 agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id> --include-memory
 agent-memory --root <project> context "<query>" --session <current-session-id> --memory-session <historical-session-id> --include-memory
-agent-memory --root <project> search "<query>" --scope memory --scene <scene> --type <type> --trace --trace-file <knowledge-reads.json>
+agent-memory --root <project> context "<query>" --context-file <context.json> --include-memory
+agent-memory --root <project> search "<query>" --scope memory --scene <scene> --type <type> --reads <knowledge-reads.json>
 ```
 
 没有命中时保留查询条件和空结果。不要把缺少参考误写成新的约束。
@@ -76,7 +77,7 @@ agent-memory --root <project> search "<query>" --scope memory --scene <scene> --
 - `searches[]` 记录查询词、阶段过滤条件、返回 ID 和命中数，不接收条目 ID。
 - `reads[]` 记录 `wiki reference <id>`、`wiki get <id>` 或 `memory get <id>` 的精确读取，必须带稳定 ID。
 - `reads[].from_search_id` 必须指向本次搜索或 `priors`，用于核对搜索到读取的链路。
-- 跨 CLI 调用时使用同一个 `--trace-file`，精确读取再传 `--from-search <search-id>`，保持同一份回执中的搜索与读取关联。
+- 跨 CLI 调用时使用同一个 `--reads` 文件，精确读取再传 `--from-search <search-id>`，保持同一份回执中的搜索与读取关联。`--trace-file` 仍作为兼容别名。
 - `content_sha256` 和 `version` 用于确认读取内容与回执时点一致。
 - 没有执行搜索时不生成伪造记录。零命中使用 `returned_ids: []` 保留为可分析信号。
 
