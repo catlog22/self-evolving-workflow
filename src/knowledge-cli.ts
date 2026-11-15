@@ -2,7 +2,8 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
-import { handleCodexMemoryHook, installCodexMemoryHook, syncCodexMemory } from './codex-memory.js';
+import { configureMemory, installCodexMemoryHook, memoryModelSettings, parseMemoryHosts } from './memory-config.js';
+import { handleMemoryHook, syncMemoryHost } from './memory-history.js';
 import { InputError, requireText } from './common.js';
 import { createSearchServer } from './http.js';
 import { MemoryStore, type ConversationMessage } from './memory.js';
@@ -68,6 +69,9 @@ export function knowledgeHelp(invocation: 'agent-memory' | 'evolve') {
   skill-design apply|rollback <design-id>  Apply or roll back the replayed design
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
+  memory config                            Configure project extraction in the terminal (Codex, Claude Code, Antigravity CLI)
+                                          (--host codex|claude|agy|all|off, --base-url, --model, --yes)
+  memory sync                              Extract saved project chats (--host codex|claude|agy|all, --session)
   memory codex-install                     Install the project's Codex Stop hook (review it in Codex to enable)
   memory codex-sync                        Extract saved Codex chats for this project (--session to select one)
   memory get|delete <id>                   Read or delete a memory
@@ -92,8 +96,8 @@ Options:
   --limit <n>          Maximum results per source (default 10)
   --help               Show this message
 
-Ingest, memory extraction, and the Codex hook use AGENT_MEMORY_LLM_BASE_URL, AGENT_MEMORY_LLM_MODEL and optional
-AGENT_MEMORY_LLM_API_KEY for an OpenAI-compatible chat endpoint. Message files contain
+Set an OpenAI-compatible chat endpoint with memory config or AGENT_MEMORY_LLM_BASE_URL and AGENT_MEMORY_LLM_MODEL.
+Use AGENT_MEMORY_LLM_API_KEY for endpoint authentication if required. Message files contain
 an array of {id, role, timestamp, content}. Commands return JSON on stdout.
 `;
 }
@@ -116,6 +120,10 @@ export const knowledgeOptions = {
   priority: { type: 'string' },
   port: { type: 'string' },
   mode: { type: 'string' },
+  host: { type: 'string' },
+  'base-url': { type: 'string' },
+  model: { type: 'string' },
+  yes: { type: 'boolean' },
   skill: { type: 'string' }, // 收尾路由和执行回执的 Skill 标识，旧查询也可携带。
   task: { type: 'string' },
   category: { type: 'string', multiple: true },
@@ -159,11 +167,12 @@ export const knowledgeOptions = {
   json: { type: 'boolean' },
 } as const;
 
-function modelClient(): LlmClient {
-  const url = new URL(requireText(process.env.AGENT_MEMORY_LLM_BASE_URL, 'AGENT_MEMORY_LLM_BASE_URL'));
+function createModelClient(root: string): LlmClient {
+  const settings = memoryModelSettings(root);
+  const url = new URL(requireText(settings.baseUrl, 'LLM base URL (memory config or AGENT_MEMORY_LLM_BASE_URL)'));
   if (!['http:', 'https:'].includes(url.protocol)) throw new InputError('LLM endpoint must use HTTP or HTTPS');
   url.pathname = url.pathname.replace(/\/$/, '') + '/chat/completions';
-  const model = requireText(process.env.AGENT_MEMORY_LLM_MODEL, 'AGENT_MEMORY_LLM_MODEL');
+  const model = requireText(settings.model, 'LLM model (memory config or AGENT_MEMORY_LLM_MODEL)');
   const key = process.env.AGENT_MEMORY_LLM_API_KEY;
   return {
     async chat({ system, prompt }) {
@@ -238,6 +247,7 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
   }
   const [command, action, ...args] = positionals;
   const root = resolve(values.root ?? '.');
+  const modelClient = () => createModelClient(root);
   const contextValues = cliWikiContext(values as Record<string, unknown>);
   const wiki = new Wiki(values['wiki-root'] ?? root);
   const autoRefresh = invocation === 'evolve';
@@ -616,8 +626,11 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
       return print(applySkillDesign(root, requireText(args[0], 'Skill design receipt ID'), action === 'rollback'));
     }
   }
+  if (command === 'memory' && action === 'config') return print(await configureMemory(root, {
+    host: values.host, baseUrl: values['base-url'], model: values.model, yes: values.yes,
+  }));
   if (command === 'memory' && action === 'codex-install') return print(installCodexMemoryHook(root));
-  if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract', 'codex-hook', 'codex-sync'].includes(action)) {
+  if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
     const memory = openMemory();
     try {
       switch (action) {
@@ -646,15 +659,27 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
             session: requireText(values.session, 'session'), mode, llm: modelClient(),
           }));
         }
-        case 'codex-hook': {
+        case 'codex-hook':
+        case 'host-hook': {
+          const hosts = parseMemoryHosts(action === 'codex-hook' ? 'codex' : requireText(values.host, 'host'));
+          if (hosts.length !== 1) throw new InputError('Choose one host for the hook');
           const input: unknown = JSON.parse(readFileSync(0, 'utf8').replace(/^\uFEFF/, ''));
-          await handleCodexMemoryHook(input, { root, memory, model: modelClient });
-          return print({});
+          return print(await handleMemoryHook(hosts[0], input, { root, memory, model: modelClient }));
         }
         case 'codex-sync': {
-          const result = await syncCodexMemory({ root, memory, model: modelClient, session: values.session });
+          const result = await syncMemoryHost('codex', { root, memory, model: modelClient }, values.session);
           if (result.failures.length) process.exitCode = 1;
           return print(result);
+        }
+        case 'sync': {
+          const hosts = parseMemoryHosts(values.host ?? 'all');
+          const results = [];
+          for (const host of hosts) {
+            const result = await syncMemoryHost(host, { root, memory, model: modelClient }, values.session);
+            if (result.failures.length) process.exitCode = 1;
+            results.push({ host, ...result });
+          }
+          return print({ hosts: results });
         }
       }
     } finally {
