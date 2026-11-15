@@ -1,5 +1,7 @@
 # Evolve Workflow
 
+For this repository, the Knowledge Gate and Workflow Routing below take precedence over host-wide defaults for knowledge lookups and Session/Run control. The Agent Memory lookup here fulfills inherited knowledge-search requirements for this repository.
+
 ## Guardrails
 
 - **Minimize changes** — modify only what the task requires; no drive-by refactors, formatting, cleanups, or scope growth.
@@ -78,13 +80,20 @@ Before implementation, always:
 - Map dependencies and integration points
 - Understand the testing framework and coding conventions
 
-# Knowledge System
+## Knowledge Gate (required)
 
-Resolve applicable project knowledge before reading or changing project files. Start a standalone task with `agent-memory context "<1-3 task-specific keywords>" --include-memory`. For an Evolve Run, inspect its packet or recover it with `evolve run brief <run-id> --session <session-id>`. Use the Run-bound MCP tools or the Agent Memory command with that Run's scope and receipt path.
+Search project knowledge before inspecting, analyzing, planning against, or changing project files. Start with a query of 1–3 task-specific keywords. Run the knowledge lookup before `git status`, `rg`, file reads, or other project exploration.
 
-- Match project, Skill, task and path scope when reading constraints or references. Follow a relevant search hit to its exact ID and record the read for the Run.
-- Refine an empty or irrelevant search. Re-query when the task enters a new subsystem, an approach needs a decision, or the same fix fails twice.
-- Use `agent-memory code search <query>` for symbols and `rg` for known text, file names or an exhaustive usage check.
+| Task context | Required opening |
+| --- | --- |
+| Standalone task | In this checkout, run `node dist/cli.js context "<query>" --include-memory` as the first project-related tool call. The installed equivalent is `agent-memory context "<query>" --include-memory`. |
+| New Evolve Run | Inspect the Run packet, then use the scoped lookup below before exploring the project. The Run-bound `memory_search` and `memory_get` tools are available for Working Memory lookups. |
+| Resumed Evolve Run | Recover the packet with `evolve run brief <run-id> --session <session-id>`, then resolve project knowledge before resuming exploration. Reuse complete entries already in context and reload any entry represented only by an ID or summary. |
+
+For a CLI lookup in a Run, use `agent-memory context "<query>" --skill <command> --session <session-id> --include-memory --reads "<run-dir>/knowledge-reads.json"`. Include task or path scope when known. Use one receipt source per Run. Code search with `agent-memory code search <query>` is available after the opening lookup.
+
+- Inspect the applicable constraints and open governing hits by exact ID with `agent-memory wiki reference <id>` or `agent-memory memory get <id>`. In a Run, use its bound tools or the same `--reads` receipt with `--from-search <search-id>` so the exact read is recorded.
+- Refine an empty or irrelevant query before exploring. Proceed after inspecting a successful zero-result response to the refined query. Follow any initialization or recovery hint and retry. Re-query when the task enters a new subsystem, an approach needs a decision, or the same fix fails twice.
 - Seal verified outputs and evidence through Evolve. Follow the [knowledge route](skills/maestro/references/knowledge-route.md) to stage reusable findings through Agent Memory. Review candidates before promotion. Zero candidates is a valid outcome. Keep previous project knowledge directories as migration inputs.
 
 ## Workflow Routing
