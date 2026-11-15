@@ -87,7 +87,7 @@ function provisionInstructions(path: string) {
   const guide = [
     '# ' + workflowTitle,
     '',
-    'Use Evolve for Session and Run control. Run `agent-memory context "<task keywords>" --include-memory` before inspecting project files.',
+    'Use Evolve for Session and Run control. Run `evolve context "<task keywords>" --include-memory` before inspecting project files.',
     'Follow the project instructions for knowledge scope. Open controlling entries by ID and record Run knowledge reads.',
     'Read the relevant package in `skills/` for a project installation and commit those packages so Evolve can bind Runs to a Git revision.',
     'Use `evolve workflows` to list the bundled workflow documents and `evolve workflows show <id>` to read one.',

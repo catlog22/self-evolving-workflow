@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +18,7 @@ import {
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+const workflowCli = fileURLToPath(new URL('../dist/workflow-cli.js', import.meta.url));
 
 async function temp(t, close = async () => {}) {
   const root = await mkdtemp(join(tmpdir(), 'agent-memory-'));
@@ -30,6 +31,11 @@ async function temp(t, close = async () => {}) {
 
 async function cliJson(root, ...args) {
   const { stdout } = await run(process.execPath, [cli, '--root', root, ...args], { encoding: 'utf8' });
+  return JSON.parse(stdout);
+}
+
+async function evolveJson(root, ...args) {
+  const { stdout } = await run(process.execPath, [workflowCli, '--root', root, ...args], { encoding: 'utf8' });
   return JSON.parse(stdout);
 }
 
@@ -65,7 +71,7 @@ test('Skill evolution replays a failed and a passing case, applies the verified 
     { id: 'missing-preflight', input: 'reproduce', baseline: false, knowledge_reads: { searched_sources: ['memory'], loaded_ids: ['memory-preflight'] } },
     { id: 'existing-flow', input: 'existing', baseline: true },
   ]));
-  const receipt = await cliJson(root, 'evolve', 'replay', draft, '--runner', runner, '--scenarios', scenarios);
+  const receipt = await evolveJson(root, 'skills', 'replay', draft, '--runner', runner, '--scenarios', scenarios);
   assert.equal(await readFile(entry, 'utf8'), original);
   assert.deepEqual(receipt.scenarios.map(item => [item.baseline.passed, item.candidate.passed]), [[false, true], [true, true]]);
   await writeFile(entry, original + '\nLocal edit.\n');
@@ -101,6 +107,55 @@ test('CodeGraph indexes real TypeScript, resolves call edges, and syncs edits', 
   await rm(path);
   assert.equal((await graph.build()).fileCount, 0);
   assert.deepEqual(await graph.search('newBillingTotal'), []);
+});
+
+test('Evolve shares Wiki and memory with agent-memory and automatically refreshes code queries', async t => {
+  const root = join(await temp(t), 'project with spaces');
+  await mkdir(join(root, 'wiki'), { recursive: true });
+  await writeFile(join(root, 'wiki', 'billing.md'), '# Billing guide\n\nCheck taxes before invoicing.\n');
+  const source = join(root, 'billing.ts');
+  await writeFile(source, 'export function computeTax(value: number) { return value * .06; }\n');
+  await evolveJson(root, 'wiki', 'build');
+  assert.equal((await cliJson(root, 'wiki', 'search', 'billing')).results[0].id, 'billing');
+  const memory = await evolveJson(root, 'memory', 'put', 'Check taxes before invoicing.', '--id', 'billing-check');
+  assert.deepEqual(await cliJson(root, 'memory', 'get', 'billing-check'), memory);
+  const contextArgs = ['context', 'taxes', '--include-memory', '--path', 'billing.ts', '--path', 'wiki/billing.md'];
+  assert.deepEqual(await evolveJson(root, ...contextArgs), await cliJson(root, ...contextArgs));
+  await assert.rejects(evolveJson(root, 'code', 'search', 'computeTax', '--limit', '0'), /limit must be an integer/);
+  await assert.rejects(cliJson(root, 'code', 'search', 'computeTax'), /Code index missing/);
+  await assert.rejects(access(join(root, '.codegraph')), { code: 'ENOENT' });
+
+  const { stdout } = await run(process.execPath, [workflowCli, 'search', 'computeTax', '--scope', 'code', '--root', root]);
+  const [{ node: tax }] = JSON.parse(stdout).code;
+  assert.equal(tax.name, 'computeTax');
+  assert.equal((await cliJson(root, 'code', 'search', 'computeTax'))[0].node.id, tax.id);
+
+  const invoice = join(root, 'invoice.ts');
+  await writeFile(invoice, "import { computeTax } from './billing';\nexport function invoiceTotal(value: number) { return value + computeTax(value); }\n");
+  const callers = await evolveJson(root, 'code', 'callers', tax.id);
+  const caller = callers.find(({ node }) => node.name === 'invoiceTotal')?.node;
+  assert.ok(caller, `Expected invoiceTotal among ${callers.map(({ node }) => node.name).join(', ')}`);
+  assert.ok((await evolveJson(root, 'code', 'callees', caller.id)).some(({ node }) => node.id === tax.id));
+  assert.deepEqual((await evolveJson(root, 'code', 'trace', caller.id, tax.id)).map(step => step.node.id), [caller.id, tax.id]);
+  await writeFile(source, 'export function computeFee(value: number) { return value * .1; }\n');
+  await rm(invoice);
+  assert.equal((await evolveJson(root, 'search', 'computeFee')).code[0].node.name, 'computeFee');
+  assert.ok(!(await cliJson(root, 'code', 'search', 'computeTax')).some(({ node }) => node.name === 'computeTax'));
+  assert.deepEqual(await cliJson(root, 'code', 'search', 'invoiceTotal'), []);
+});
+
+test('Opening a Git project Session initializes and incrementally refreshes its code graph', async t => {
+  const root = await temp(t);
+  await run('git', ['init', '-q'], { cwd: root });
+  const open = id => evolveJson(root, 'session', 'open', 'Use the project code graph', '--actor', 'tester', '--id', id);
+  const source = join(root, 'cooling.ts');
+  await writeFile(source, 'export function initialPumpSpeed() { return 42; }\n');
+  assert.equal((await open('initial-index')).status, 'open');
+  assert.equal((await cliJson(root, 'code', 'search', 'initialPumpSpeed'))[0].node.name, 'initialPumpSpeed');
+  await writeFile(source, 'export function adjustedPumpSpeed() { return 36; }\n');
+  assert.equal((await open('incremental-index')).status, 'open');
+  assert.equal((await cliJson(root, 'code', 'search', 'adjustedPumpSpeed'))[0].node.name, 'adjustedPumpSpeed');
+  assert.deepEqual(await cliJson(root, 'code', 'search', 'initialPumpSpeed'), []);
 });
 
 test('Wiki searches CRLF Chinese Markdown, follows links, and removes stale pages', async t => {
@@ -354,7 +409,7 @@ test('Evolve installs selected Skills and their workflow files without replacing
   assert.ok(installed.workflows.some(item => item.id === 'ew-odyssey-review'));
   const after = await readFile(guidance, 'utf8');
   assert.ok(after.startsWith(original));
-  assert.match(after, /agent-memory context/);
+  assert.match(after, /evolve context/);
   assert.deepEqual(JSON.parse(await evolve(...installArgs)).kept, installed.installed);
   assert.equal(await readFile(guidance, 'utf8'), after);
 

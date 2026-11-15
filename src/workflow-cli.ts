@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { CodeGraph } from './code.js';
 import { InputError, requireText } from './common.js';
+import { knowledgeHelp, knowledgeOptions, runKnowledgeCli } from './knowledge-cli.js';
 import { WorkflowStore, workflowId, type Mutation, type WorkflowStep } from './workflow-runtime.js';
 import { bindWorkflowSkill, commandNames, workflowHash } from './workflow-skills.js';
 import { serveWorkflowRun } from './workflow-mcp.js';
@@ -19,7 +21,7 @@ const strings = { type: 'string', multiple: true } as const;
 const bool = { type: 'boolean' } as const;
 const options = {
   root: string, db: string, id: string, session: string, run: string, actor: string, participant: string,
-  'request-id': string, reason: string, evidence: strings, json: bool, help: bool, advance: bool,
+  'request-id': string, reason: string, evidence: strings, json: bool, help: { ...bool, short: 'h' }, advance: bool,
   'expected-orchestration-revision': string, 'expected-run-revision': string,
   'definition-of-done': string, chain: strings, 'step-id': string, command: string, arg: strings, 'after-step': string,
   'decision-ref': string, 'goal-ref': string, stage: string, gate: strings, from: string, verdict: string, summary: string,
@@ -43,6 +45,25 @@ const usage = [
   'evolve mcp --session <id> --run <id>',
   'evolve delegate <prompt> --to codex|agy --mode analysis|write',
 ].join('\n');
+
+const knowledgeCommands = new Set(['code', 'wiki', 'memory', 'search', 'context', 'serve', 'closeout', 'skill-design']);
+const skillEvolutionActions = new Set(['review', 'draft', 'replay', 'apply', 'rollback']);
+
+async function main(argv: string[]) {
+  // 路由保留选项及参数顺序，具体命令仍使用各自的严格参数定义。
+  const { positionals: [group, action], tokens } = parseArgs({
+    args: argv, options: { ...knowledgeOptions, ...options }, allowPositionals: true, strict: false, tokens: true,
+  });
+  if (knowledgeCommands.has(group) || (group === 'session' && action === 'review')) {
+    return runKnowledgeCli(argv, 'evolve');
+  }
+  if (group === 'skills' && skillEvolutionActions.has(action)) {
+    const command = tokens.find(token => token.kind === 'positional');
+    if (command) argv[command.index] = 'evolve';
+    return runKnowledgeCli(argv, 'evolve');
+  }
+  return runWorkflowCli(argv);
+}
 
 function revision(value: string | undefined) {
   if (value === undefined) return;
@@ -107,7 +128,7 @@ function delegate(root: string, values: {
 async function runWorkflowCli(argv: string[]) {
   const { positionals: [group, action, ...args], values } = parseArgs({ options, args: argv, allowPositionals: true });
   if (!group || values.help) {
-    process.stdout.write(usage + '\n');
+    process.stdout.write(usage + '\n\n' + knowledgeHelp('evolve'));
     return;
   }
   const root = resolve(values.root ?? '.');
@@ -167,7 +188,15 @@ async function runWorkflowCli(argv: string[]) {
       if (action === 'open') {
         const chain = [...values.chain ?? [], ...args.slice(1)].flatMap(value => value.split(/[\s,]+/)).filter(Boolean);
         const steps = chain.map((command, index) => ({ id: command + '-' + (index + 1), command, args: [] }));
-        return print(store.open(id(), requireText(args[0], 'objective'), values['definition-of-done'] ?? '', steps, mutation()));
+        const session = store.open(id(), requireText(args[0], 'objective'), values['definition-of-done'] ?? '', steps, mutation());
+        if (existsSync(join(root, '.git'))) {
+          try {
+            await new CodeGraph(root).refresh();
+          } catch (error) {
+            console.warn('Code graph refresh failed: ' + (error instanceof Error ? error.message : String(error)));
+          }
+        }
+        return print(session);
       }
       if (action === 'chain') {
         const change = select(args[0], ['insert', 'replace', 'skip'], 'chain action');
@@ -210,7 +239,7 @@ async function runWorkflowCli(argv: string[]) {
   }
 }
 
-runWorkflowCli(process.argv.slice(2)).catch((error: unknown) => {
+main(process.argv.slice(2)).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });
