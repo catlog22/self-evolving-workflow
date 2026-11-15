@@ -75,6 +75,7 @@ export function knowledgeHelp(invocation: 'agent-memory' | 'evolve') {
   memory codex-install                     Install the project's Codex Stop hook (review it in Codex to enable)
   memory codex-sync                        Extract saved Codex chats for this project (--session to select one)
   memory get|delete <id>                   Read or delete a memory
+  memory sources <id>                      Read a memory's original messages and transcript locations
   memory search <query>                    Search memory (--type, --scene, --session)
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
   context <query>                          Build Agent Memory context envelope (--scope all|code|wiki|memory, --include-memory)
@@ -630,7 +631,7 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
     host: values.host, baseUrl: values['base-url'], model: values.model, yes: values.yes,
   }));
   if (command === 'memory' && action === 'codex-install') return print(installCodexMemoryHook(root));
-  if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
+  if (command === 'memory' && ['put', 'get', 'sources', 'delete', 'search', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
     const memory = openMemory();
     try {
       switch (action) {
@@ -641,6 +642,7 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
         case 'get': return print(withTrace(memory.get(requireText(args[0], 'id'), {
           knowledgeReads, fromSearchId: values['from-search'],
         }) ?? null));
+        case 'sources': return print(memory.sources(requireText(args[0], 'memory ID')));
         case 'delete': return print({ deleted: memory.delete(requireText(args[0], 'id')) });
         case 'search': {
           const query = args.join(' ');

@@ -18,6 +18,10 @@ const message = (role, text, phase) => row('response_item', {
   type: 'message', role, phase, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
 });
 const turn = (text, reply) => event('task_started') + message('user', text) + message('assistant', reply, 'final_answer');
+const originalNumber = '004312.50';
+const changedNumber = '004311.50';
+const originalId = host => `Evolve-Reference_${host}-00A9-ACCEPT`;
+const changedId = host => `Evolve-Reference_${host}-00A8-ACCEPT`;
 
 async function runMemoryCli(root, env, args, input, expectedCode = 0) {
   const child = spawn(process.execPath, [cli, '--root', root, ...args], { env });
@@ -29,6 +33,29 @@ async function runMemoryCli(root, env, args, input, expectedCode = 0) {
   const [code] = await once(child, 'close');
   assert.equal(code, expectedCode, stderr + stdout);
   return stdout ? JSON.parse(stdout) : stderr;
+}
+
+async function assertExactSource(invoke, { host, session, path, content, scope }) {
+  const search = async value => (await invoke(['memory', 'search', value, '--session', session])).results;
+  const [record] = await search(originalId(host));
+  assert.ok(record);
+  assert.equal((await search(originalNumber))[0]?.id, record.id);
+  assert.deepEqual(await search(changedId(host)), []);
+  assert.deepEqual(await search(changedNumber), []);
+  assert.ok(record.exactValues.includes(originalId(host)));
+  assert.equal(record.sourceMessageScope, scope);
+  const [source] = await invoke(['memory', 'sources', record.id]);
+  assert.equal(source.id, record.sourceMessageIds[0]);
+  assert.equal(source.role, 'user');
+  assert.equal(source.session, session);
+  assert.equal(source.content, content);
+  assert.equal(source.location.path, path);
+  const transcript = await readFile(path);
+  const nextLine = transcript.indexOf(10, source.location.byteOffset);
+  const raw = JSON.parse(transcript.subarray(source.location.byteOffset, nextLine).toString('utf8'));
+  const payload = raw.payload?.content ?? raw.message?.content ?? raw.content;
+  assert.equal(Array.isArray(payload) ? payload[0].text : payload, content);
+  return record;
 }
 
 test('Codex Stop extracts project chat incrementally and historical sync shares its progress', async t => {
@@ -55,7 +82,9 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
     const source = prompt.match(/\[(codex:[^\]]+)] \[user]/)?.[1];
     const fact = prompt.match(/remember (\S+)/)?.[1];
     const content = JSON.stringify(fact ? [{ scene_name: 'project', memories: [
-      { content: `${fact} project preference (${requests.length})`, source_message_ids: [source] },
+      prompt.includes(originalId('codex'))
+        ? { content: `Use ${changedId('codex')} at ${changedNumber}.`, source_message_ids: ['invalid-message'] }
+        : { content: `${fact} project preference ${requests.length % 2 ? 'confirmed' : 'recorded'}`, source_message_ids: [source] },
     ] }] : []);
     response.end(JSON.stringify({ choices: [{ message: { content } }] }));
   });
@@ -84,11 +113,12 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   assert.equal((await invoke(['memory', 'codex-install'])).changed, false);
 
   const reply = message('assistant', '保存了。', 'final_answer');
+  const codexFact = `remember 水力基准。Deploy ${originalId('codex')} on ${originalNumber}.`;
   await writeFile(transcript, meta('live', cwd) + event('task_started') +
     message('developer', 'INJECTED_CONFIGURATION') + message('assistant', 'UNFINISHED_COMMENT', 'commentary') +
     message('user', '<recommended_plugins>INJECTED_PLUGIN_RECOMMENDATIONS</recommended_plugins>') +
     row('response_item', { type: 'function_call_output', output: 'PRIVATE_TOOL_OUTPUT' }) +
-    message('user', 'remember 水力基准') + reply.slice(0, -5));
+    message('user', codexFact) + reply.slice(0, -5));
   await hook();
   assert.equal(requests.length, 0);
   await appendFile(transcript, reply.slice(-5));
@@ -99,7 +129,8 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   await hook();
   assert.equal(requests.length, 1);
   assert.doesNotMatch(requests[0], /INJECTED_CONFIGURATION|INJECTED_PLUGIN_RECOMMENDATIONS|UNFINISHED_COMMENT|PRIVATE_TOOL_OUTPUT/);
-  const [first] = await search('水力基准', 'live');
+  const first = await assertExactSource(invoke, { host: 'codex', session: 'live', path: transcript, content: codexFact, scope: 'turn' });
+  assert.equal(first.content, codexFact);
   assert.match(first.sourceMessageIds[0], /^codex:live:\d+$/);
 
   await appendFile(transcript, turn('remember retryable', 'Saved.'));
@@ -126,6 +157,9 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   assert.deepEqual(await invoke(['memory', 'codex-sync']), { sessions: 2, processed: 0, remembered: 0, failures: [] });
   assert.equal((await search('archived', 'history')).length, 1);
   assert.deepEqual(await search('unrelated', 'unrelated'), []);
+  assert.deepEqual(await invoke(['memory', 'delete', first.id]), { deleted: true });
+  assert.deepEqual(await search(originalId('codex'), 'live'), []);
+  assert.deepEqual(await invoke(['memory', 'sources', first.id]), []);
 });
 
 test('Memory configuration enables all project hosts and shared sync imports Claude and Agy histories', async t => {
@@ -148,7 +182,9 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
     const id = prompt.match(/\[((?:claude|agy):[^\]]+)] \[user]/)?.[1];
     const fact = prompt.match(/remember (\w+)/)?.[1];
     response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify([
-      { scene_name: 'project', memories: [{ content: `${fact} preference`, source_message_ids: [id] }] },
+      { scene_name: 'project', memories: [prompt.includes(originalId('agy'))
+        ? { content: `Use ${changedId('agy')} at ${changedNumber}.` }
+        : { content: `${fact} preference`, source_message_ids: [id] }] },
     ]) } }] }));
   });
   t.after(async () => {
@@ -203,8 +239,10 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   assert.doesNotMatch(requests.map(request => request.prompt).join('\n'), /IGNORE_TOOL_CHAT|PRIVATE_TOOL_RESULT/);
   assert.ok(requests.every(request => request.model === 'memory-fixture'));
 
-  await appendFile(claudePath, claude('user', 'u2', 'remember claudenew') + claude('assistant', 'a3', text('confirmed'), { stop_reason: 'end_turn' }));
-  await writeFile(agyPath, '  ' + firstAgyTurn + agy(4, 'USER_INPUT', 'USER_EXPLICIT', 'remember agynew') +
+  const claudeFact = `remember claudenew with ${originalId('claude')} at ${originalNumber}.`;
+  const agyFact = `remember agynew with ${originalId('agy')} at ${originalNumber}.`;
+  await appendFile(claudePath, claude('user', 'u2', claudeFact) + claude('assistant', 'a3', text('confirmed'), { stop_reason: 'end_turn' }));
+  await writeFile(agyPath, '  ' + firstAgyTurn + agy(4, 'USER_INPUT', 'USER_EXPLICIT', agyFact) +
     agy(5, 'PLANNER_RESPONSE', 'MODEL', 'confirmed'));
   const claudeEvent = { hook_event_name: 'Stop', session_id: 'claude-session', cwd: root, transcript_path: claudePath };
   const agyEvent = { terminationReason: 'model_stop', conversationId: 'agy-session', workspacePaths: [root], transcriptPath: agyPath };
@@ -215,9 +253,11 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   await invoke(['memory', 'host-hook', '--host', 'agy'], { ...agyEvent, cwd: root, workspacePaths: [] });
   const repeated = await invoke(['memory', 'sync', '--host', 'claude,agy']);
   assert.deepEqual(repeated.hosts.map(item => item.processed), [0, 0]);
-  const [agyMemory] = (await invoke(['memory', 'search', 'agynew', '--session', 'agy-session'])).results;
+  const agyMemory = await assertExactSource(invoke, { host: 'agy', session: 'agy-session', path: agyPath, content: agyFact, scope: 'turn' });
+  assert.equal(agyMemory.content, agyFact);
   assert.deepEqual(agyMemory.sourceMessageIds, ['agy:agy-session:4']);
-  const [claudeMemory] = (await invoke(['memory', 'search', 'claudenew', '--session', 'claude-session'])).results;
+  const claudeMemory = await assertExactSource(invoke, { host: 'claude', session: 'claude-session', path: claudePath, content: claudeFact, scope: 'messages' });
+  assert.equal(claudeMemory.content, 'claudenew preference');
   assert.deepEqual(claudeMemory.sourceMessageIds, ['claude:claude-session:u2']);
 
   const off = await invoke(['memory', 'config', '--yes', '--host', 'off']);

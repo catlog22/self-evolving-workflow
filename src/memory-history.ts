@@ -95,7 +95,8 @@ async function* codexTurns({ path, lastAssistant }: Transcript, session: string,
       if (payload.role === 'user') {
         const content = messageText(payload.content, 'input_text');
         if (content && readableText(row.timestamp)) {
-          messages.push({ id: `codex:${session}:${start}`, role: 'user', timestamp: row.timestamp, content });
+          messages.push({ id: `codex:${session}:${start}`, role: 'user', timestamp: row.timestamp, content,
+            location: { path, byteOffset: start } });
         }
       } else if (payload.role === 'assistant' && payload.phase !== 'commentary') {
         const content = messageText(payload.content, 'output_text');
@@ -103,7 +104,8 @@ async function* codexTurns({ path, lastAssistant }: Transcript, session: string,
       }
     }
     if (!final || !messages.length || !readableText(row.timestamp)) continue;
-    messages.push({ id: `codex:${session}:${start}`, role: 'assistant', timestamp: row.timestamp, content: final });
+    messages.push({ id: `codex:${session}:${start}`, role: 'assistant', timestamp: row.timestamp, content: final,
+      location: { path, byteOffset: start } });
     yield { end, messages };
     messages = [];
   }
@@ -143,7 +145,7 @@ async function* claudeTurns({ path, lastAssistant }: Transcript, session: string
       reply = undefined;
     }
     const id = `claude:${session}:${readableText(row.uuid) ? row.uuid : start}`;
-    const item = { id, role: chat.role, timestamp: row.timestamp, content };
+    const item = { id, role: chat.role, timestamp: row.timestamp, content, location: { path, byteOffset: start } };
     if (chat.role === 'user') {
       users.push(item);
       continue;
@@ -163,15 +165,15 @@ async function* claudeTurns({ path, lastAssistant }: Transcript, session: string
 
 async function* agyTurns({ path }: Transcript, session: string, offset: number, size: number) {
   let messages: ConversationMessage[] = [];
-  for await (const { row } of transcriptRows(path, 0, size)) {
+  for await (const { row, start } of transcriptRows(path, 0, size)) {
     if (!row || typeof row.step_index !== 'number' || !Number.isSafeInteger(row.step_index) ||
         row.step_index < offset || row.status !== 'DONE' || !readableText(row.created_at) || !readableText(row.content)) continue;
     const id = `agy:${session}:${row.step_index}`;
     if (row.type === 'USER_INPUT' && row.source === 'USER_EXPLICIT') {
-      messages.push({ id, role: 'user', timestamp: row.created_at, content: row.content });
+      messages.push({ id, role: 'user', timestamp: row.created_at, content: row.content, location: { path, byteOffset: start } });
     } else if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL' && messages.length &&
         !(Array.isArray(row.tool_calls) && row.tool_calls.length)) {
-      messages.push({ id, role: 'assistant', timestamp: row.created_at, content: row.content });
+      messages.push({ id, role: 'assistant', timestamp: row.created_at, content: row.content, location: { path, byteOffset: start } });
       yield { end: row.step_index + 1, messages };
       messages = [];
     }

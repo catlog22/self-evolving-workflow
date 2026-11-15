@@ -38,7 +38,7 @@ export {
   type SkillDesignTask,
 } from './skill-design.js';
 export type { WikiIngestOptions } from './wiki-ingest.js';
-export { MemoryStore, type MemoryInput, type MemoryRecord, type MemorySearchOptions, type MemoryStoreOptions, type ConversationMessage } from './memory.js';
+export { MemoryStore, type MemoryInput, type MemoryRecord, type MemorySearchOptions, type MemoryStoreOptions, type ConversationMessage, type MemorySource } from './memory.js';
 export {
   context,
   search,

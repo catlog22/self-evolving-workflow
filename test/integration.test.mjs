@@ -915,6 +915,23 @@ test('L1 extraction is traceable and retryable with a supplied model', async t =
   await assert.rejects(memory.extract(messages, { ...options, llm: { chat: async () => 'invalid' } }), /JSON array/);
 });
 
+test('identical model summaries preserve the distinct original values and sources of each turn', async t => {
+  const memory = new MemoryStore(':memory:');
+  t.after(() => memory.close());
+  const options = { session: 'deploy', llm: { async chat() {
+    return JSON.stringify([{ memories: [{ content: 'Deployment configuration confirmed.' }] }]);
+  } } };
+  const save = (id, value) => memory.extract([{ id, role: 'user', timestamp: 0, content: `Using port ${value}.` }], options);
+  const [first] = await save('first', '04312');
+  const [second] = await save('second', '04313');
+  assert.notEqual(first.id, second.id);
+  assert.equal((await memory.search('04312')).results[0]?.id, first.id);
+  assert.equal((await memory.search('04313')).results[0]?.id, second.id);
+  assert.deepEqual((await memory.search('4312')).results, []);
+  assert.equal(memory.sources(first.id)[0]?.content, 'Using port 04312.');
+  assert.equal(memory.sources(second.id)[0]?.id, 'second');
+});
+
 test('Shared module API, CLI and HTTP return the same scoped search', async t => {
   let server, memory;
   const root = await temp(t, async () => {

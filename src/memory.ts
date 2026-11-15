@@ -1,20 +1,24 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { AgentMemoryPrompt } from './agent-memory-prompts.js';
 import { InputError, openDb, requireText, searchLimit, transaction } from './common.js';
+import { exactMemoryValues, extractedMemoryId, groundMemories, type GroundedMemory, type MemorySource } from './memory-evidence.js';
 import { formatExtractionPrompt, getExtractMemoriesAgentPrompt } from './upstream/l1-extraction.js';
 import type { LlmClient } from './upstream/llm.js';
 import { rrfMerge } from './upstream/search-utils.js';
 import { bm25RankToScore, buildFtsQuery, tokenizeForFts } from './upstream/tokenize.js';
 import type { KnowledgeReads } from './knowledge-reads.js';
 
+export type { MemorySource } from './memory-evidence.js';
+
 export interface ConversationMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   timestamp: number | string;
   content: string;
+  location?: { path: string; byteOffset: number };
 }
 
 export interface MemoryInput {
@@ -36,6 +40,8 @@ export interface MemoryRecord {
   session: string;
   priority: number;
   sourceMessageIds: string[];
+  exactValues?: string[];
+  sourceMessageScope?: 'messages' | 'turn';
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -62,15 +68,26 @@ interface ExtractionOptions {
   systemPrompt?: string;
 }
 
-type Row = Omit<MemoryRecord, 'sourceMessageIds'> & { sourceMessageIds: string; vector: string | null };
+type Row = Omit<MemoryRecord, 'sourceMessageIds' | 'exactValues' | 'sourceMessageScope'> & {
+  sourceMessageIds: string;
+  exactValues: string;
+  sourceMessageScope: MemoryRecord['sourceMessageScope'] | null;
+  vector: string | null;
+};
 type Hit = MemoryRecord & { score: number };
+type StoredMemoryInput = MemoryInput & { evidence?: GroundedMemory['evidence'] };
 
 const recordFields = `m.id, m.content, m.type, m.scene, m.session, m.priority,
-  m.source_ids AS sourceMessageIds, m.created_at AS createdAt, m.updated_at AS updatedAt, m.version`;
+  m.source_ids AS sourceMessageIds, m.created_at AS createdAt, m.updated_at AS updatedAt, m.version,
+  (SELECT json_group_array(value) FROM (SELECT value FROM memory_literals WHERE memory_key = m.key ORDER BY value)) AS exactValues,
+  (SELECT scope FROM memory_sources WHERE memory_key = m.key) AS sourceMessageScope`;
 
 function record(row: Row): MemoryRecord {
-  const { vector, sourceMessageIds, ...fields } = row;
-  return { ...fields, sourceMessageIds: JSON.parse(sourceMessageIds) };
+  const { vector, sourceMessageIds, exactValues, sourceMessageScope, ...fields } = row;
+  const values = JSON.parse(exactValues) as string[];
+  return { ...fields, sourceMessageIds: JSON.parse(sourceMessageIds),
+    ...(values.length ? { exactValues: values } : {}), ...(sourceMessageScope ? { sourceMessageScope } : {}),
+  };
 }
 
 function normalized(values: ArrayLike<number>): number[] {
@@ -101,6 +118,7 @@ export class MemoryStore {
     this.db = openDb(file);
     try {
       this.db.exec(`
+        PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS memory_records (
           key INTEGER PRIMARY KEY,
           namespace TEXT NOT NULL,
@@ -119,6 +137,17 @@ export class MemoryStore {
           UNIQUE (namespace, id)
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(tokens, tokenize='unicode61');
+        CREATE TABLE IF NOT EXISTS memory_sources (
+          memory_key INTEGER PRIMARY KEY REFERENCES memory_records(key) ON DELETE CASCADE,
+          messages TEXT NOT NULL,
+          scope TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS memory_literals (
+          memory_key INTEGER NOT NULL REFERENCES memory_records(key) ON DELETE CASCADE,
+          value TEXT NOT NULL,
+          PRIMARY KEY (memory_key, value)
+        );
+        CREATE INDEX IF NOT EXISTS memory_literals_value ON memory_literals (value, memory_key);
         CREATE TABLE IF NOT EXISTS memory_extraction_offsets (
           namespace TEXT NOT NULL,
           source TEXT NOT NULL,
@@ -145,7 +174,7 @@ export class MemoryStore {
     return (await this.writeMany(inputs))!;
   }
 
-  private async writeMany(inputs: MemoryInput[], advance?: () => boolean): Promise<MemoryRecord[] | undefined> {
+  private async writeMany(inputs: StoredMemoryInput[], advance?: () => boolean): Promise<MemoryRecord[] | undefined> {
     const prepared = await Promise.all(inputs.map(async input => {
       const content = requireText(input.content, 'content');
       const priority = input.priority ?? 50;
@@ -158,6 +187,8 @@ export class MemoryStore {
         type: requireText(input.type ?? 'episodic', 'type'),
         scene: input.scene ?? '', session: input.session ?? '',
         sourceIds: JSON.stringify(input.sourceMessageIds ?? []),
+        evidence: input.evidence,
+        exactValues: new Set((input.evidence?.messages ?? [{ content }]).flatMap(message => exactMemoryValues(message.content))),
         vector: embedding === undefined ? null : normalized(embedding),
       };
     }));
@@ -179,8 +210,22 @@ export class MemoryStore {
       `).get(this.namespace, input.id, input.content, input.type, input.scene, input.session,
         input.priority, input.sourceIds, now, now,
         input.vector && JSON.stringify(input.vector), input.vector?.length ?? null);
-      if (row) {
-        const key = Number(row.key);
+      const key = row?.key ?? (input.evidence && this.db.prepare('SELECT key FROM memory_records WHERE namespace = ? AND id = ?')
+        .get(this.namespace, input.id)?.key);
+      if (typeof key === 'number' && input.evidence) {
+        const snapshots = input.evidence.messages.map(({ id, role, timestamp, content, location }) => ({
+          id, role, timestamp, content, ...(location && { location }),
+        }));
+        this.db.prepare(`INSERT INTO memory_sources (memory_key, messages, scope) VALUES (?, ?, ?)
+          ON CONFLICT (memory_key) DO UPDATE SET messages = excluded.messages, scope = excluded.scope`)
+          .run(key, JSON.stringify(snapshots), input.evidence.scope);
+      } else if (row) {
+        this.db.prepare('DELETE FROM memory_sources WHERE memory_key = ?').run(Number(row.key));
+      }
+      if (typeof key === 'number') {
+        this.db.prepare('DELETE FROM memory_literals WHERE memory_key = ?').run(key);
+        const insert = this.db.prepare('INSERT INTO memory_literals (memory_key, value) VALUES (?, ?)');
+        for (const value of input.exactValues) insert.run(key, value);
         this.db.prepare('DELETE FROM memory_fts WHERE rowid = ?').run(key);
         this.db.prepare('INSERT INTO memory_fts(rowid, tokens) VALUES (?, ?)').run(key, tokenizeForFts(input.content));
       }
@@ -201,6 +246,13 @@ export class MemoryStore {
     return result;
   }
 
+  sources(id: string): MemorySource[] {
+    const row = this.db.prepare(`SELECT m.session, s.messages FROM memory_records m
+      JOIN memory_sources s ON m.key = s.memory_key WHERE m.namespace = ? AND m.id = ?`).get(this.namespace, id);
+    if (!row) return [];
+    return (JSON.parse(String(row.messages)) as ConversationMessage[]).map(message => ({ ...message, session: String(row.session) }));
+  }
+
   delete(id: string): boolean {
     return transaction(this.db, () => {
       const row = this.db.prepare('DELETE FROM memory_records WHERE namespace = ? AND id = ? RETURNING key')
@@ -214,9 +266,6 @@ export class MemoryStore {
   async search(query: string, options: MemorySearchOptions = {}) {
     const text = requireText(query, 'query');
     const limit = searchLimit(options.limit);
-    const embedding = options.embedding ?? await this.embed?.(text);
-    const vector = embedding === undefined ? undefined : normalized(embedding);
-    const expression = buildFtsQuery(text);
     const clauses = ['m.namespace = ?'];
     const args: SQLInputValue[] = [this.namespace];
     for (const field of ['type', 'scene', 'session'] as const) {
@@ -226,6 +275,27 @@ export class MemoryStore {
       }
     }
     const where = clauses.join(' AND ');
+    if (exactMemoryValues(text).includes(text)) {
+      const rows = this.db.prepare(`SELECT ${recordFields} FROM memory_literals l
+        JOIN memory_records m ON m.key = l.memory_key WHERE l.value = ? AND ${where} ORDER BY m.id LIMIT ?`)
+        .all(text, ...args, limit) as Row[];
+      const results = rows.map(row => ({ ...record(row), score: 1 }));
+      const indexed = new Set(results.map(result => result.id));
+      // 旧条目仍可按其实际存储内容精确检索。
+      if (results.length < limit) {
+        const legacy = this.db.prepare(`SELECT ${recordFields} FROM memory_records m
+          WHERE ${where} AND instr(m.content, ?) > 0 AND NOT EXISTS
+          (SELECT 1 FROM memory_sources WHERE memory_key = m.key) ORDER BY m.id`).iterate(...args, text) as Iterable<Row>;
+        for (const row of legacy) {
+          if (!indexed.has(row.id) && exactMemoryValues(row.content).includes(text)) results.push({ ...record(row), score: 1 });
+          if (results.length === limit) break;
+        }
+      }
+      return { strategy: 'exact' as const, results };
+    }
+    const embedding = options.embedding ?? await this.embed?.(text);
+    const vector = embedding === undefined ? undefined : normalized(embedding);
+    const expression = buildFtsQuery(text);
     const candidates = vector ? limit * 3 : limit;
     const keyword: Hit[] = expression ? (this.db.prepare(`
       SELECT ${recordFields}, bm25(memory_fts) AS rank FROM memory_fts
@@ -257,7 +327,7 @@ export class MemoryStore {
   }
 
   async extract(messages: ConversationMessage[], options: ExtractionOptions): Promise<MemoryRecord[]> {
-    return this.putMany(await extractMemoryInputs(messages, options));
+    return (await this.writeMany(groundMemories(await extractMemoryInputs(messages, options), messages)))!;
   }
 
   extractionOffset(source: string, session: string): number {
@@ -276,7 +346,7 @@ export class MemoryStore {
       throw new InputError('Invalid memory extraction offsets');
     }
     if (this.extractionOffset(source, session) !== from) return;
-    const inputs = await extractMemoryInputs(messages, options);
+    const inputs = groundMemories(await extractMemoryInputs(messages, options), messages);
     return this.writeMany(inputs, () => {
       if (this.extractionOffset(source, session) !== from) return false;
       this.db.prepare(`INSERT INTO memory_extraction_offsets (namespace, source, session, offset) VALUES (?, ?, ?, ?)
@@ -330,6 +400,9 @@ function parseExtraction(raw: string, session: string, messageIds: Set<string>):
   if (!json) throw new Error('Memory extraction response must contain a JSON array');
   const scenes: unknown = JSON.parse(json);
   if (!Array.isArray(scenes)) throw new Error('Memory extraction response must be an array');
+  const knownIds = (ids: unknown) => Array.isArray(ids)
+    ? [...new Set(ids.map(String).filter(id => messageIds.has(id)))].sort()
+    : [];
   return scenes.flatMap(value => {
     const scene = object(value, 'scene');
     if (!Array.isArray(scene.memories)) throw new Error('Memory extraction scene requires a memories array');
@@ -337,11 +410,9 @@ function parseExtraction(raw: string, session: string, messageIds: Set<string>):
       const memory = object(value, 'memory');
       const content = requireText(memory.content, 'memory content');
       const type = requireText(memory.type ?? 'episodic', 'memory type');
-      const sourceIds = memory.source_message_ids ?? scene.message_ids;
-      const sourceMessageIds = Array.isArray(sourceIds)
-        ? [...new Set(sourceIds.map(String).filter(id => messageIds.has(id)))].sort()
-        : [];
-      const id = createHash('sha256').update(JSON.stringify([session, type, content, sourceMessageIds])).digest('hex');
+      const cited = knownIds(memory.source_message_ids);
+      const sourceMessageIds = cited.length ? cited : knownIds(scene.message_ids);
+      const id = extractedMemoryId(session, type, content, sourceMessageIds);
       return {
         id, content, type, session, sourceMessageIds,
         scene: typeof scene.scene_name === 'string' ? scene.scene_name : '',
