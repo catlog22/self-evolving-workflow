@@ -14,7 +14,7 @@ import {
   CodeGraph, KnowledgeReads, MemoryStore, Wiki, applySkillDesign, context, createSearchServer,
   createSkillDesignTask, decideSkillRoute, draftSkillAddition, replaySkillDesign, reviewSession,
   reviewSkillDesign, runSkillDesign, search,
-} from 'evolve-agent-memory';
+} from 'self-evolving-workflow';
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));

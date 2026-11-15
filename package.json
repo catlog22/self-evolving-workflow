@@ -1,7 +1,11 @@
 {
-  "name": "evolve-agent-memory",
+  "name": "self-evolving-workflow",
   "version": "0.1.3",
   "description": "Self-Evolving Workflow with a local code graph, a Markdown wiki, and agent memory search",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/catlog22/self-evolving-workflow.git"
+  },
   "license": "MIT",
   "type": "module",
   "engines": {

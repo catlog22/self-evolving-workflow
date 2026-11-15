@@ -2,18 +2,18 @@
 
 面向代码助手的可恢复开发工作流。用 `evolve` 管理 Session 和 Run，并查询代码图谱、项目 Wiki 和工作记忆。每个 Run 可以绑定 Git 中的 Skill 版本，记录读取过的知识和交付证据，方便恢复执行和复查结果。
 
-[npm 安装包](https://www.npmjs.com/package/evolve-agent-memory) · [Session 与 Run 指南](skills/ew-orchestrate/references/orchestrator-run-loop.md) · [MIT 许可证](LICENSE)
+[npm 安装包](https://www.npmjs.com/package/self-evolving-workflow) · [Session 与 Run 指南](skills/ew-orchestrate/references/orchestrator-run-loop.md) · [MIT 许可证](LICENSE)
 
 ## 快速开始
 
 需要 Node.js `22.16.0` 或更新版本。项目工作流还需要 Git，用来固定 Run 所使用的 Skill 版本。
 
 ```sh
-npm install -g evolve-agent-memory
+npm install -g self-evolving-workflow
 evolve --help
 ```
 
-现有脚本可以继续使用 `agent-memory`。两个入口共用项目 Wiki、记忆数据库和代码图谱索引。
+从旧包名迁移时，先运行 `npm uninstall -g evolve-agent-memory`，再安装 `self-evolving-workflow`。现有脚本可以继续使用 `agent-memory`。两个入口共用项目 Wiki、记忆数据库和代码图谱索引。
 
 进入项目的 Git 根目录，安装项目 Skill 和 `AGENTS.md` 指南，再把它们提交到 Git。
 

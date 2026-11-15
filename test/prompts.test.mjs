@@ -7,7 +7,7 @@ import {
   buildSessionSignalPrompt,
   buildWikiMergePrompt,
   buildWikiRelationPrompt,
-} from 'evolve-agent-memory';
+} from 'self-evolving-workflow';
 
 test('Agent Memory operation prompts share one evidence and output contract', () => {
   const prompts = [
