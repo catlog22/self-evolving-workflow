@@ -41,6 +41,7 @@
     "dist",
     "skills",
     "workflows",
+    "docs/images",
     "LICENSE"
   ],
   "scripts": {

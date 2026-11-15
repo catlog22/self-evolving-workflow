@@ -76,11 +76,11 @@ test('Evolve pins each attempt, fences retries and publishes bytes with the requ
 });
 
 test('All shipped step and mode contracts resolve in the installed Git packages', () => {
-  const f = fixture('evolve-runtime-contracts-');
+  const f = fixture('evolve-runtime-contracts-', ['ew-impeccable']);
   try {
     const names = f.evolve('skills').map(item => item.command);
-    assert.equal(names.length, 14);
-    assert.equal(names.filter(name => name.startsWith('ew-')).length, 13);
+    assert.equal(names.length, 15);
+    assert.equal(names.filter(name => name.startsWith('ew-')).length, 14);
     for (const name of names) {
       const binding = f.evolve('skills', 'validate', name);
       assert.match(binding.commit, /^[0-9a-f]{40}$/);
@@ -97,6 +97,44 @@ test('All shipped step and mode contracts resolve in the installed Git packages'
     f.open(session, '');
     assert.throws(() => f.evolve('session', 'chain', 'insert', ...f.fence(session), '--step-id', 'audit',
       '--command', 'ew-odyssey-security', '--arg=--fix'), /read-only audit/);
+    assert.equal(existsSync(f.sentinel), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Installed Impeccable binds its playbooks and detects UI issues without Maestro or parser dependencies', () => {
+  const f = fixture('evolve-impeccable-', ['ew-impeccable']);
+  try {
+    const session = 'impeccable-audit';
+    f.write('.gitignore', '.agent-memory/\nbin/\nskills/ew-impeccable/scripts/\n');
+    f.write('index.html', '<!doctype html><html lang="en"><head><title>Billing</title></head><body>' +
+      '<main><h1 style="background: linear-gradient(red, blue); background-clip: text; color: transparent">Billing</h1></main>' +
+      '</body></html>');
+    assert.ok(f.evolve('workflows').some(item => item.id === 'ew-impeccable'));
+    assert.match(f.run(process.execPath, [cli, 'workflows', 'show', 'ew-impeccable']), /^name: ew-impeccable$/m);
+    const opened = f.open(session, 'maestro-impeccable', 'Audit the billing page');
+    const run = f.next(session, opened.orchestration_revision);
+    assert.equal(run.task.command, 'ew-impeccable');
+    assert.equal(run.skill_ref.skill_id, 'ew-impeccable');
+    readBound(f, session, run);
+    const audit = f.evolve('run', 'skill-read', run.run_id, 'reference/audit.md', '--from', 'SKILL.md', '--session', session);
+    assert.match(audit.markdown, /accessibility/i);
+
+    const script = (name, ...args) => f.run(process.execPath, [join(f.root, 'skills', 'ew-impeccable', 'scripts', name), ...args]);
+    assert.match(script('context.mjs', '--target', 'index.html'), /RESOLVED_CONTEXT|NO_PRODUCT_MD/);
+    assert.throws(() => script('detect.mjs', '--json', 'index.html'), error => {
+      assert.equal(error.status, 2);
+      assert.doesNotMatch(error.stderr, /DEGRADED/);
+      assert.ok(JSON.parse(error.stdout).some(finding => finding.antipattern === 'gradient-text'));
+      return true;
+    });
+    f.write('.codex/config.toml', '');
+    script('hook-admin.mjs', 'on');
+    const hooks = readFileSync(join(f.root, '.codex', 'hooks.json'), 'utf8');
+    assert.match(hooks, /ew-impeccable\/scripts\/hook\.mjs/);
+    assert.match(hooks, /"Stop"/);
+    assert.deepEqual(JSON.parse(script('live-status.mjs')).activeSessions, []);
     assert.equal(existsSync(f.sentinel), false);
   } finally {
     f.cleanup();

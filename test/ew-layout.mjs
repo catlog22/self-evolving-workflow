@@ -72,7 +72,8 @@ for (const file of walk(orchestrator)) {
     `Independent knowledge route remains: ${relative(project, file)}`);
 }
 
-for (const file of [orchestrator, join(project, 'skills', 'ew-odyssey'), join(project, 'skills', 'ew-skill-design')].flatMap(walk)) {
+for (const file of [orchestrator, join(project, 'skills', 'ew-odyssey'), join(project, 'skills', 'ew-skill-design'),
+  join(project, 'skills', 'ew-impeccable')].flatMap(walk)) {
   if (!file.endsWith('.md')) continue;
   const directory = dirname(file);
   for (const match of readFileSync(file, 'utf8').matchAll(/\]\(([^)]+)\)/g)) {
@@ -86,9 +87,16 @@ for (const file of [orchestrator, join(project, 'skills', 'ew-odyssey'), join(pr
 
 for (const file of walk(join(project, 'skills'))) {
   if (!file.endsWith('.md')) continue;
-  assert.doesNotMatch(readFileSync(file, 'utf8'),
+  const content = readFileSync(file, 'utf8').replace(/https?:\/\/[^\s)>]+/g, '');
+  assert.doesNotMatch(content,
     /(?:\bmaestro\s+(?:run|session|delegate|execution|skills|capabilities|search|load|kg|knowledge|agent-msg|plan|artifact)\b|[$/]maestro(?:\b|-[\w-]+)|mcp__maestro|~\/\.maestro)/,
     `External workflow command in ${relative(project, file)}`);
+}
+
+const readme = markdown(join(project, 'README.md'));
+for (const image of ['workflow-overview.png', 'workflow-skills.png', 'impeccable-skill.png']) {
+  assert.ok(readme.includes(`](docs/images/${image})`), `Missing README image reference: ${image}`);
+  assert.ok(statSync(join(project, 'docs', 'images', image)).isFile());
 }
 
 for (const { path } of JSON.parse(markdown(join(project, 'workflows', 'index.json')))) markdown(join(project, path));

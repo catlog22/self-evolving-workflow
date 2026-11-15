@@ -1,8 +1,10 @@
 # Self-Evolving Workflow
 
-面向代码助手的可恢复开发工作流。用 `evolve` 管理 Session 和 Run，并查询代码图谱、项目 Wiki 和工作记忆。每个 Run 可以绑定 Git 中的 Skill 版本，记录读取过的知识和交付证据，方便恢复执行和复查结果。
+面向代码助手的可恢复开发工作流。用 `evolve` 编排任务、记录验证证据，并从代码图谱、项目 Wiki 和工作记忆中检索上下文。每个 Run 可以绑定 Git 中的 Skill 版本，让后续执行可以恢复和复查。
 
 [npm 安装包](https://www.npmjs.com/package/self-evolving-workflow) · [Session 与 Run 指南](skills/ew-orchestrate/references/orchestrator-run-loop.md) · [MIT 许可证](LICENSE)
+
+![Self-Evolving Workflow 总览，展示从任务到 Session、Run、验证封存及知识复用的流程](docs/images/workflow-overview.png)
 
 ## 快速开始
 
@@ -15,15 +17,19 @@ evolve --help
 
 从旧包名迁移时，先运行 `npm uninstall -g evolve-agent-memory`，再安装 `self-evolving-workflow`。现有脚本可以继续使用 `agent-memory`。两个入口共用项目 Wiki、记忆数据库和代码图谱索引。
 
-进入项目的 Git 根目录，安装项目 Skill 和 `AGENTS.md` 指南，再把它们提交到 Git。
+### 安装工作流 Skill
 
-```sh
-evolve install --scope project --yes
-git add -- AGENTS.md skills/
-git commit -m "chore: 安装项目工作流"
-```
+按项目安装时，在 Git 根目录运行命令并提交生成的 `skills/` 和 `AGENTS.md`。用户级安装适用于同一台机器上的多个项目。
 
-写入一条本地工作记忆并检索它。
+| 范围 | 命令 | 位置 |
+| --- | --- | --- |
+| 当前项目 | `evolve install --scope project --yes` | `skills/`、`AGENTS.md` |
+| Codex CLI | `evolve install --scope user --host codex --yes` | `~/.codex/skills/`、`~/.codex/AGENTS.md` |
+| Claude Code | `evolve install --scope user --host claude --yes` | `~/.claude/skills/`、`~/.claude/CLAUDE.md` |
+
+直接运行 `evolve install` 可以交互选择安装范围和 Skill。自动化安装时可用 `--skill <名称>` 指定单个包。
+
+### 验证项目知识检索
 
 ```sh
 evolve memory put "发布前运行回归测试。" --id quickstart-regression --type work_method --session quickstart
@@ -38,20 +44,36 @@ evolve context "回归测试" --session quickstart --include-memory
 
 用 `evolve session list` 查看 Session，用 `evolve workflows show session-run` 查看命令行的分派、封存和恢复步骤。
 
-## 支持的工作
+## 随包提供的 Skills
 
-| 任务 | 入口 |
+![六个工作流 Skill，覆盖任务编排、迭代排查、并行协作、Skill 设计、回放验证和知识沉淀](docs/images/workflow-skills.png)
+
+| Skill | 适用任务 |
 | --- | --- |
-| 单个可直接验证的任务 | `ew-companion` |
-| 需要分析、规划、执行和评审的任务 | `ew-orchestrate` |
-| 搜索代码符号和调用关系 | `evolve code search`、`evolve code callers` |
-| 按项目范围检索约束、参考和工作记忆 | `evolve context` |
-| 单独搜索 Wiki 或工作记忆 | `evolve wiki search`、`evolve memory search` |
-| 根据经过验证的证据改进 Skill | `workflow-evolve` |
+| [ew-orchestrate](skills/ew-orchestrate/SKILL.md) | 编排分析、计划、执行和评审。单个可验证任务走内置的 `ew-companion` 步骤。 |
+| [ew-odyssey](skills/ew-odyssey/SKILL.md) | 迭代排查、多维评审、安全审计和 UI 改进。 |
+| [team-swarm](skills/team-swarm/SKILL.md) | 对候选方案并行探索、评分和复核。 |
+| [ew-skill-design](skills/ew-skill-design/SKILL.md) | 设计或移植 Skill，定义输入、交付物和验证方式。 |
+| [workflow-evolve](skills/workflow-evolve/SKILL.md) | 根据执行记录提出改进，用回放比较基线与候选版本。 |
+| [workflow-closeout](skills/workflow-closeout/SKILL.md) | 将 Session 收尾、知识候选和 Wiki 审查交给统一的知识流程。 |
+| [ew-impeccable](skills/ew-impeccable/SKILL.md) | 为 Web 和原生移动界面制定方向、实现设计、审计和打磨。 |
+
+### Impeccable 界面设计
+
+![Impeccable 的四个入口，分别用于定义方向、实现界面、检查质量和打磨细节](docs/images/impeccable-skill.png)
+
+从 Maestro Flow 移植的 Impeccable 4.1.3 随包提供设计手册、界面检测器和 Live 辅助脚本。用 `shape` 明确需求和设计方向，用 `craft` 进入界面实现，用 `audit` 检查可访问性、响应式和性能，用 `polish` 完成发布前的细节检查。
+
+```sh
+evolve install --scope project --skill ew-impeccable --yes
+evolve workflows show ew-impeccable
+```
+
+项目安装后，可以请代码助手读取 `skills/ew-impeccable/SKILL.md` 并对指定页面执行 `audit`。用户级安装可在 Codex CLI 调用 `$ew-impeccable`，或在 Claude Code 调用 `/ew-impeccable`。需要把执行证据纳入 Session 时，提交项目 Skill 后使用 `ew-impeccable` 作为 Run 步骤。
+
+## 项目知识与代码图谱
 
 Run 通过 MCP 读取项目知识时，回执会记录搜索范围、条目 ID 和正文校验值。Session 可以把已读取的知识固定为后续步骤的输入。Skill 改进以提案形式进入评审和回放，通过验证后再应用。运行状态和工作记忆保存在项目的 `.agent-memory/`，正式 Wiki 条目位于 `wiki/entries/`。 [知识使用与沉淀](skills/ew-orchestrate/references/knowledge-route.md)
-
-## 代码图谱
 
 在 Git 根目录打开 Session，或首次用 `evolve` 查询代码时，会自动在项目的 `.codegraph/` 中建立索引。之后打开 Session 或查询代码时，CLI 会先同步新增、修改和删除的文件。只查 Wiki 或记忆时无需建立代码图谱。
 
@@ -89,3 +111,5 @@ npm test
 ## 致谢
 
 工作流延续了 Maestro Flow 的 Session、Run 和 Skill 生命周期设计。代码图谱的自动初始化和同步参考了 Maestro Flow 的启动及提交提示词钩子。记忆和 Wiki 实现复用了 TencentDB Agent Memory 的部分 MIT 代码。 [Maestro Flow](https://github.com/catlog22/maestro-flow) · [Maestro Flow 图谱初始化](https://github.com/catlog22/maestro-flow/blob/master/src/hooks/kg-auto-init.ts) · [Maestro Flow 图谱同步](https://github.com/catlog22/maestro-flow/blob/master/src/hooks/kg-sync-hook.ts) · [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory/tree/42d4cde50c5a83182fced8c584f9ddb32a620615)
+
+Impeccable 由 Paul Bakaus 创建，经 Maestro Flow 适配，本项目保留其 Apache-2.0 许可证和第三方说明。 [来源与版本](skills/ew-impeccable/UPSTREAM.md) · [许可证](skills/ew-impeccable/LICENSE) · [第三方说明](skills/ew-impeccable/NOTICE.md)

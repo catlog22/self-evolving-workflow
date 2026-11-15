@@ -15,6 +15,7 @@
   { "id": "ew-odyssey-security", "path": "skills/ew-odyssey/references/odyssey-security.md" },
   { "id": "ew-odyssey-defensive", "path": "skills/ew-odyssey/references/odyssey-defensive.md" },
   { "id": "ew-odyssey-ui", "path": "skills/ew-odyssey/references/odyssey-ui.md" },
+  { "id": "ew-impeccable", "path": "skills/ew-impeccable/SKILL.md" },
   { "id": "swarm", "path": "skills/team-swarm/specs/swarm-protocol.md" },
   { "id": "knowledge", "path": "skills/ew-orchestrate/references/knowledge-route.md" },
   { "id": "ew-skill-design", "path": "skills/ew-skill-design/references/package-contract.md" },

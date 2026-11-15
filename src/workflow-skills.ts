@@ -34,7 +34,7 @@ export interface WorkflowSkill {
 const internal = new Set(orchestrationSteps.map(workflowName));
 const odyssey = new Map(odysseyModes.map(mode => ['ew-odyssey-' + mode, mode]));
 export const commandNames = [
-  ...internal, ...odyssey.keys(), 'team-swarm',
+  ...internal, ...odyssey.keys(), 'team-swarm', 'ew-impeccable',
 ];
 
 export function workflowHash(bytes: Buffer | string) {

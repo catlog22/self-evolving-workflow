@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 export const cli = fileURLToPath(new URL('../dist/workflow-cli.js', import.meta.url));
 export const memory = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
-export function fixture(prefix) {
+export function fixture(prefix, extraSkills = []) {
   const root = mkdtempSync(join(tmpdir(), prefix));
   const sentinel = join(root, 'maestro-invoked');
   const bin = join(root, 'bin');
@@ -48,7 +48,7 @@ export function fixture(prefix) {
     writeFileSync(filename, JSON.stringify({ ...body, _meta: { kind, schema, role, alias } }) + '\n');
   };
   try {
-    const names = ['ew-orchestrate', 'ew-odyssey', 'team-swarm'];
+    const names = ['ew-orchestrate', 'ew-odyssey', 'team-swarm', ...extraSkills];
     assert.deepEqual(evolve('skills', 'install', ...names).installed, names);
     assert.deepEqual(evolve('skills', 'install', ...names).installed, []);
     git('init', '-q');

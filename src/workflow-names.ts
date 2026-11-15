@@ -5,6 +5,7 @@ const aliases = new Map<string, string>([
   ['maestro', 'ew-orchestrate'],
   ['maestro-odyssey', 'ew-odyssey'],
   ['maestro-skill-design', 'ew-skill-design'],
+  ['maestro-impeccable', 'ew-impeccable'],
   ...orchestrationSteps.map(step => [step, 'ew-' + step] as const),
   ...odysseyModes.map(mode => ['odyssey-' + mode, 'ew-odyssey-' + mode] as const),
 ]);
