@@ -1,20 +1,31 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { posix } from 'node:path';
 import { createInterface } from 'node:readline';
 
-const [memoryCli, root, db, entry, statePath] = process.argv.slice(2);
-if (!memoryCli || !root || !db || !entry || !statePath) {
-  throw new Error('memory-codex-mcp requires memory CLI, root, database, entry and state paths');
+const [memoryCli, root, db, entry, commit, statePath, tracePath] = process.argv.slice(2);
+const packageRoot = posix.dirname(entry);
+const files = new Map();
+const loaded = new Map();
+for (const record of git('ls-tree', '-r', '-z', commit, '--', packageRoot).toString('utf8').split('\0')) {
+  const match = /^100(?:644|755) blob ([a-f0-9]+)\t(.+)$/s.exec(record);
+  if (match && /\.md$/i.test(match[2])) files.set(match[2], match[1]);
+}
+
+function git(...args) {
+  return execFileSync('git', args, { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 const toolDefinitions = [
   {
     name: 'read_skill',
-    description: 'Read the selected Skill Markdown entry from the bound checkout.',
+    description: 'Read the bound Skill entry. Follow a declared Markdown link by supplying its destination and the path of the source document.',
     annotations: { readOnlyHint: true, openWorldHint: false },
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: 'object', properties: { destination: { type: 'string' }, from: { type: 'string' } },
+      additionalProperties: false,
+    },
   },
   {
     name: 'memory_search',
@@ -35,45 +46,41 @@ const toolDefinitions = [
 ];
 
 function callMemory(...args) {
-  const output = execFileSync(process.execPath, [memoryCli, '--root', root, '--db', db, ...args], {
+  const output = execFileSync(process.execPath, [memoryCli, '--root', root, '--db', db, '--reads', tracePath, ...args], {
     cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   return JSON.parse(output);
 }
 
-function readState() {
-  try { return JSON.parse(readFileSync(statePath, 'utf8')); } catch { return { reads: [], searches: [], memoryReads: [] }; }
-}
-
-function writeState(state) {
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n');
-}
-
-function readSkill() {
-  const path = resolve(root, entry);
-  const markdown = readFileSync(path, 'utf8');
-  const state = readState();
-  if (!state.reads.some(item => item.path === entry)) {
-    state.reads.push({ path: entry, sha256: createHash('sha256').update(markdown).digest('hex') });
-    writeState(state);
+function readSkill({ from, destination }) {
+  let path = entry;
+  if (from !== undefined || destination !== undefined) {
+    const source = loaded.get(from);
+    if (!source || typeof destination !== 'string') {
+      throw new Error('Supply the destination and a previously read source path');
+    }
+    const links = [...source.markdown.matchAll(/\[[^\]]*\]\(\s*(<[^>]+>|[^\s)]+)/g)]
+      .map(match => match[1].replace(/^<|>$/g, ''));
+    const target = destination.split('#', 1)[0];
+    if (!target || /[\\:]/.test(target) || posix.isAbsolute(target) || !links.includes(destination)) {
+      throw new Error('Select a declared relative Markdown link from the source');
+    }
+    path = posix.join(posix.dirname(from), target);
   }
-  return { path: entry, markdown };
-}
-
-function searchMemory(query) {
-  const result = callMemory('memory', 'search', query, '--trace');
-  const state = readState();
-  state.searches.push({ query, result });
-  writeState(state);
-  return result;
+  const blob = files.get(path);
+  if (!blob) throw new Error(`Skill document is unavailable in the bound package: ${path}`);
+  const bytes = git('cat-file', 'blob', blob);
+  const markdown = bytes.toString('utf8');
+  loaded.set(path, { markdown, sha256: createHash('sha256').update(bytes).digest('hex') });
+  writeFileSync(statePath, JSON.stringify([...loaded].map(([path, { sha256 }]) => ({ path, sha256 }))));
+  return { path, markdown };
 }
 
 function getMemory(id) {
-  const result = callMemory('memory', 'get', id, '--trace');
-  const state = readState();
-  state.memoryReads.push({ id, result });
-  writeState(state);
-  return result;
+  const { searches } = JSON.parse(readFileSync(tracePath, 'utf8'));
+  const search = searches.findLast(item => item.returned_ids.includes(id));
+  if (!search) throw new Error('Select a memory ID returned by a search in this replay');
+  return callMemory('memory', 'get', id, '--from-search', search.search_id);
 }
 
 async function handle(line) {
@@ -90,8 +97,8 @@ async function handle(line) {
       case 'tools/call': {
         const name = request.params?.name;
         const args = request.params?.arguments ?? {};
-        if (name === 'read_skill') value = readSkill();
-        else if (name === 'memory_search' && typeof args.query === 'string' && args.query.trim()) value = searchMemory(args.query);
+        if (name === 'read_skill') value = readSkill(args);
+        else if (name === 'memory_search' && typeof args.query === 'string' && args.query.trim()) value = callMemory('memory', 'search', args.query);
         else if (name === 'memory_get' && typeof args.id === 'string' && args.id.trim()) value = getMemory(args.id);
         else throw new Error(`Unsupported memory tool call: ${name}`);
         break;

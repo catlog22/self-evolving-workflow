@@ -57,7 +57,7 @@ workflow-evolve <skill-entry>
   [--project <project ID>] [--max-retries <n>] [--auto]
 ```
 
-The default runner is `scripts/codex-memory-replay.mjs`. It invokes the real `codex exec` CLI in read-only mode, requires the Codex task to call Agent Memory through `scripts/memory-codex-mcp.mjs`, and returns loaded Skill files plus a `knowledge-reads/1.0` receipt. Use `scripts/codex-replay.mjs` when the host provides a compatible Maestro Session/Run CLI. Set `MAESTRO_REPLAY_CLI` to that CLI. `AGENT_MEMORY_REPLAY_CLI` remains a compatibility alias for older callers.
+The default runner is `scripts/codex-memory-replay.mjs`. It invokes `codex exec` in read-only mode and opens Skill documents from the selected Git commit. The runner calls the bundled Agent Memory CLI and returns the document hashes and a `knowledge-reads/1.0` receipt. Set `AGENT_MEMORY_DB` to an absolute database path when replay should use existing memories. Each replay uses a fresh search trace.
 
 ## Required evidence
 
@@ -76,4 +76,4 @@ node skills/workflow-evolve/scripts/evolve-loop.mjs `
   --auto
 ```
 
-The script writes one state file and one directory per round under `.workflow/evolution/<timestamp>/.` The Run adapter publishes the final state as `outputs/evolution-report.json`.
+The script writes one state file and one directory per round under `.workflow/evolution/<timestamp>/`. When invoked inside a Run, it writes the final result to `outputs/evolution-report.json` in that Run.

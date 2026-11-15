@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -23,8 +24,9 @@ const iterations = Number(required('--iterations'));
 if (!Number.isInteger(iterations) || iterations < 1) throw new Error('--iterations must be a positive integer');
 const entry = resolve(root, required('--skill'));
 const scenariosPath = resolve(root, required('--scenarios'));
-const runner = resolve(root, option('--runner', join(root, 'skills', 'workflow-evolve', 'scripts', 'codex-memory-replay.mjs')));
-const memoryCli = resolve(root, option('--memory-cli', join(root, 'dist', 'cli.js')));
+const runner = resolve(root, option('--runner', fileURLToPath(new URL('./codex-memory-replay.mjs', import.meta.url))));
+const memoryCli = resolve(root, option('--memory-cli', process.env.AGENT_MEMORY_CLI ||
+  fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))));
 const agy = option('--agy', 'agy');
 const maxRetries = Number(option('--max-retries', '1'));
 if (!Number.isInteger(maxRetries) || maxRetries < 0) throw new Error('--max-retries must be a non-negative integer');
@@ -38,6 +40,7 @@ if (!existsSync(scenariosPath)) throw new Error(`Scenario file not found: ${scen
 if (!existsSync(runner)) throw new Error(`Replay runner not found: ${runner}`);
 if (!existsSync(memoryCli)) throw new Error(`Agent Memory CLI not found: ${memoryCli}`);
 process.env.AGENT_MEMORY_CLI = memoryCli;
+if (process.env.AGENT_MEMORY_DB) process.env.AGENT_MEMORY_DB = resolve(root, process.env.AGENT_MEMORY_DB);
 
 const skillEntry = entry.replaceAll('\\', '/').replace(`${root.replaceAll('\\', '/')}/`, '');
 if (!/^skills\/[a-z0-9]+(?:-[a-z0-9]+)*\/SKILL\.md$/i.test(skillEntry)) {
@@ -74,11 +77,10 @@ function jsonCommand(command, commandArgs, options = {}) {
 
 function git(args) { return run('git', args); }
 
-function runReplay(scenario, commit, roundDir) {
+function runReplay(scenario, commit) {
   const output = run(process.execPath, [runner], {
     input: JSON.stringify({ id: `${scenario.id}-round-${state.rounds.length + 1}`, input: scenario.input,
       entry: skillEntry, commit }),
-    env: { AGENT_MEMORY_CLI: memoryCli, AGENT_MEMORY_DB: join(roundDir, 'memory.db') },
   });
   return JSON.parse(output);
 }
@@ -171,7 +173,7 @@ try {
     mkdirSync(roundDir, { recursive: true });
     const base = git(['rev-parse', 'HEAD']);
     const baseline = scenarioSet.map(scenario => ({ id: scenario.id, expected: scenario.input?.expected,
-      observation: runReplay(scenario, base, roundDir) }));
+      observation: runReplay(scenario, base) }));
     writeFileSync(join(roundDir, 'baseline.json'), JSON.stringify(baseline, null, 2) + '\n');
     const regressions = baseline.filter(item => scenarioSet.find(scenario => scenario.id === item.id)?.baseline && !item.observation.passed);
     if (regressions.length) {
@@ -222,7 +224,7 @@ try {
     }
     if (has('--auto')) {
       const applied = jsonCommand(process.execPath, [memoryCli, '--root', root, 'evolve', 'apply', replay.id]);
-      const verified = scenarioSet.map(scenario => ({ id: scenario.id, observation: runReplay(scenario, applied.commit, roundDir) }));
+      const verified = scenarioSet.map(scenario => ({ id: scenario.id, observation: runReplay(scenario, applied.commit) }));
       const passed = verified.every(item => item.observation.passed);
       if (!passed) {
         jsonCommand(process.execPath, [memoryCli, '--root', root, 'evolve', 'rollback', replay.id]);

@@ -69,7 +69,7 @@ export async function verifyEvolveHost({
 }) {
   const prompt = [
     await readFile(skillInstructions, 'utf8'),
-    'Execute steps 1–3 of the Skill for both supplied Session IDs. Use only the retrospective MCP tools.',
+    'Review both supplied Session IDs and draft an evidence-backed change where warranted. Use only the retrospective MCP tools.',
     'Use review_session for session review, read_original_skill for the bound revision, and draft_addition for evolve draft.',
     'When drafting, select the affected Run, compare the failure, verified retry, and original Skill, and cite the user correction and verification evidence.',
     'The staging request should produce the exact corrected command described by the evidence so a replay can validate it.',
@@ -135,9 +135,13 @@ export async function verifyEvolveHost({
   assert.equal((await agent('evolve', 'apply', receipt.id)).commit, receipt.candidate);
   const replay = async commit => JSON.parse(await invoke(process.execPath, [replayRunner], env,
     JSON.stringify({ id: 'evolve-published', input: staging, entry, commit })));
-  assert.deepEqual(await replay(receipt.candidate), receipt.scenarios[0].candidate);
+  const applied = await replay(receipt.candidate);
+  assert.equal(applied.passed, true);
+  assert.deepEqual(applied.loaded, receipt.scenarios[0].candidate.loaded);
   const rollback = await agent('evolve', 'rollback', receipt.id);
-  assert.deepEqual(await replay(rollback.commit), receipt.scenarios[0].baseline);
+  const reverted = await replay(rollback.commit);
+  assert.equal(reverted.passed, false);
+  assert.deepEqual(reverted.loaded, receipt.scenarios[0].baseline.loaded);
   assert.equal(await readFile(skillEntry, 'utf8'), baselineSkill);
   console.log('Codex replayed the reviewed draft, loaded its conditional document after apply, and reproduced the baseline after rollback.');
 }

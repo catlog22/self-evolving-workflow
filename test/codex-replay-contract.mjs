@@ -1,82 +1,86 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const fixture = mkdtempSync(join(tmpdir(), 'evolve-external-replay-'));
+const fixture = mkdtempSync(join(tmpdir(), 'evolve-native-replay-'));
 const repo = join(fixture, 'repo');
-const packagePath = 'skills/replay-fixture';
-const entry = packagePath + '/SKILL.md';
-const host = join(fixture, 'session-host.mjs');
+const folder = 'skills/replay-fixture';
+const entry = folder + '/SKILL.md';
+const reference = folder + '/references/check.md';
+const baseline = '---\nname: replay-fixture\nrequired_links: [references/check.md]\n---\n[Checks](references/check.md)\n[Outside](../../outside.md)\n';
+const guidance = 'Follow the fixture checks.\n';
+const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+const runner = fileURLToPath(new URL('../skills/workflow-evolve/scripts/codex-replay.mjs', import.meta.url));
 const fakeCodex = join(fixture, 'fake-codex.mjs');
-const wrapper = join(fixture, process.platform === 'win32' ? 'fake-codex.cmd' : 'fake-codex.sh');
-const script = fileURLToPath(new URL('../skills/workflow-evolve/scripts/codex-replay.mjs', import.meta.url));
-const baseline = '---\nname: replay-fixture\n---\n\n# Replay fixture\n';
+const sha256 = data => createHash('sha256').update(data).digest('hex');
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, { cwd: repo, encoding: 'utf8', windowsHide: true, ...options }).trim();
 }
 
 try {
-  mkdirSync(join(repo, packagePath), { recursive: true });
+  mkdirSync(join(repo, folder, 'references'), { recursive: true });
   writeFileSync(join(repo, entry), baseline);
+  writeFileSync(join(repo, reference), guidance);
+  writeFileSync(join(repo, 'outside.md'), 'Outside the Skill package');
   run('git', ['init', '-q']);
-  run('git', ['config', 'user.name', 'External replay fixture']);
-  run('git', ['config', 'user.email', 'external-replay@example.invalid']);
+  run('git', ['config', 'user.name', 'Native replay fixture']);
+  run('git', ['config', 'user.email', 'replay@example.invalid']);
   run('git', ['config', 'core.autocrlf', 'false']);
-  run('git', ['add', entry]);
+  run('git', ['add', '.']);
   run('git', ['commit', '-qm', 'Replay fixture']);
+  const commit = run('git', ['rev-parse', 'HEAD']);
+  writeFileSync(join(repo, entry), 'Uncommitted content');
+  writeFileSync(join(repo, reference), 'Uncommitted content');
 
-  writeFileSync(host, [
-    "import { execFileSync } from 'node:child_process';",
-    "import { createHash } from 'node:crypto';",
-    "import { readFileSync, writeFileSync } from 'node:fs';",
-    "import { join } from 'node:path';",
-    "const args = process.argv.slice(2);",
-    "const value = name => { const at = args.indexOf(name); return at < 0 ? undefined : args[at + 1]; };",
-    "const root = value('--workflow-root');",
-    "const command = args.slice(0, 2).join(' ');",
-    "const statePath = join(root, '.replay-host.json');",
-    "const git = (...gitArgs) => execFileSync('git', gitArgs, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();",
-    "const reply = result => process.stdout.write(JSON.stringify({ ok: true, result }));",
-    "if (command === 'session open') { const state = { skill: value('--chain'), session: value('--id') }; writeFileSync(statePath, JSON.stringify(state)); reply({ orchestration_revision: 0 }); }",
-    "else if (command === 'run next') { const state = JSON.parse(readFileSync(statePath, 'utf8')); const commit = git('rev-parse', 'HEAD'); const tree = git('rev-parse', 'HEAD:skills/' + state.skill); writeFileSync(statePath, JSON.stringify({ ...state, run: 'run-external', commit, tree })); reply({ run_id: 'run-external', skill_ref: { skill_id: state.skill, commit, tree, package_path: 'skills/' + state.skill, entry: 'SKILL.md' } }); }",
-    "else if (command === 'run check') { const state = JSON.parse(readFileSync(statePath, 'utf8')); const path = join(root, 'skills/' + state.skill + '/SKILL.md'); const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex'); reply({ skill_reads: { reference: { skill_id: state.skill, commit: state.commit, tree: state.tree, package_path: 'skills/' + state.skill, entry: 'SKILL.md' }, missing: [], reads: [{ path: 'SKILL.md', sha256: 'sha256:' + sha256 }] }, knowledge_reads: { schema_version: 'knowledge-reads/1.0', searches: [], reads: [], constraints_bound: [] } }); }",
-    "else throw new Error('unsupported host command: ' + command);",
-  ].join('\n'));
   writeFileSync(fakeCodex, [
+    "import assert from 'node:assert/strict';",
+    "import { execFileSync } from 'node:child_process';",
+    "const setting = name => JSON.parse(process.argv.find(arg => arg.startsWith('mcp_servers.evolve_replay.' + name + '=')).split('=').slice(1).join('='));",
+    "const request = (id, name, args = {}) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } });",
+    "const { FIXTURE_ENTRY, FIXTURE_OMIT_LINK } = process.env;",
+    "const calls = [request(1, 'memory_search', { query: 'staging' }), request(2, 'memory_search', { query: 'migration' }), request(3, 'memory_get', { id: 'migration-check' }), request(4, 'read_skill'), request(5, 'read_skill', { from: FIXTURE_ENTRY, destination: '../../outside.md' })];",
+    "if (!FIXTURE_OMIT_LINK) calls.push(request(6, 'read_skill', { from: FIXTURE_ENTRY, destination: 'references/check.md' }));",
     "process.stdin.resume();",
     "process.stdin.on('end', () => {",
-    "  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'migrate staging --dry-run' } }) + '\\n');",
+    "  const output = execFileSync(setting('command'), setting('args'), { input: calls.map(call => JSON.stringify(call)).join('\\n') + '\\n', encoding: 'utf8' });",
+    "  const results = output.trim().split(/\\r?\\n/).map(line => JSON.parse(line).result);",
+    "  assert.ok(results[4].isError);",
+    "  assert.ok(results.filter((_, index) => index !== 4).every(result => !result.isError));",
+    "  assert.match(JSON.parse(results[3].content[0].text).markdown, /\\[Checks\\]/);",
+    "  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'fixture result' } }) + '\\n');",
     "  process.stdout.write(JSON.stringify({ type: 'turn.completed' }) + '\\n');",
     "});",
   ].join('\n'));
-  if (process.platform === 'win32') {
-    writeFileSync(wrapper, '@echo off\n"' + process.execPath + '" "' + fakeCodex + '" %*\n');
-  } else {
-    writeFileSync(wrapper, '#!/bin/sh\nexec "' + process.execPath + '" "' + fakeCodex + '" "$@"\n');
-    execFileSync('chmod', ['+x', wrapper], { cwd: fixture, windowsHide: true });
-  }
-
-  const commit = run('git', ['rev-parse', 'HEAD']);
-  const output = execFileSync(process.execPath, [script], {
-    cwd: repo,
+  const db = join(fixture, 'memory.db');
+  run(process.execPath, [cli, 'memory', 'put', 'Staging migration checks', '--db', db, '--id', 'migration-check']);
+  const env = { ...process.env, CODEX_REPLAY_EXECUTABLE: fakeCodex, AGENT_MEMORY_DB: db, FIXTURE_ENTRY: entry,
+    MAESTRO_REPLAY_CLI: join(fixture, 'unused-host.js'), AGENT_MEMORY_REPLAY_CLI: join(fixture, 'unused-alias.js') };
+  const replay = (options = {}) => run(process.execPath, [runner], {
+    env: { ...env, ...options.env },
     input: JSON.stringify({
-      id: 'external-replay-contract',
-      input: { task: 'Prepare a staging migration request.', expected: 'migrate staging --dry-run' },
-      entry, commit,
+      id: 'native-replay-contract', input: { task: 'Prepare staging migration.', expected: 'fixture result' },
+      entry, commit: options.commit ?? commit,
     }),
-    env: { ...process.env, AGENT_MEMORY_REPLAY_CLI: host, CODEX_REPLAY_EXECUTABLE: wrapper },
-    encoding: 'utf8', windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const result = JSON.parse(output);
+
+  const result = JSON.parse(replay());
   assert.equal(result.passed, true);
-  assert.deepEqual(result.loaded.map(file => file.path), [entry]);
-  assert.deepEqual(result.knowledge_reads, { schema_version: 'knowledge-reads/1.0', searches: [], reads: [], constraints_bound: [] });
-  console.log('External Session/Run and Codex adapter replay contract passed.');
+  assert.deepEqual(result.loaded, [
+    { path: entry, sha256: sha256(baseline) }, { path: reference, sha256: sha256(guidance) },
+  ]);
+  assert.deepEqual(result.knowledge_reads.searches.map(search => search.search_id), ['search-1', 'search-2']);
+  assert.equal(result.knowledge_reads.reads[0].id, 'migration-check');
+  assert.equal(result.knowledge_reads.reads[0].from_search_id, 'search-2');
+  assert.throws(() => replay({ env: { FIXTURE_OMIT_LINK: '1' } }), /needs Skill reads/);
+  assert.throws(() => replay({ commit: 'a'.repeat(40) }), /checkout must match/);
+  console.log('Native replay verified Git-bound Skill reads and Agent Memory search provenance.');
 } finally {
+  // 临时目录由本次验收独占。
   rmSync(fixture, { recursive: true, force: true });
 }

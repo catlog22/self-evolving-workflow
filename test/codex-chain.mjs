@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const maestro = process.env.MAESTRO_REPLAY_CLI;
 assert.ok(maestro && isAbsolute(maestro), 'Set MAESTRO_REPLAY_CLI to the built Maestro JavaScript entry.');
 const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? 'codex.exe' : 'codex');
-const readSkillServer = fileURLToPath(new URL('../skills/workflow-evolve/scripts/read-skill-mcp.mjs', import.meta.url));
+const readSkillServer = fileURLToPath(new URL('./fixtures/legacy-skill-read-mcp.mjs', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'evolve-codex-chain-'));
 const session = 'validate-help';
 const fixtureId = randomUUID();

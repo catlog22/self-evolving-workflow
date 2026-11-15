@@ -411,7 +411,7 @@ A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` �
 
 ### 7.5 知识闭环的端到端验收
 
-将 `MAESTRO_REPLAY_CLI` 设为已构建的 Maestro JavaScript 入口。用 `npm run test:codex-replay` 验证真实 Codex 的 Skill 回放、应用与回滚，核对新增链接的读取条件和文档哈希。用 `npm run test:maestro-closeout` 在临时 Git 仓库执行预检命令，验证会话纠正、Run 重试、完成回执自动沉淀、重复投递、Wiki 发布和索引重建。后者使用本地模型测试端点固定提取结果，并覆盖临时网络故障产生零候选的场景。
+用 `npm run test:codex-replay` 验证真实 Codex 与 Agent Memory 的 Skill 回放、应用与回滚，核对 Git 提交中的文档哈希、新增链接的读取条件和 Memory 检索回执。已有 Maestro Session 回执的兼容验收使用 `npm run test:maestro-closeout`。为该验收设置 `MAESTRO_REPLAY_CLI`，指向用于生成旧回执的运行时入口。该验收使用本地模型测试端点固定提取结果，覆盖会话纠正、Run 重试、重复投递、Wiki 发布、索引重建及临时网络故障。
 
 用 `npm run test:codex-standalone` 验证独立 Skill 的宿主结束回调。测试让真实 Codex 读取提交中的 Markdown，再用本地模型测试端点检查收尾取证和回执重试。测试也覆盖宿主失败产生零候选，以及已有 Session 归属的调用退出独立入口。
 
@@ -421,4 +421,4 @@ A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` �
 
 真实 Codex 回放已覆盖三级。高优先级读取入口后执行短指令。中优先级只在触发场景读取新增说明。低优先级在常规场景只读取入口，在显式查阅场景沿固定版本的参考索引打开新文档。回放核对文件路径与哈希，并覆盖旧的单文档草稿。独立 Skill 验收还用失败调用的执行 ID 取回终态、版本与信号来源。
 
-现有的 Maestro 收尾验收从真实 Session 回执取证，用固定模型响应提取信号。`npm run test:codex-evolve` 进一步让真实 Codex 自己调用回溯工具、核对原版本并选定优先级，再把同一份草稿交给真实宿主回放，覆盖有可复用信号和临时故障两种 Session。 [Session 收尾验收](/D:/evolve_workflow/test/maestro-closeout.mjs:273) · [自进化闭环验收](/D:/evolve_workflow/test/codex-evolve.mjs) · [草稿回放](/D:/evolve_workflow/test/codex-replay.mjs)
+用 `npm run test:codex-evolve` 在隔离仓库验证 Codex 执行、Agent Memory 检索、历史证据、Agy 讨论和确认以及应用后复验。`npm run test:legacy-codex-evolve` 覆盖旧 Session 回执中的可复用信号和临时故障。 [自动迭代验收](/D:/evolve_workflow/test/codex-evolve-native.mjs) · [Session 收尾验收](/D:/evolve_workflow/test/maestro-closeout.mjs) · [草稿回放](/D:/evolve_workflow/test/codex-replay.mjs)

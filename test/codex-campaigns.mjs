@@ -12,7 +12,7 @@ import { isDeepStrictEqual } from 'node:util';
 const maestro = process.env.MAESTRO_REPLAY_CLI;
 assert.ok(maestro && isAbsolute(maestro), 'Set MAESTRO_REPLAY_CLI to the built Maestro JavaScript entry.');
 const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? 'codex.exe' : 'codex');
-const server = fileURLToPath(new URL('../skills/workflow-evolve/scripts/read-skill-mcp.mjs', import.meta.url));
+const server = fileURLToPath(new URL('./fixtures/legacy-skill-read-mcp.mjs', import.meta.url));
 const debugServer = fileURLToPath(new URL('./odyssey-debug-mcp.mjs', import.meta.url));
 const maestroServer = join(dirname(maestro), 'mcp', 'server.js');
 const requireMaestro = createRequire(maestro);

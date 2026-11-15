@@ -9,6 +9,7 @@ const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const runner = fileURLToPath(new URL('../skills/workflow-evolve/scripts/codex-replay.mjs', import.meta.url));
 const fixture = mkdtempSync(join(tmpdir(), 'evolve-codex-replay-'));
 const repo = join(fixture, 'repo');
+const env = { ...process.env, AGENT_MEMORY_DB: join(fixture, 'memory.db') };
 const packagePath = 'skills/migration-preflight';
 const entry = `${packagePath}/SKILL.md`;
 const baseline = [
@@ -21,7 +22,7 @@ const baseline = [
 const migration = { task: 'Prepare a migration request for the staging database.', expected: 'migrate staging --dry-run' };
 const status = { task: 'Handle a status request for the migration tracker.', expected: 'migrate status' };
 const invoke = (command, args, input) => execFileSync(command, args, {
-  cwd: repo, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true,
+  cwd: repo, env, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true,
 });
 const git = (...args) => invoke('git', args).trim();
 const agent = (...args) => JSON.parse(invoke(process.execPath, [cli, '--root', repo, ...args]));
@@ -35,6 +36,8 @@ try {
   git('config', 'core.autocrlf', 'false');
   git('add', entry);
   git('commit', '-qm', 'Migration preflight fixture');
+  agent('memory', 'put', 'Staging migration checks record schema and row counts before applying changes.',
+    '--db', env.AGENT_MEMORY_DB, '--id', 'staging-checks');
 
   const draft = join(fixture, 'draft.json');
   const cases = join(fixture, 'cases.json');
@@ -48,6 +51,7 @@ try {
   ]));
   const receipt = agent('evolve', 'replay', draft, '--runner', runner, '--scenarios', cases);
   assert.deepEqual(receipt.scenarios.map(item => [item.baseline.passed, item.candidate.passed]), [[false, true], [true, true]]);
+  assert.ok(receipt.scenarios.every(item => item.candidate.knowledgeReads.searches.some(search => search.source === 'memory')));
   const learning = receipt.files.find(path => path.includes('/references/learnings/'));
   assert.ok(learning);
   assert.ok(receipt.scenarios[0].candidate.loaded.some(file => file.path === learning));
@@ -65,7 +69,8 @@ try {
   const rolledBack = JSON.parse(invoke(process.execPath, [runner], JSON.stringify({
     id: 'verify-rollback', input: migration, entry, commit: git('rev-parse', 'HEAD'),
   })));
-  assert.deepEqual(rolledBack, receipt.scenarios[0].baseline);
+  assert.equal(rolledBack.passed, receipt.scenarios[0].baseline.passed);
+  assert.deepEqual(rolledBack.loaded, receipt.scenarios[0].baseline.loaded);
   console.log('Codex loaded the applied revision and reproduced the baseline after rollback.');
 
   const index = `${packagePath}/references/learnings/index.md`;
