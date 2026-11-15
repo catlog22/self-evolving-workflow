@@ -54,6 +54,14 @@ export interface MemoryStoreOptions {
   embed?: (text: string) => Promise<ArrayLike<number>>;
 }
 
+interface ExtractionOptions {
+  llm: LlmClient;
+  session: string;
+  mode?: 'chat' | 'code';
+  agentMemoryPrompt?: AgentMemoryPrompt;
+  systemPrompt?: string;
+}
+
 type Row = Omit<MemoryRecord, 'sourceMessageIds'> & { sourceMessageIds: string; vector: string | null };
 type Hit = MemoryRecord & { score: number };
 
@@ -111,6 +119,13 @@ export class MemoryStore {
           UNIQUE (namespace, id)
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(tokens, tokenize='unicode61');
+        CREATE TABLE IF NOT EXISTS memory_extraction_offsets (
+          namespace TEXT NOT NULL,
+          source TEXT NOT NULL,
+          session TEXT NOT NULL,
+          offset INTEGER NOT NULL,
+          PRIMARY KEY (namespace, source, session)
+        );
       `);
     } catch (error) {
       this.db.close();
@@ -127,6 +142,10 @@ export class MemoryStore {
   }
 
   async putMany(inputs: MemoryInput[]): Promise<MemoryRecord[]> {
+    return (await this.writeMany(inputs))!;
+  }
+
+  private async writeMany(inputs: MemoryInput[], advance?: () => boolean): Promise<MemoryRecord[] | undefined> {
     const prepared = await Promise.all(inputs.map(async input => {
       const content = requireText(input.content, 'content');
       const priority = input.priority ?? 50;
@@ -143,7 +162,7 @@ export class MemoryStore {
       };
     }));
     const now = new Date().toISOString();
-    return transaction(this.db, () => prepared.map(input => {
+    return transaction(this.db, () => advance && !advance() ? undefined : prepared.map(input => {
       const row = this.db.prepare(`
         INSERT INTO memory_records (
           namespace, id, content, type, scene, session, priority, source_ids, created_at, updated_at, version, vector, dimensions
@@ -237,24 +256,38 @@ export class MemoryStore {
     return { strategy: 'fts' as const, results: keyword.slice(0, limit) };
   }
 
-  async extract(messages: ConversationMessage[], options: {
-    llm: LlmClient;
-    session: string;
-    mode?: 'chat' | 'code';
-    agentMemoryPrompt?: AgentMemoryPrompt;
-    systemPrompt?: string;
-  }): Promise<MemoryRecord[]> {
+  async extract(messages: ConversationMessage[], options: ExtractionOptions): Promise<MemoryRecord[]> {
     return this.putMany(await extractMemoryInputs(messages, options));
+  }
+
+  extractionOffset(source: string, session: string): number {
+    const row = this.db.prepare(`SELECT offset FROM memory_extraction_offsets
+      WHERE namespace = ? AND source = ? AND session = ?`).get(this.namespace, source, session);
+    return Number(row?.offset ?? 0);
+  }
+
+  async extractIncremental(messages: ConversationMessage[], options: ExtractionOptions & {
+    source: string;
+    from: number;
+    to: number;
+  }): Promise<MemoryRecord[] | undefined> {
+    const { source, session, from, to } = options;
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to <= from) {
+      throw new InputError('Invalid memory extraction offsets');
+    }
+    if (this.extractionOffset(source, session) !== from) return;
+    const inputs = await extractMemoryInputs(messages, options);
+    return this.writeMany(inputs, () => {
+      if (this.extractionOffset(source, session) !== from) return false;
+      this.db.prepare(`INSERT INTO memory_extraction_offsets (namespace, source, session, offset) VALUES (?, ?, ?, ?)
+        ON CONFLICT (namespace, source, session) DO UPDATE SET offset = excluded.offset`)
+        .run(this.namespace, source, session, to);
+      return true;
+    });
   }
 }
 
-export async function extractMemoryInputs(messages: ConversationMessage[], options: {
-  llm: LlmClient;
-  session: string;
-  mode?: 'chat' | 'code';
-  agentMemoryPrompt?: AgentMemoryPrompt;
-  systemPrompt?: string;
-}): Promise<MemoryInput[]> {
+export async function extractMemoryInputs(messages: ConversationMessage[], options: ExtractionOptions): Promise<MemoryInput[]> {
   const session = requireText(options.session, 'session');
   if (!messages.length) return [];
   const ids = validateConversationMessages(messages);

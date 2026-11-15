@@ -2,6 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
+import { handleCodexMemoryHook, installCodexMemoryHook, syncCodexMemory } from './codex-memory.js';
 import { InputError, requireText } from './common.js';
 import { createSearchServer } from './http.js';
 import { MemoryStore, type ConversationMessage } from './memory.js';
@@ -67,6 +68,8 @@ export function knowledgeHelp(invocation: 'agent-memory' | 'evolve') {
   skill-design apply|rollback <design-id>  Apply or roll back the replayed design
   memory put <text>                        Save a memory (--id, --type, --scene, --session, --priority)
   memory extract <messages.json>           Extract L1 memories (--session required, --mode chat|code)
+  memory codex-install                     Install the project's Codex Stop hook (review it in Codex to enable)
+  memory codex-sync                        Extract saved Codex chats for this project (--session to select one)
   memory get|delete <id>                   Read or delete a memory
   memory search <query>                    Search memory (--type, --scene, --session)
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
@@ -89,7 +92,7 @@ Options:
   --limit <n>          Maximum results per source (default 10)
   --help               Show this message
 
-Ingest and extract use AGENT_MEMORY_LLM_BASE_URL, AGENT_MEMORY_LLM_MODEL and optional
+Ingest, memory extraction, and the Codex hook use AGENT_MEMORY_LLM_BASE_URL, AGENT_MEMORY_LLM_MODEL and optional
 AGENT_MEMORY_LLM_API_KEY for an OpenAI-compatible chat endpoint. Message files contain
 an array of {id, role, timestamp, content}. Commands return JSON on stdout.
 `;
@@ -613,7 +616,8 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
       return print(applySkillDesign(root, requireText(args[0], 'Skill design receipt ID'), action === 'rollback'));
     }
   }
-  if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract'].includes(action)) {
+  if (command === 'memory' && action === 'codex-install') return print(installCodexMemoryHook(root));
+  if (command === 'memory' && ['put', 'get', 'delete', 'search', 'extract', 'codex-hook', 'codex-sync'].includes(action)) {
     const memory = openMemory();
     try {
       switch (action) {
@@ -641,6 +645,16 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
           return print(await memory.extract(messages as ConversationMessage[], {
             session: requireText(values.session, 'session'), mode, llm: modelClient(),
           }));
+        }
+        case 'codex-hook': {
+          const input: unknown = JSON.parse(readFileSync(0, 'utf8').replace(/^\uFEFF/, ''));
+          await handleCodexMemoryHook(input, { root, memory, model: modelClient });
+          return print({});
+        }
+        case 'codex-sync': {
+          const result = await syncCodexMemory({ root, memory, model: modelClient, session: values.session });
+          if (result.failures.length) process.exitCode = 1;
+          return print(result);
         }
       }
     } finally {
