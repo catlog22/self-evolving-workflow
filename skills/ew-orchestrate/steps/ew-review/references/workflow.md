@@ -73,7 +73,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared Codex
 7. Discoveries
 8. Learnings
 
-Specs: `agent-memory wiki constraints --skill ew-review --category review`.
+Specs: `agent-memory wiki constraints --category review`.
 
 ---
 

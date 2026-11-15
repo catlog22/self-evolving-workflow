@@ -37,9 +37,9 @@ const help = `Usage: agent-memory <command> [options]
   wiki ingest <file.md|file.txt>            Generate and merge wiki pages
   wiki search <query>                      Search wiki pages (--hop 0)
   wiki get <id>                            Read a Wiki entry, including history (--resolved for scoped reference)
-  wiki references <query>                  Search active applicable references (--repository, --skill, --task, --path)
+  wiki references <query>                  Search active applicable references (--repository, --task, --path)
   wiki reference <id>                      Compatibility alias for wiki get <id> --resolved
-  wiki constraints                         Resolve active constraints (--skill, --task, --path, --category, --repository, --keyword)
+  wiki constraints                         Resolve active constraints (--task, --path, --category, --repository, --keyword)
   wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --scope project|global|team|personal, --uid, --apply)
   wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
   wiki changes [change-id]                 Read change previews and application receipts (--entry)
@@ -77,9 +77,8 @@ Options:
   --wiki-root <dir>    Override the parent of wiki/
   --db <path>          Memory DB (default <root>/.agent-memory/memory.db)
   --namespace <name>   Memory namespace (default default)
-  --skill <id>         Include Wiki entries scoped to this Skill in context and Wiki lookups
   --memory-session <id> Memory session filter (context uses this instead of its context session)
-  --context-file <path> Load shared Skill/Task/Path/Wiki context from JSON
+  --context-file <path> Load shared task, path and Wiki filters from JSON
   --trace               Include knowledge_reads search/read evidence in the result
   --reads <path>        Load and persist a knowledge_reads receipt across CLI calls
   --trace-file <path>   Compatibility alias for --reads
@@ -112,7 +111,7 @@ const options = {
   priority: { type: 'string' },
   port: { type: 'string' },
   mode: { type: 'string' },
-  skill: { type: 'string' },
+  skill: { type: 'string' }, // 收尾路由和执行回执的 Skill 标识，旧查询也可携带。
   task: { type: 'string' },
   category: { type: 'string', multiple: true },
   keyword: { type: 'string' },
@@ -196,7 +195,7 @@ function readContextFile(path: string): CliWikiContext {
     }
     return [...new Set((input[field] as string[]).map(item => item.trim()))];
   };
-  const text = (field: 'skill' | 'task' | 'repository' | 'keyword'): string | undefined => {
+  const text = (field: 'task' | 'repository' | 'keyword'): string | undefined => {
     if (input[field] === undefined) return undefined;
     if (typeof input[field] !== 'string' || !input[field].trim()) throw new InputError(`Context file ${field} must be a non-empty string`);
     return input[field].trim();
@@ -205,7 +204,7 @@ function readContextFile(path: string): CliWikiContext {
     throw new InputError('Context file includePathScoped must be boolean');
   }
   return {
-    skill: text('skill'), task: text('task'), paths: list('paths'), categories: list('categories'),
+    task: text('task'), paths: list('paths'), categories: list('categories'),
     repository: text('repository'), keyword: text('keyword'),
     ...(input.includePathScoped === undefined ? {} : { includePathScoped: input.includePathScoped as boolean }),
   };
@@ -216,7 +215,6 @@ function cliWikiContext(values: Record<string, unknown>): CliWikiContext {
   const paths = Array.isArray(values.path) ? values.path as string[] : file.paths;
   const categories = Array.isArray(values.category) ? values.category as string[] : file.categories;
   return {
-    skill: typeof values.skill === 'string' ? values.skill : file.skill,
     task: typeof values.task === 'string' ? values.task : file.task,
     paths, categories,
     repository: typeof values.repository === 'string' ? values.repository : file.repository,
@@ -320,7 +318,6 @@ async function main() {
       print(withTrace(await buildContext(sources, query, {
         limit,
         context: {
-          skill: contextValues.skill,
           task: contextValues.task,
           paths: contextValues.paths,
           categories: contextValues.categories as WikiContext['categories'],
@@ -334,7 +331,6 @@ async function main() {
         knowledgeReads,
         contextScope: {
           ...(values.session ? { session_id: values.session } : {}),
-          ...(contextValues.skill ? { skill_id: contextValues.skill } : {}),
           ...(contextValues.task ? { task_kind: contextValues.task } : {}),
           ...(contextValues.paths?.length ? { paths: contextValues.paths } : {}),
         },
@@ -387,7 +383,7 @@ async function main() {
           throw new InputError(action === 'constraints' ? 'Unknown Wiki constraint category' : 'Unknown Wiki reference category');
         }
         if (repository !== undefined && !isRepositoryId(repository)) throw new InputError('Expected a persisted repository UUID');
-        const context: WikiContext = { skill: contextValues.skill, task: contextValues.task, paths: contextValues.paths,
+        const context: WikiContext = { task: contextValues.task, paths: contextValues.paths,
           categories: categories as WikiContext['categories'], repository, keyword: contextValues.keyword };
         if (action === 'references') {
           const query = args.join(' ');

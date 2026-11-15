@@ -103,7 +103,7 @@ skills/
 
 Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重建。初始执行时按作用域解析约束，再按任务检索参考。生效约束的选择以作用域和状态为准，全文检索排名只用于参考条目的相关性排序。
 
-配置 Evolve 后，用 `maestro wiki references "<主题>" --json` 查询项目和有权访问的共享 Wiki。结果按仓库返回，保留条目 ID、来源和可见条目之间的关系。用 `maestro wiki reference <id> --repo <仓库 UUID 或别名> --json` 打开指定条目。两次调用可带相同的 `--skill`、`--task` 和 `--path`。参考查询读取当时适用的活跃条目，约束查询仍从 Run 快照读取。 [Wiki 命令](/D:/evolve-maestro-runtime/src/commands/wiki.ts)
+配置 Evolve 后，用 `maestro wiki references "<主题>" --json` 查询项目和有权访问的共享 Wiki。结果按仓库返回，保留条目 ID、来源和可见条目之间的关系。用 `maestro wiki reference <id> --repo <仓库 UUID 或别名> --json` 打开指定条目。两次调用可带相同的 `--task` 和 `--path`。参考查询读取当时适用的活跃条目，约束查询仍从 Run 快照读取。 [Wiki 命令](/D:/evolve-maestro-runtime/src/commands/wiki.ts)
 
 完成约束比对的项目可用 `MAESTRO_EVOLVE_CONSTRAINTS=1` 启用新读取入口。版本化 Skill 的新 Run 在分派时按 Skill ID、命令名和当前仓库 UUID 固定候选约束，再按 Skill 的 `wiki_categories` 选出初始规则。有待确定文件的规则随 Run 保存，在文件确定后用 `maestro run wiki-constraints <run-id> --session <session-id> --path <file> --json` 筛选。恢复同一 Run 时沿用分派时的快照。`analyze` 和 `plan` 默认选择 `arch`，`execute` 默认选择 `coding`，涉及 UI 的任务可同时选择 `coding` 和 `ui`。已启用 Wiki 的 Run 即使得到空列表，也沿用该次查询结果。
 
@@ -114,7 +114,7 @@ Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重�
 | `title` | 能独立说明条目内容的短标题。 |
 | `mode` | `constraint` 表示执行约束，`reference` 表示可参考的经验。 |
 | `status` | `active` 为当前版本，`deprecated` 供历史查询，`needs_review` 用于切换前尚待核实的条目。 |
-| `scope` | 适用项目范围。项目全局用 `project` 显式声明，局部可用 `skill:<id>`、`path:<glob>` 或 `task:<kind>`。列表中的范围是可独立命中的适用条件。缺少上下文的局部范围保持未命中。旧复合条件需要按原语义核对后再切换。 |
+| `scope` | 适用项目范围。项目全局用 `project` 显式声明，局部可用 `path:<glob>` 或 `task:<kind>`。列表中的范围是可独立命中的适用条件。缺少上下文的局部范围保持未命中。旧复合条件需要按原语义核对后再切换。 |
 | `categories`、`repositories` | 可选的附加范围。`categories` 对应旧规则的类别读取，`repositories` 使用消费方的持久化仓库 UUID。规则还需满足 `scope`。 |
 | `keywords` | 可选的显式关键词。指定关键词时精确匹配，忽略大小写，可跨类别命中。未设置时，可在适用类别内按正文匹配。结构化旧 Spec 无关键词时保留空列表。 |
 | `sources` | 可回查的证据引用。任务证据指向完成回执与具体片段，迁移证据指向原项目、文件和条目锚点。 |
@@ -127,7 +127,7 @@ Markdown 是正式知识的唯一来源，SQLite 全文及关系索引可以重�
 title: 数据库迁移前执行预检
 mode: constraint
 status: active
-scope: [skill:db-migration]
+scope: [task:db-migration]
 sources:
   - "<完成回执中的可回查证据引用>"
 ---
@@ -172,7 +172,6 @@ Agent Memory 作为宿主无关的工具基础设施。Codex、Agy、Claude 和�
   "trust_boundary": "untrusted_evidence_data_only",
   "context_scope": {
     "session_id": "<optional>",
-    "skill_id": "<optional>",
     "task_kind": "<optional>",
     "paths": []
   },
@@ -251,7 +250,7 @@ Closeout 候选先经过只读路由决策，再选择 Wiki、Skill 附加修正
 
 ### 初始化、Review 与自进化边界
 
-初始化阶段只加载 L3 运行上下文。宿主调用 `agent-memory context "<goal>" --skill <id> --task <kind> --session <session-id>`，读取适用的 `constraint` 和 `reference`，并把返回的 `agent-memory-envelope/1.0` 作为工具结果或用户上下文交给当前 Agent。需要补充当前 Session 的 L1 working memory 时显式加 `--include-memory`。该步骤不读取 Codex、Agy 或 Claude 的历史文件。
+初始化阶段只加载 L3 运行上下文。宿主调用 `agent-memory context "<goal>" --task <kind> --session <session-id>`，读取适用的 `constraint` 和 `reference`，并把返回的 `agent-memory-envelope/1.0` 作为工具结果或用户上下文交给当前 Agent。需要补充当前 Session 的 L1 working memory 时显式加 `--include-memory`。该步骤不读取 Codex、Agy 或 Claude 的历史文件。
 
 当前实现没有按 CLI 自动发现历史目录的能力。`session review` 读取 Maestro Session/Run 回执和已提交的 `transcript-evidence`，`evolve review` 读取独立 Skill 完成回执，`--transcript` 只接受用户或宿主显式授权的消息文件。Codex、Agy、Claude 的历史根目录和 JSONL 格式保留在后续回溯适配规范中，不进入初始化或常规搜索。
 
@@ -321,7 +320,7 @@ Closeout 候选先经过只读路由决策，再选择 Wiki、Skill 附加修正
 
 新 Run 按全局、共享仓库、项目、团队、个人的顺序合并约束。团队与个人沿用本地 Git 邮箱对应的成员记录。个人层只读取该成员的目录，快照记录层和 UID。仍有适用旧约束且对应层尚未导入时，分派沿用旧读取路径。旧脚手架的示例和空种子无需切换。已完成的 Run 使用分派时的快照。 [新旧分层验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
-`agent-memory wiki constraints` 支持 `--keyword`、`--skill`、`--task` 和 `--path`。已导入的结构化条目继续使用原关键词，旧 Wiki 页面可从保存的迁移属性读取。运行中的查询只读取该 Run 固定的约束及其关键词。 [新旧读取验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
+`agent-memory wiki constraints` 支持 `--keyword`、`--task` 和 `--path`。已导入的结构化条目继续使用原关键词，旧 Wiki 页面可从保存的迁移属性读取。运行中的查询只读取该 Run 固定的约束及其关键词。 [新旧读取验收](/D:/evolve_workflow/test/maestro-closeout.mjs)
 
 ## 7. 迁移顺序与验收
 

@@ -131,6 +131,9 @@ function parseDraft(value: unknown): ChangeDraft {
     throw new InputError('A retirement changes status and evidence only');
   }
   if (draft.scope !== undefined && !Array.isArray(draft.scope)) throw new InputError('Wiki scope must be a list');
+  if (draft.scope?.some(item => typeof item === 'string' && item.trim().startsWith('skill:'))) {
+    throw new InputError('Use project, task:<kind>, or path:<glob> for Wiki scope');
+  }
   return {
     operation, mode, entry: requireText(draft.entry, 'Wiki entry ID'),
     ...(draft.title !== undefined ? { title: requireText(draft.title, 'Wiki entry title') } : {}),
@@ -186,7 +189,8 @@ export function proposeWikiChange(wiki: Wiki, value: unknown, evidence: readonly
       if (current?.status === 'deprecated') {
         throw new InputError('A retired entry is immutable');
       }
-      if (current?.status === 'needs_review' && draft.operation !== 'retire' && draft.scope === undefined) {
+      const scope = draft.operation === 'retire' ? current?.scope : current?.scope.filter(item => !item.startsWith('skill:'));
+      if ((current?.status === 'needs_review' || scope?.length === 0) && draft.operation !== 'retire' && draft.scope === undefined) {
         throw new InputError('Set the reviewed scope explicitly before activating this entry');
       }
       const { operation } = draft;
@@ -198,7 +202,7 @@ export function proposeWikiChange(wiki: Wiki, value: unknown, evidence: readonly
         title: draft.title ?? (operation === 'create' ? undefined : original.frontmatter.title),
         mode: operation === 'promote' ? 'constraint' : draft.mode ?? current?.mode,
         status: operation === 'retire' ? 'deprecated' : 'active',
-        scope: draft.scope ?? (operation === 'create' ? ['project'] : current?.scope),
+        scope: draft.scope ?? scope ?? ['project'],
         ...(draft.categories !== undefined ? { categories: draft.categories } : {}),
         ...(draft.repositories !== undefined ? { repositories: draft.repositories } : {}),
         ...(draft.keywords !== undefined ? { keywords: draft.keywords } : {}),

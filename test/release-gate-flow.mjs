@@ -75,10 +75,10 @@ const call = (...args) => JSON.parse(execFileSync(process.execPath, [cli, '--roo
 const query = input.query;
 let references;
 if (normalizedBody.includes('wiki constraints')) {
-  call('wiki', 'constraints', '--skill', 'release-gate', '--category', 'review');
+  call('wiki', 'constraints', '--task', 'release', '--category', 'review');
 }
 if (normalizedBody.includes('wiki references')) {
-  references = call('wiki', 'references', query, '--skill', 'release-gate', '--task', 'release');
+  references = call('wiki', 'references', query, '--task', 'release');
 }
 let memories;
 if (input.environment === 'production' && normalizedBody.includes('--include-memory')) {
@@ -88,7 +88,7 @@ if (references?.results?.length && normalizedBody.includes('read')) {
   const preferred = input.environment === 'production' ? 'entries/prod-freeze-protocol' : 'entries/release-checksum';
   const selected = references.results.find(item => item.id === preferred) ?? references.results[0];
   const searchId = references.knowledge_reads?.searches.at(-1)?.search_id;
-  if (selected) call('wiki', 'reference', selected.id, '--skill', 'release-gate', '--task', 'release', ...(searchId ? ['--from-search', searchId] : []));
+  if (selected) call('wiki', 'reference', selected.id, '--task', 'release', ...(searchId ? ['--from-search', searchId] : []));
 }
 if (input.environment !== 'production' && normalizedBody.includes('read')) {
   call('wiki', 'get', 'entries/release-checksum');
@@ -147,7 +147,7 @@ try {
 
   const memory = agent('memory', 'search', 'production release freeze', '--db', db, '--scene', 'release');
   assert.equal(memory.results[0].id, 'mem-prod-freeze-01');
-  const instruction = 'Before release gates, search Wiki references for "<query>" with --skill release-gate --task release --trace; for production include --include-memory, read freeze IDs, and block before writing outputs/release-gate.json.';
+  const instruction = 'Before release gates, search Wiki references for "<query>" with --task release --trace; for production include --include-memory, read freeze IDs, and block before writing outputs/release-gate.json.';
   const draft = agent('evolve', 'draft', entry, instruction, '--priority', 'high', '--when', 'every release gate invocation', '--evidence', 'e2e:release-gate:baseline-production');
   const draftPath = join(support, 'release-gate-draft.json');
   writeFileSync(draftPath, JSON.stringify(draft));

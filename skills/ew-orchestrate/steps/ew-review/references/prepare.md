@@ -38,9 +38,9 @@ Target resolution table:
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, ownership
-- Wiki: `agent-memory wiki references "<target keywords>" --skill ew-review --category review --json` → prior reviews and known patterns
-- Constraints: `agent-memory wiki constraints --skill ew-review --category review --json` → active review standards
-- Coding constraints: `agent-memory wiki constraints --skill ew-review --category coding --path <target> --json` → patterns relevant to the review area
+- Wiki: `agent-memory wiki references "<target keywords>" --category review --json` → prior reviews and known patterns
+- Constraints: `agent-memory wiki constraints --category review --json` → active review standards
+- Coding constraints: `agent-memory wiki constraints --category coding --path <target> --json` → patterns relevant to the review area
 - Memory: `agent-memory memory search "<target keywords>" --type error --scene review` → select relevant IDs and read them with `agent-memory memory get <id>`
 
 When prior review artifacts of the same scope exist, check their findings first to avoid re-reviewing already-addressed patterns.

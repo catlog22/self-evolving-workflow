@@ -27,7 +27,7 @@
 - `mode: constraint` 表示执行约束、质量门禁和适用规则。
 - `mode: reference` 表示经验、方法、模板、术语和可选建议。
 - `status: active|needs_review|deprecated` 表示生命周期。
-- `scope` 表示 `project`、`skill:<id>`、`task:<kind>` 或 `path:<glob>` 等适用范围。
+- `scope` 默认用 `project`，也可用 `task:<kind>` 或 `path:<glob>` 限定适用范围。
 - `categories`、`tags` 和 `keywords` 用于查询和路由，不能替代 `mode` 与 `scope`。
 - `sources` 必须能回查到完成回执、消息锚点或迁移来源。
 
@@ -51,16 +51,16 @@
 
 按查询类型选择最窄的入口。约束读取必须带适用上下文，参考读取保留条目 ID 和来源。
 
-`--skill <skill-id>` 提供 Wiki 匹配用的 Skill 作用域。例如 `--skill ew-plan` 会纳入 `scope: [skill:ew-plan]` 的条目，项目级条目也参与匹配。Run 的 Skill ID 取自 `skill_ref.skill_id`。例如 `ew-odyssey-review` 的 Run 使用 `--skill ew-odyssey` 查询包级规则。
+旧条目可以继续通过 `wiki get <entry-id>` 查阅。只有旧 `skill:` 作用域的条目需要经 Wiki 提案确认新的适用范围，才会进入上下文。混合作用域的条目沿用其项目、任务和路径条件。
 
 ```text
-agent-memory --root <project> wiki constraints --skill <id> --category <category>
-agent-memory --root <project> wiki references "<topic>" --skill <id> --task <kind>
-agent-memory --root <project> wiki reference <entry-id> --skill <id> --task <kind>
+agent-memory --root <project> wiki constraints --category <category>
+agent-memory --root <project> wiki references "<topic>" --task <kind>
+agent-memory --root <project> wiki reference <entry-id> --task <kind>
 agent-memory --root <project> wiki search "<query>"
 agent-memory --root <project> wiki get <entry-id>
-agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id>
-agent-memory --root <project> context "<query>" --skill <id> --task <kind> --session <session-id> --include-memory
+agent-memory --root <project> context "<query>" --task <kind> --session <session-id>
+agent-memory --root <project> context "<query>" --task <kind> --session <session-id> --include-memory
 agent-memory --root <project> context "<query>" --session <current-session-id> --memory-session <historical-session-id> --include-memory
 agent-memory --root <project> context "<query>" --context-file <context.json> --include-memory
 agent-memory --root <project> search "<query>" --scope memory --scene <scene> --type <type> --reads <knowledge-reads.json>
@@ -70,7 +70,7 @@ agent-memory --root <project> search "<query>" --scope memory --scene <scene> --
 
 ### Search 与 Get/Query 的 ID 边界
 
-- `search(query, filters?)` 负责候选发现，不接收 `knowledge_id`。查询词、作用域、Skill、任务、路径和分类是它的输入。
+- `search(query, filters?)` 用查询词、任务、路径和分类发现候选。按 `knowledge_id` 打开选中的条目。
 - 搜索结果返回稳定的 `knowledge_id`，供后续精确读取和审计使用。
 - `get(id)`、`query({ id })` 和 `reference(id)` 负责单条读取，必须接收稳定 ID。Wiki 可以兼容已登记的 `aliases`，写入操作不接受别名。
 - `constraints(context)` 根据 Skill、任务、路径和分类解析适用约束，不要求条目 ID。返回结果仍带 `knowledge_id`，用于 Run 快照和消费记录。

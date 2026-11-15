@@ -39,7 +39,6 @@ export function createSearchServer(sources: SearchSources) {
         return send(200, withTrace(await buildContext(sources, params.get('q') ?? '', {
           limit,
           context: {
-            skill: params.get('skill') ?? undefined,
             task: params.get('task') ?? undefined,
             paths: params.getAll('path'),
             categories: validCategories.length ? validCategories : undefined,
@@ -57,7 +56,6 @@ export function createSearchServer(sources: SearchSources) {
           knowledgeReads,
           contextScope: {
             ...(params.get('session') ? { session_id: params.get('session')! } : {}),
-            ...(params.get('skill') ? { skill_id: params.get('skill')! } : {}),
             ...(params.get('task') ? { task_kind: params.get('task')! } : {}),
             ...(params.getAll('path').length ? { paths: params.getAll('path') } : {}),
           },

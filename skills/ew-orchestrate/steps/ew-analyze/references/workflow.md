@@ -78,10 +78,10 @@ Parse mode/flags (see above). Load upstream and project context:
    - open constraints → analyze first
    - open questions → discussion seeds
    - `architecture_template_evidence` → architecture analysis context; reuse it without a new search/load
-2. Architecture rules: use the Run's `wiki_constraints` when present, including an empty result. When a file is selected, use `agent-memory wiki constraints --skill ew-analyze --category arch --path <file> --json`. The current package has no separate legacy knowledge loader.
+2. Architecture rules: use the Run's `wiki_constraints` when present, including an empty result. When a file is selected, use `agent-memory wiki constraints --category arch --path <file> --json`. The current package has no separate legacy knowledge loader.
 3. domain glossary: read `.workflow/domain/glossary.yaml` (if it exists), use canonical terms throughout the analysis; record new term candidates in the report.
 4. Existing same-milestone analyze artifacts: read their decisions, skip already-decided areas.
-5. When a prior method or example would help, use `agent-memory wiki references "<topic>" --skill ew-analyze --category arch --json`. Open selected entries with `agent-memory wiki reference <id> --skill ew-analyze --category arch --json`. Repeat the same task or path options on both calls when the reference is scoped to them. For execution lessons, use `agent-memory memory search "<topic>" --type error --scene analyze` and read selected IDs with `agent-memory memory get <id>`.
+5. When a prior method or example would help, use `agent-memory wiki references "<topic>" --category arch --json`. Open selected entries with `agent-memory wiki reference <id> --category arch --json`. Repeat the same task or path options on both calls when the reference is scoped to them. For execution lessons, use `agent-memory memory search "<topic>" --type error --scene analyze` and read selected IDs with `agent-memory memory get <id>`.
 
 **quick routing**: after loading context, jump directly to Step 6.
 

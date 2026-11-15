@@ -8,7 +8,6 @@ export interface AgentMemoryContextScope {
   repository_id?: string;
   session_id?: string;
   run_id?: string;
-  skill_id?: string;
   task_kind?: string;
   paths?: string[];
 }

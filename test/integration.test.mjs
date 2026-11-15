@@ -136,13 +136,14 @@ test('managed Wiki entries resolve active scopes independently of search and pre
     'Calibration preflight. [[entries/retired]]',
   ].join('\n');
   await writeFile(join(directory, 'required.md'), entry('Calibration', 'constraint', 'active', ['skill:analyze'], ['legacy:spec:S-42']));
+  await writeFile(join(directory, 'source-rule.md'), entry('Source calibration', 'constraint', 'active', ['skill:analyze', 'path:src/**']));
   await writeFile(join(directory, 'retired.md'), entry('Old calibration', 'constraint', 'deprecated', ['project']));
   await writeFile(join(directory, 'reference.md'), entry('Calibration notes', 'reference', 'active', ['project']));
   const wiki = new Wiki(root);
   assert.deepEqual(wiki.constraints(), []);
-  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'analyze')).map(page => page.id), ['entries/required']);
-  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'ew-analyze')).map(page => page.id), ['entries/required']);
-  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'maestro-analyze')).map(page => page.id), ['entries/required']);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'ew-analyze'), []);
+  assert.deepEqual(wiki.constraints({ paths: ['src/gauge.ts'] }).map(page => page.id), ['entries/source-rule']);
+  assert.deepEqual(wiki.constraints({ includePathScoped: true }).map(page => page.id), ['entries/source-rule']);
   assert.equal(wiki.getEntry('legacy:spec:S-42').id, 'entries/required');
   assert.equal(wiki.getEntry('retired').entry.status, 'deprecated');
   wiki.build();
@@ -159,9 +160,13 @@ test('Wiki proposals publish by stable ID, recover interrupted writes, and rejec
   };
   const entry = 'entries/preflight';
   const page = join(root, 'wiki', 'entries', 'preflight.md');
-  const create = await propose({
+  await assert.rejects(propose({
     operation: 'create', entry, title: 'Migration preflight', mode: 'reference',
     scope: ['skill:migration'], body: 'Verify the database dry-run before applying.',
+  }, 'design:preflight'), /Use project, task:<kind>, or path:<glob>/);
+  const create = await propose({
+    operation: 'create', entry, title: 'Migration preflight', mode: 'reference',
+    scope: ['task:migration'], body: 'Verify the database dry-run before applying.',
   }, 'design:preflight');
   assert.equal(create.state, 'pending');
   await assert.rejects(readFile(page), { code: 'ENOENT' });
@@ -170,14 +175,14 @@ test('Wiki proposals publish by stable ID, recover interrupted writes, and rejec
   ]);
   assert.ok(concurrent.every(change => change.state === 'applied'));
   assert.deepEqual(concurrent.map(change => change.replayed).sort(), [false, true]);
-  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'migration'), []);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--task', 'migration'), []);
   const stale = await propose({ operation: 'update', entry, title: 'Obsolete title' }, 'review:1');
   const promote = await propose({ operation: 'promote', entry, title: 'Verified migration preflight' }, 'review:2');
   assert.equal(promote.before, await readFile(page, 'utf8'));
   assert.equal((await cliJson(root, 'wiki', 'apply', promote.id)).replayed, false);
   await assert.rejects(cliJson(root, 'wiki', 'apply', stale.id), /changed since review/);
-  assert.equal((await cliJson(root, 'wiki', 'constraints', '--skill', 'migration'))[0].id, entry);
-  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'deploy'), []);
+  assert.equal((await cliJson(root, 'wiki', 'constraints', '--task', 'migration'))[0].id, entry);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--task', 'deploy'), []);
   const retire = await propose({ operation: 'retire', entry }, 'review:retire');
   const db = new DatabaseSync(join(root, '.agent-memory', 'closeout.db'));
   // Reproduce a crash after committing the application intent and replacing the page.
@@ -186,7 +191,7 @@ test('Wiki proposals publish by stable ID, recover interrupted writes, and rejec
   await writeFile(page, retire.after);
   assert.equal((await cliJson(root, 'wiki', 'apply', retire.id)).state, 'applied');
   assert.equal((await cliJson(root, 'wiki', 'apply', retire.id)).replayed, true);
-  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--skill', 'migration'), []);
+  assert.deepEqual(await cliJson(root, 'wiki', 'constraints', '--task', 'migration'), []);
   assert.equal((await cliJson(root, 'wiki', 'get', entry)).entry.status, 'deprecated');
   const history = await cliJson(root, 'wiki', 'changes', '--entry', entry);
   assert.deepEqual(history.map(change => change.state), ['applied', 'pending', 'applied', 'applied']);
@@ -762,7 +767,7 @@ test('Agent Memory context envelope keeps discovery and exact-read identities se
   await mkdir(entries, { recursive: true });
   await writeFile(join(entries, 'preflight.md'), [
     '---', 'title: Migration preflight', 'mode: constraint', 'status: active',
-    'scope: [skill:migration]', 'sources: [policy:preflight]', '---', '',
+    'scope: [task:migration]', 'sources: [policy:preflight]', '---', '',
     'Run the migration preflight before applying changes.',
   ].join('\n'));
   await writeFile(join(entries, 'calibration.md'), [
@@ -777,8 +782,8 @@ test('Agent Memory context envelope keeps discovery and exact-read identities se
   await memory.put({ id: 'memory-1', content: 'The migration target is staging.', type: 'work_fact', session: 'session-1', sourceMessageIds: ['message-1'] });
 
   const envelope = await context({ wiki, memory }, 'migration', {
-    context: { skill: 'migration' },
-    contextScope: { session_id: 'session-1', skill_id: 'migration' },
+    context: { task: 'migration' },
+    contextScope: { session_id: 'session-1', task_kind: 'migration' },
     includeWorkingMemory: true,
   });
   assert.equal(envelope.schema_version, 'agent-memory-envelope/1.0');
@@ -839,9 +844,9 @@ test('Shared module API, CLI and HTTP return the same scoped search', async t =>
   const response = await fetch(url + '?q=recall');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), expected);
-  const contextResponse = await fetch(baseUrl + '/context?q=recall&scope=memory&include_memory=true');
+  const contextResponse = await fetch(baseUrl + '/context?q=recall&scope=memory&include_memory=true&skill=legacy');
   assert.equal(contextResponse.status, 200);
-  assert.equal((await contextResponse.json()).working_memories[0].memory_id, 'test');
+  assert.deepEqual(await contextResponse.json(), contextResult);
   assert.deepEqual(await (await fetch(url + '?q=recall&scope=memory')).json(), { memory: expected.memory });
   assert.equal((await fetch(url + '?q=recall&limit=-1')).status, 400);
   assert.equal((await fetch(url + '/missing?q=recall')).status, 404);
@@ -884,9 +889,10 @@ test('CLI context profiles and compatibility JSON flags reduce repeated context 
     skill: 'analyze', task: 'plan', paths: ['src/solver.ts'], categories: ['arch'], includePathScoped: false,
   }));
   const fromProfile = await cliJson(root, 'context', 'solver layout', '--context-file', profile, '--json');
-  const fromFlags = await cliJson(root, 'context', 'solver layout', '--skill', 'analyze', '--task', 'plan',
+  const fromFlags = await cliJson(root, 'context', 'solver layout', '--task', 'plan',
     '--path', 'src/solver.ts', '--category', 'arch', '--json');
   assert.deepEqual(fromProfile.context_scope, fromFlags.context_scope);
+  assert.deepEqual(fromFlags.context_scope, { task_kind: 'plan', paths: ['src/solver.ts'] });
   assert.deepEqual(fromProfile.constraints, fromFlags.constraints);
   assert.deepEqual(fromProfile.references, fromFlags.references);
   const reads = join(root, 'reads.json');
@@ -896,13 +902,26 @@ test('CLI context profiles and compatibility JSON flags reduce repeated context 
   assert.equal((await cliJson(root, 'wiki', 'build', '--json')).pages, 0);
   await mkdir(join(root, 'wiki', 'entries'), { recursive: true });
   await writeFile(join(root, 'wiki', 'entries', 'solver-guide.md'), [
-    '---', 'title: Solver guide', 'mode: reference', 'status: active', 'scope: [skill:analyze]',
+    '---', 'title: Solver guide', 'mode: reference', 'status: active', 'scope: [task:plan]',
     'sources: [fixture:solver]', '---', '', 'Use the sparse solver path.', '',
   ].join('\n'));
   await cliJson(root, 'wiki', 'build');
-  const legacyReference = await cliJson(root, 'wiki', 'reference', 'entries/solver-guide', '--skill', 'analyze');
-  const resolvedGet = await cliJson(root, 'wiki', 'get', 'entries/solver-guide', '--resolved', '--skill', 'analyze');
+  const legacyReference = await cliJson(root, 'wiki', 'reference', 'entries/solver-guide', '--task', 'plan');
+  const resolvedGet = await cliJson(root, 'wiki', 'get', 'entries/solver-guide', '--resolved', '--task', 'plan');
   assert.deepEqual(resolvedGet, legacyReference);
+  await writeFile(join(root, 'wiki', 'entries', 'legacy-guide.md'), [
+    '---', 'title: Legacy solver guide', 'mode: reference', 'status: active', 'scope: [skill:analyze]',
+    'sources: [fixture:legacy]', '---', '', 'Check the residual before retry.', '',
+  ].join('\n'));
+  assert.equal(await cliJson(root, 'wiki', 'reference', 'entries/legacy-guide', '--skill', 'analyze'), null);
+  assert.equal((await cliJson(root, 'wiki', 'get', 'entries/legacy-guide')).id, 'entries/legacy-guide');
+  const draft = join(root, 'change.json');
+  await writeFile(draft, JSON.stringify({ operation: 'update', entry: 'entries/legacy-guide', title: 'Solver retry' }));
+  await assert.rejects(cliJson(root, 'wiki', 'propose', draft, '--evidence', 'review:solver'), /reviewed scope explicitly/);
+  await writeFile(draft, JSON.stringify({ operation: 'update', entry: 'entries/legacy-guide', scope: ['task:plan'] }));
+  const proposed = await cliJson(root, 'wiki', 'propose', draft, '--evidence', 'review:solver');
+  await cliJson(root, 'wiki', 'apply', proposed.id);
+  assert.equal((await cliJson(root, 'wiki', 'reference', 'entries/legacy-guide', '--task', 'plan')).id, 'entries/legacy-guide');
 });
 
 test('Knowledge closeout routes local fixes and structural changes to the right Skill flow', () => {
