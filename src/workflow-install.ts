@@ -26,7 +26,9 @@ interface WorkflowDocument {
 }
 
 export function workflowDocuments(): WorkflowDocument[] {
-  return JSON.parse(readFileSync(join(bundle, 'workflows', 'index.json'), 'utf8'));
+  const documents: WorkflowDocument[] = JSON.parse(readFileSync(join(bundle, 'workflows', 'index.json'), 'utf8'));
+  const skills = shippedSkills();
+  return documents.filter(item => skills.includes(item.path.split('/')[1]));
 }
 
 export function workflowDocument(id: string) {
