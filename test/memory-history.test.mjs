@@ -35,26 +35,33 @@ async function runMemoryCli(root, env, args, input, expectedCode = 0) {
   return stdout ? JSON.parse(stdout) : stderr;
 }
 
+function follow(invoke, commands, action, slots) {
+  const [executable, ...prefix] = commands.prefix;
+  assert.equal(executable, 'agent-memory');
+  return invoke([...prefix, ...commands[action].map(value => typeof value === 'string' ? value : String(slots[value.arg]))]);
+}
+
 async function assertExactSource(invoke, { host, session, path, content, rawContent = content, scope }) {
   const search = async value => (await invoke(['memory', 'search', value, '--session', session])).results;
-  const [record] = await search(originalId(host));
-  assert.ok(record);
+  const { results: [hit], commands } = await invoke(['memory', 'search', originalId(host), '--session', session]);
+  assert.equal(hit.host, host);
+  assert.equal(hit.sources, true);
+  assert.deepEqual(Object.keys(hit), ['id', 'content', 'sources', 'host']);
+  const record = await follow(invoke, commands, 'get', hit);
   assert.equal((await search(originalNumber))[0]?.id, record.id);
   assert.deepEqual(await search(changedId(host)), []);
   assert.deepEqual(await search(changedNumber), []);
   assert.ok(record.exactValues.includes(originalId(host)));
   assert.equal(record.sourceMessageScope, scope);
-  assert.ok(record.view.memory.startsWith('agent-memory memory get '));
-  assert.ok(record.view.sources.startsWith('agent-memory memory sources '));
-  assert.ok(record.view.conversation.startsWith('agent-memory memory conversation '));
-  assert.ok(record.view.conversation.endsWith(`--host ${host} ${record.id}`));
-  assert.equal(record.messages, undefined);
-  const [source] = await invoke(['memory', 'sources', record.id]);
+  const [source] = await follow(invoke, commands, 'sources', hit);
   assert.equal(source.id, record.sourceMessageIds[0]);
   assert.equal(source.role, 'user');
   assert.equal(source.session, session);
   assert.equal(source.content, content);
   assert.equal(source.location.path, path);
+  const conversation = await follow(invoke, commands, 'conversation', hit);
+  assert.equal(conversation.anchor.messageId, source.id);
+  assert.ok(conversation.messages.some(item => item.id === source.id));
   const transcript = await readFile(path);
   const nextLine = transcript.indexOf(10, source.location.byteOffset);
   const raw = JSON.parse(transcript.subarray(source.location.byteOffset, nextLine).toString('utf8'));
@@ -142,11 +149,9 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   assert.deepEqual(anchored.anchor, { messageId: first.sourceMessageIds[0], page: 2 });
   assert.deepEqual(anchored.messages.map(item => item.content), [codexFact]);
   assert.deepEqual(anchored.pagination, { page: 2, limit: 1, previousPage: 1, nextPage: 3 });
-  assert.ok(anchored.navigation.previousPage.endsWith(`--host codex --limit 1 --page 1 ${first.id}`));
-  assert.ok(anchored.navigation.nextPage.endsWith(`--host codex --limit 1 --page 3 ${first.id}`));
-  const before = await invoke(['memory', 'conversation', 'live', '--page', '1', '--limit', '1']);
+  const before = await follow(invoke, anchored.commands, 'page', { page: anchored.pagination.previousPage });
   assert.deepEqual(before.messages.map(item => item.content), ['UNFINISHED_COMMENT']);
-  const after = await invoke(['memory', 'conversation', first.id, '--page', '3', '--limit', '1']);
+  const after = await follow(invoke, anchored.commands, 'page', { page: anchored.pagination.nextPage });
   assert.deepEqual(after.messages.map(item => item.content), ['保存了。']);
   assert.equal(after.pagination.nextPage, null);
   assert.equal(requests.length, 1);
@@ -178,6 +183,7 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   const archive = await invoke(['memory', 'conversation', 'history', '--page', '1', '--limit', '2']);
   assert.deepEqual(archive.messages.map(item => item.content), ['remember archived', 'Legacy reply']);
   assert.equal(archive.pagination.nextPage, null);
+  assert.equal(archive.commands, undefined);
   assert.match(await invoke(['memory', 'conversation', 'unrelated'], undefined, 1), /unavailable in this project/);
   await appendFile(transcript, event('task_started') + message('user', 'Interrupted question.') + event('turn_aborted'));
   const interrupted = await invoke(['memory', 'conversation', 'live', '--page', '4', '--limit', '2']);
@@ -291,7 +297,7 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   assert.deepEqual(claudeChat.anchor, { messageId: claudeMemory.sourceMessageIds[0], page: 3 });
   assert.deepEqual(claudeChat.messages.map(item => item.content), [claudeFact, 'confirmed']);
   assert.equal(claudeChat.pagination.nextPage, null);
-  assert.equal(claudeChat.navigation.nextPage, undefined);
+  assert.ok(claudeChat.commands.page);
 
   await writeFile(join(agyFolder, 'transcript_full.jsonl'), (await readFile(agyPath, 'utf8')) +
     agy(6, 'USER_INPUT', 'USER_EXPLICIT', 'Follow-up in the full transcript.'));
@@ -299,8 +305,7 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   assert.deepEqual(agyChat.anchor, { messageId: agyMemory.sourceMessageIds[0], page: 2 });
   assert.deepEqual(agyChat.messages.map(item => item.content), ['confirmed', agyFact]);
   assert.equal(agyChat.pagination.nextPage, 3);
-  assert.ok(agyChat.navigation.nextPage.endsWith(`--host agy --limit 2 --page 3 ${agyMemory.id}`));
-  const agyEnd = await invoke(['memory', 'conversation', agyMemory.id, '--page', '3', '--limit', '2']);
+  const agyEnd = await follow(invoke, agyChat.commands, 'page', { page: agyChat.pagination.nextPage });
   assert.deepEqual(agyEnd.messages.map(item => item.content), ['confirmed', 'Follow-up in the full transcript.']);
   assert.equal(agyEnd.pagination.nextPage, null);
   assert.equal(requests.length, 4);

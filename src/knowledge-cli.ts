@@ -77,9 +77,9 @@ export function knowledgeHelp(invocation: 'agent-memory' | 'evolve') {
   memory get|delete <id>                   Read or delete a memory
   memory sources <id>                      Read a memory's original messages and transcript locations
   memory search <query>                    Search memory (--type, --scene, --session, --page, --limit)
-                                          Shows previews and copyable view and navigation commands
+                                          Returns short previews and shared command arguments for agents
   memory conversation <session-or-memory-id>  View a conversation page (--host, --page, --limit)
-                                              A memory ID opens the source page. Copy navigation commands to browse
+                                              A memory ID opens the source page
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
   context <query>                          Build Agent Memory context envelope (--scope all|code|wiki|memory, --include-memory)
   serve                                    Serve GET /search on 127.0.0.1 (--port 4310)
@@ -103,6 +103,9 @@ Options:
 Set an OpenAI-compatible chat endpoint with memory config or AGENT_MEMORY_LLM_BASE_URL and AGENT_MEMORY_LLM_MODEL.
 Use AGENT_MEMORY_LLM_API_KEY for endpoint authentication if required. Message files contain
 an array of {id, role, timestamp, content}. Commands return JSON on stdout.
+For a follow-up, append commands.get, sources, conversation or page to commands.prefix.
+Replace each {"arg":"id"} or {"arg":"host"} with the selected result's field and
+{"arg":"page"} with the previous or next page number.
 `;
 }
 
@@ -244,24 +247,17 @@ function cliWikiContext(values: Record<string, unknown>): CliWikiContext {
   };
 }
 
-type CommandFlags = Record<string, string | number | boolean | undefined>;
-
-function quoteCommandArgument(value: string) {
-  // PowerShell 会消耗未加引号的 --，npm 的启动脚本也收不到它。
-  if (value !== '--' && /^[A-Za-z0-9_./:-]+$/.test(value)) return value;
-  return process.platform === 'win32'
-    ? `'${value.replace(/['‘’]/g, quote => quote + quote)}'`
-    : `'${value.replaceAll("'", "'\\''")}'`;
+function commandFlags(flags: Record<string, string | number | boolean | undefined>) {
+  return Object.entries(flags).flatMap(([key, value]) => {
+    if (value === undefined || value === false) return [];
+    if (value === true) return [`--${key}`];
+    if (String(value).startsWith('-')) return [`--${key}=${value}`];
+    return [`--${key}`, String(value)];
+  });
 }
 
-function memoryPageCommands(
-  pagination: { previousPage: number | null; nextPage: number | null },
-  command: (page: number) => string,
-) {
-  return {
-    ...(pagination.previousPage !== null && { previousPage: command(pagination.previousPage) }),
-    ...(pagination.nextPage !== null && { nextPage: command(pagination.nextPage) }),
-  };
+function hasOtherPage(pagination: { previousPage: number | null; nextPage: number | null }) {
+  return pagination.previousPage !== null || pagination.nextPage !== null;
 }
 
 export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory' | 'evolve' = 'agent-memory') {
@@ -293,7 +289,7 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
   const knowledgeReads = values.trace || traceFile
     ? new KnowledgeReads(initialTrace)
     : undefined;
-  const print = (result: unknown) => process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  const print = (result: unknown, compact = false) => process.stdout.write(JSON.stringify(result, null, compact ? 0 : 2) + '\n');
   const withTrace = (result: unknown) => {
     if (!knowledgeReads) return result;
     if (traceFile) {
@@ -658,20 +654,9 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
   if (command === 'memory' && ['put', 'get', 'sources', 'delete', 'search', 'conversation', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
     const memory = openMemory();
     const page = values.page === undefined ? undefined : Number(values.page);
-    const memoryCommand = (name: string, target: string, flags: CommandFlags = {}) => {
-      const options: CommandFlags = {
-        root, db: values.db === undefined || db === ':memory:' ? values.db : resolve(db),
-        namespace: values.namespace, ...flags,
-      };
-      const tokens = Object.entries(options).flatMap(([key, value]) => {
-        if (value === undefined || value === false) return [];
-        if (value === true) return [`--${key}`];
-        if (String(value).startsWith('-')) return [`--${key}=${value}`];
-        return [`--${key}`, String(value)];
-      });
-      if (target.startsWith('-')) tokens.push('--');
-      return [invocation, 'memory', name, ...tokens, target].map(quoteCommandArgument).join(' ');
-    };
+    const memoryPrefix = () => [invocation, 'memory', ...commandFlags({
+      root, db: values.db === undefined || db === ':memory:' ? values.db : resolve(db), namespace: values.namespace,
+    })];
     try {
       switch (action) {
         case 'put': return print(await memory.put({
@@ -692,26 +677,24 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
           });
           const { pagination } = result;
           if (values.json || !pagination) return print(withTrace(result));
-          const reads = traceFile ? resolve(traceFile) : undefined;
-          const navigation = memoryPageCommands(pagination, next => memoryCommand('search', query, {
-            type: filters.type, scene: filters.scene, 'memory-session': filters.session,
-            limit: pagination.limit, page: next, reads, trace: values.trace,
-          }));
           const results = result.results.map(hit => {
-            const content = hit.content.replace(/^(.{240}).+/su, '$1…');
+            const content = hit.content.replace(/^(.{160}).+/su, '$1…');
             const host = hit.session && (memoryHosts.find(host => hit.sourceMessageIds.some(id => id.startsWith(`${host}:${hit.session}:`)))
               ?? memoryHosts.find(host => memory.extractionOffset(host, hit.session) > 0));
-            return {
-              ...hit,
-              ...(content !== hit.content && { content, contentTruncated: true }),
-              view: {
-                memory: memoryCommand('get', hit.id, { reads, 'from-search': reads ? searchId : undefined }),
-                ...(hit.sourceMessageScope && { sources: memoryCommand('sources', hit.id) }),
-                ...(host && { conversation: memoryCommand('conversation', hit.id, { host }) }),
-              },
-            };
+            return { id: hit.id, content, ...(hit.sourceMessageScope && { sources: true }), ...(host && { host }) };
           });
-          return print(withTrace({ ...result, results, navigation }));
+          const reads = traceFile ? resolve(traceFile) : undefined;
+          const commands = results.length || hasOtherPage(pagination) ? {
+            prefix: memoryPrefix(),
+            ...(results.length > 0 && { get: ['get', ...commandFlags({ reads, 'from-search': reads ? searchId : undefined }), '--', { arg: 'id' }] }),
+            ...(results.some(hit => hit.sources) && { sources: ['sources', '--', { arg: 'id' }] }),
+            ...(results.some(hit => hit.host) && { conversation: ['conversation', '--host', { arg: 'host' }, '--', { arg: 'id' }] }),
+            ...(hasOtherPage(pagination) && { page: ['search', ...commandFlags({
+              type: filters.type, scene: filters.scene, 'memory-session': filters.session,
+              limit: pagination.limit, reads, trace: values.trace,
+            }), '--page', { arg: 'page' }, '--', query] }),
+          } : undefined;
+          return print(withTrace({ strategy: result.strategy, results, pagination, commands }), true);
         }
         case 'conversation': {
           const hosts = values.host === undefined ? [] : parseMemoryHosts(values.host);
@@ -721,10 +704,11 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
             root, memory, host: hosts[0], page, limit: memoryOptions.limit,
           });
           if (values.json) return print(result);
-          const navigation = memoryPageCommands(result.pagination, next => memoryCommand('conversation', target, {
-            host: result.host, limit: result.pagination.limit, page: next,
-          }));
-          return print({ ...result, navigation });
+          const commands = hasOtherPage(result.pagination) ? {
+            prefix: memoryPrefix(),
+            page: ['conversation', '--host', result.host, '--limit', String(result.pagination.limit), '--page', { arg: 'page' }, '--', target],
+          } : undefined;
+          return print({ ...result, commands }, true);
         }
         case 'extract': {
           const messages: unknown = JSON.parse(readFileSync(requireText(args[0], 'messages file'), 'utf8').replace(/^\uFEFF/, ''));
