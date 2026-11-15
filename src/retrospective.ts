@@ -128,7 +128,9 @@ function knowledgeReadsMessage(receipt: KnowledgeReadsReceipt): string {
   const reads = receipt.reads.map(read =>
     `${read.kind}:${read.id}${read.from_search_id ? ` from ${read.from_search_id}` : ''}`).join(', ') || 'none';
   const constraints = receipt.constraints_bound.map(item => item.knowledge_id).join(', ') || 'none';
-  return `Knowledge searches: ${searches || 'none'}. Knowledge reads: ${reads}. Bound constraints: ${constraints}.`;
+  const reuse = receipt.priors_reuse?.map(item => `${item.artifact_id} from ${item.producer_run_id} (${item.content_sha256})`).join(', ');
+  return `Knowledge searches: ${searches || 'none'}. Knowledge reads: ${reads}. Bound constraints: ${constraints}.` +
+    (reuse ? ` Reused session priors: ${reuse}.` : '');
 }
 
 export async function reviewSession(

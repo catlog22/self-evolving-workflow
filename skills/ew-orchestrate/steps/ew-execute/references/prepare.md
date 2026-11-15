@@ -37,9 +37,8 @@ Degradation close: complete the Run honestly with `evolve run complete <run_id> 
 ## Required Context
 
 - With `current-plan`: for a structured Evolve Plan, read waves, dependency graph, collision report, and each task's convergence.criteria. For `source_format: pi-markdown`, use the derived task/dependency view from the authoritative `markdown` body and preserve every stated acceptance check as convergence criteria.
-- With `session-priors`, reuse its document and reference context. For legacy Runs, reuse matching prior specs.
-- Before dispatching a task, select coding rules for its exact paths as described in the workflow. For frontend or UI tasks include the `ui` category. The Run's Wiki snapshot remains authoritative even when the returned list is empty.
-- The architecture doc `.workflow/codebase/ARCHITECTURE.md` and Wiki search results are injected as shared context into the executor. Reuse already-read IDs from `session-priors`, then run the incremental path-scoped query `agent-memory wiki references "<task keywords>" --category coding --path <target>` when the task adds a new path. On a failure or retry, run `agent-memory memory search "<error keywords>" --type error --scene execute` and read selected IDs with `agent-memory memory get <id>`.
+- Open bound `session-priors` and apply the Wiki rules from the matching scope. When the task adds paths or requires further coding or UI rules, run `wiki_context` for that scope and open any references it adds.
+- Use the architecture document and the sealed plan as implementation context. If a failure or retry needs past examples, search working Memory and open the relevant results.
 
 ## Boundaries and Invariants
 

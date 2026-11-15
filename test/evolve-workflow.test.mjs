@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { fixture } from './evolve-workflow-support.mjs';
+import { cli, fixture } from './evolve-workflow-support.mjs';
 import { evolveSessionReceipt, readEvolveSessions, workflowDbPath } from '../dist/workflow-runtime.js';
 import { parseReceipt } from '../dist/closeout.js';
 
@@ -125,6 +125,74 @@ test('Run recovery still reads the original revision after an EW package rename'
     const currentBinding = f.evolve('skills', 'validate', 'analyze');
     assert.equal(currentBinding.skill_id, 'ew-analyze');
     assert.notEqual(currentBinding.commit, oldRun.skill_ref.commit);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Wiki MCP pins observed bodies, checks lookup scope and seals or rejects reuse evidence atomically', () => {
+  const f = fixture('evolve-wiki-priors-');
+  try {
+    const session = 'wiki-handoff';
+    const selected = 'entries/handoff-selected';
+    const unopened = 'entries/handoff-unopened';
+    const constraint = 'entries/handoff-rule';
+    for (const [entry, mode, body] of [
+      [selected, 'reference', 'Record the selected handoff method.'],
+      [unopened, 'reference', 'An unopened handoff example.'],
+      [constraint, 'constraint', 'Keep the handoff source traceable.'],
+    ]) {
+      f.write('wiki-draft.json', JSON.stringify({ operation: 'create', entry, title: entry, mode, body }));
+      f.agent('wiki', 'apply', f.agent('wiki', 'propose', 'wiki-draft.json', '--evidence', 'fixture:handoff').id);
+    }
+    const tool = (run, name, args) => {
+      const request = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+      const result = JSON.parse(f.run(process.execPath, [cli, 'mcp', '--session', session, '--run', run.run_id], request + '\n')).result;
+      return result.isError ? result.content[0].text : JSON.parse(result.content[0].text);
+    };
+    const opened = f.open(session, 'ew-analyze,ew-plan');
+    const analyze = f.next(session, opened.orchestration_revision);
+    assert.match(tool(analyze, 'wiki_reference', { id: selected }), /returned by wiki_context/);
+    assert.ok(tool(analyze, 'wiki_context', { query: 'handoff' }).references.some(hit => hit.id === unopened));
+    const search = tool(analyze, 'wiki_context', { query: 'handoff selected' });
+    const initial = tool(analyze, 'wiki_reference', { id: selected });
+    assert.deepEqual(tool(analyze, 'wiki_reference', { id: selected }), initial);
+    const selectedPath = 'wiki/' + selected + '.md';
+    f.write(selectedPath, readFileSync(join(f.root, selectedPath), 'utf8').replace('selected handoff method', 'changed handoff method'));
+    assert.match(tool(analyze, 'wiki_reference', { id: selected }), /Wiki evidence changed/);
+    const unopenedPath = 'wiki/' + unopened + '.md';
+    f.write(unopenedPath, readFileSync(join(f.root, unopenedPath), 'utf8').replace('  - project', '  - task:review'));
+    assert.match(tool(analyze, 'wiki_reference', { id: unopened }), /no longer available in the recorded scope/);
+
+    readBound(f, session, analyze);
+    f.saveArtifact(analyze, 'findings.json', { finding: initial.body });
+    assert.throws(() => f.finish(session, analyze, 'Fail without gates', [], analyze.orchestration_revision), /Required exit gate/);
+    assert.deepEqual(f.status(session).aliases, {});
+    const gates = analyze.gates.exit.flatMap(gate => ['--gate', gate]);
+    const sealed = f.finish(session, analyze, 'Publish pinned Wiki', gates, analyze.orchestration_revision);
+    assert.equal(sealed.knowledge_reads.reads.length, 1);
+    assert.equal(sealed.knowledge_reads.reads[0].from_search_id, search.search_id);
+    const plan = f.next(session, sealed.orchestration_revision);
+    assert.match(tool(plan, 'read_artifact', { id: 'session-priors', scope: { task: 'review' } }), /outside session-priors/);
+    const priors = tool(plan, 'read_artifact', { id: 'session-priors' });
+    const snapshot = JSON.parse(priors.content);
+    assert.deepEqual(snapshot.lookup_scopes, [{}]);
+    assert.deepEqual(snapshot.wiki.map(item => item.id), [constraint, selected]);
+    assert.equal(snapshot.wiki[1].content, initial.body);
+    assert.equal(snapshot.wiki[1].content_sha256, sealed.knowledge_reads.reads[0].content_sha256);
+
+    readBound(f, session, plan);
+    f.saveArtifact(plan, 'plan.json', { verified: true });
+    const tracePath = join(plan.run_dir, 'knowledge-reads.json');
+    const trace = { schema_version: 'knowledge-reads/1.0', reads: [], searches: [], constraints_bound: [] };
+    const reuse = [{ artifact_id: priors.id, producer_run_id: analyze.run_id, content_sha256: priors.sha256 }];
+    const planGates = plan.gates.exit.flatMap(gate => ['--gate', gate]);
+    writeFileSync(tracePath, JSON.stringify({ ...trace, priors_reuse: reuse }));
+    assert.throws(() => f.finish(session, plan, 'Reject caller-authored priors', planGates, plan.orchestration_revision), /bound artifact reads/);
+    writeFileSync(tracePath, JSON.stringify(trace));
+    const completed = f.finish(session, plan, 'Record verified prior reuse', planGates, plan.orchestration_revision);
+    assert.deepEqual(completed.knowledge_reads, { ...trace, priors_reuse: reuse });
+    assert.equal(f.sealSession(session).status, 'completed');
   } finally {
     f.cleanup();
   }

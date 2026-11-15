@@ -59,7 +59,7 @@ STOP. Resume on analyst callback.
 
 ### Step 3: On analyst callback
 
-Verify `{run_dir}/outputs/best-solution.md` exists and begins with `kind: swarm-best-solution`, `schema: swarm-best-solution/1.0`, and `role: primary` YAML frontmatter. Run `evolve run check <run_id> --session <session_id> --json` and repair any output contract blockers before completion.
+Give `{run_dir}/outputs/best-solution.md` the `kind: swarm-best-solution`, `schema: swarm-best-solution/1.0`, and `role: primary` YAML frontmatter. Seal with `evolve run complete` and fix any output contract errors it reports.
 
 If missing -> request_user_input (skip synthesis / retry analyst).
 
@@ -149,6 +149,6 @@ request_user_input({
 | Failure | Action |
 |---------|--------|
 | `aco.py report` fails | Stop before analyst dispatch; keep Run unsealed and team paused, record stderr, repair the script/state, then retry `report`. Do not substitute an untyped manual report for required `outputs/swarm-report.json`. |
-| Analyst worker crashes | Retry once; if synthesizing a minimal best-solution.md from best.json is explicitly chosen, include the required `swarm-best-solution/1.0` primary YAML frontmatter and verify via `run check` before completion. |
+| Analyst worker crashes | Retry once. If synthesizing a minimal best-solution.md from best.json is explicitly chosen, include the required `swarm-best-solution/1.0` primary YAML frontmatter for completion. |
 | best.json missing | Pipeline ran but no successful ant - report failure, keep session for inspection |
 | Run Another Round chosen but max_iterations already at limit | request_user_input to raise the cap before continuing |

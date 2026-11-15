@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { InputError, openDb, requireText, transaction } from './common.js';
-import { KnowledgeReads, validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
+import { contentSha256, KnowledgeReads, validateKnowledgeReads, type KnowledgePriorReuse, type KnowledgeReadsReceipt } from './knowledge-reads.js';
+import { wikiLookupScope, type WikiLookupScope, type WikiPrior } from './workflow-knowledge.js';
 import { workflowName } from './workflow-names.js';
 import {
   bindWorkflowSkill, readWorkflowLink, readWorkflowMarkdown, workflowBlob, workflowHash, workflowHeader, workflowMeta,
@@ -40,6 +41,8 @@ interface Run {
   finished_at?: string;
   verdict?: 'done' | 'done_with_concerns';
   knowledge_reads?: KnowledgeReadsReceipt;
+  wiki_priors?: WikiPrior[];
+  priors_reuse?: KnowledgePriorReuse[];
   assignments?: Record<string, Assignment>;
 }
 interface Assignment {
@@ -56,6 +59,7 @@ interface Artifact extends ArtifactType {
   sha256: string;
   derived_from: string[];
   status: 'sealed';
+  wiki_priors?: true;
 }
 interface Session {
   schema_version: 'evolve-session/1.0';
@@ -427,7 +431,7 @@ export class WorkflowStore {
     });
   }
 
-  readArtifact(id: string, runId: string, artifactId: string) {
+  readArtifact(id: string, runId: string, artifactId: string, scope: WikiLookupScope = {}) {
     const session = this.status(id);
     const run = findRun(session, runId);
     const resolved = run.input_aliases[artifactId] ?? artifactId;
@@ -437,7 +441,23 @@ export class WorkflowStore {
     if (!(bytes instanceof Uint8Array) || workflowHash(Buffer.from(bytes)) !== artifact.sha256) {
       throw new InputError('Sealed artifact bytes are unavailable or changed: ' + resolved);
     }
-    return { ...artifact, content: Buffer.from(bytes).toString('utf8') };
+    const content = Buffer.from(bytes).toString('utf8');
+    if (artifact.wiki_priors) {
+      const scopes = workflowRecord(JSON.parse(content), 'session-priors').lookup_scopes;
+      const expected = JSON.stringify(wikiLookupScope(scope));
+      if (!Array.isArray(scopes) || !scopes.some(item => JSON.stringify(wikiLookupScope(item)) === expected)) {
+        throw new InputError('Wiki scope is outside session-priors; use wiki_context in this Run');
+      }
+      transaction(this.db, () => {
+        const latest = this.status(id);
+        const consumer = findRun(latest, runId);
+        if (consumer.status !== 'running' || consumer.priors_reuse?.some(item => item.artifact_id === artifact.id)) return;
+        (consumer.priors_reuse ??= []).push({ artifact_id: artifact.id, producer_run_id: artifact.run_id, content_sha256: artifact.sha256 });
+        const { continuation: _continuation, orchestration_revision: _revision, ...saved } = latest;
+        this.save(saved);
+      });
+    }
+    return { ...artifact, content };
   }
 
   private readProof(run: Run) {
@@ -459,11 +479,20 @@ export class WorkflowStore {
     }
     const publications: Publication[] = [];
     for (const slot of run.skill.produces) {
+      const priors = slot.alias === 'session-priors' && slot.kind === 'priors' && slot.schema === 'priors/1.0'
+        && slot.path === 'outputs/priors.json' ? run.wiki_priors : undefined;
+      const generated = priors?.length ? Buffer.from(JSON.stringify({
+        _meta: { alias: slot.alias, kind: slot.kind, schema: slot.schema, role: slot.role },
+        source_run_id: run.id,
+        lookup_scopes: [...new Map(priors.map(item => [JSON.stringify(item.lookup_scope), item.lookup_scope])).values()],
+        wiki: priors,
+      })) : undefined;
       let discovered = 0;
-      for (const path of expandSlot(directory, slot.path)) {
-        const bytes = safeFile(directory, path);
+      for (const path of generated ? [slot.path] : expandSlot(directory, slot.path)) {
+        const bytes = generated ?? safeFile(directory, path);
         if (!bytes) continue;
         discovered++;
+        if (bytes.length > maxArtifactBytes) errors.push('Artifact exceeds the size limit: ' + path);
         const meta = artifactMetadata(path, bytes);
         if (meta.kind !== slot.kind || meta.schema !== slot.schema || meta.role !== slot.role || meta.alias !== slot.alias) {
           errors.push('Artifact metadata does not match the Skill contract: ' + path);
@@ -473,14 +502,18 @@ export class WorkflowStore {
           errors.push('Finish the Odyssey domain checkpoint before sealing');
         }
         const artifact: Artifact = { ...meta, id: 'art-' + randomUUID(), path, run_id: run.id,
-          sha256: workflowHash(bytes), derived_from: run.inputs, status: 'sealed' };
+          sha256: workflowHash(bytes), derived_from: run.inputs, status: 'sealed', ...(generated ? { wiki_priors: true } : {}) };
         publications.push({ artifact, bytes });
       }
       if (!discovered && slot.required) errors.push('Required artifact: ' + slot.path);
     }
     const trace = safeFile(directory, 'knowledge-reads.json');
     if (trace && run.knowledge_reads) errors.push('Select a single Run knowledge receipt source');
-    return { errors, publications, knowledge: trace ? validateKnowledgeReads(JSON.parse(trace.toString('utf8'))) : run.knowledge_reads };
+    const knowledge = trace ? validateKnowledgeReads(JSON.parse(trace.toString('utf8'))) : run.knowledge_reads;
+    if (trace && knowledge?.priors_reuse) errors.push('Run reuse evidence comes from bound artifact reads');
+    const receipt = run.priors_reuse?.length
+      ? { ...(knowledge ?? new KnowledgeReads().toJSON()), priors_reuse: run.priors_reuse } : knowledge;
+    return { errors, publications, knowledge: receipt };
   }
 
   check(id: string, runId: string, gates: string[]) {
@@ -515,6 +548,8 @@ export class WorkflowStore {
       run.verdict = verdict;
       run.summary = requireText(summary, 'Run summary');
       run.knowledge_reads = knowledge;
+      delete run.wiki_priors;
+      delete run.priors_reuse;
       findStep(session, run.step_id).status = 'completed';
       return { ...this.packet(session, run), artifact_publication: { artifacts, aliases }, knowledge_reads: knowledge };
     });
@@ -614,13 +649,27 @@ export class WorkflowStore {
     return { controller_dir: target, script: join(target, 'aco.py'), config_template: join(target, 'swarm-config-template.json') };
   }
 
-  recordKnowledge(id: string, runId: string, update: (trace: KnowledgeReads) => void) {
+  recordKnowledge(id: string, runId: string, update: (trace: KnowledgeReads, pin: (prior: Omit<WikiPrior, 'content_sha256'>) => void) => void) {
     return transaction(this.db, () => {
       const session = this.status(id);
       const run = findRun(session, runId);
       if (run.status !== 'running') throw new InputError('Select a running Run for knowledge reads');
       const trace = new KnowledgeReads(run.knowledge_reads);
-      update(trace);
+      update(trace, prior => {
+        const hash = contentSha256(prior.content);
+        const snapshots = (run.wiki_priors ??= []);
+        const existing = snapshots.find(item => item.id === prior.id);
+        if (existing && (existing.content_sha256 !== hash || JSON.stringify([existing.mode, existing.scope, existing.categories, existing.repositories]) !==
+          JSON.stringify([prior.mode, prior.scope, prior.categories, prior.repositories]))) {
+          throw new InputError('Wiki evidence changed during this Run: ' + prior.id);
+        }
+        if (!snapshots.some(item => item.id === prior.id && JSON.stringify(item.lookup_scope) === JSON.stringify(prior.lookup_scope))) {
+          snapshots.push({ ...prior, content_sha256: hash });
+        }
+      });
+      if (run.wiki_priors && Buffer.byteLength(JSON.stringify(run.wiki_priors)) > maxArtifactBytes) {
+        throw new InputError('Wiki snapshot exceeds the Run artifact size limit');
+      }
       run.knowledge_reads = trace.toJSON();
       const { continuation: _continuation, orchestration_revision: _revision, ...saved } = session;
       this.save(saved);

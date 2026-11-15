@@ -15,13 +15,17 @@ Open the entry with evolve run skill-read <run> --session <session>. Open each a
 
 Read input artifacts with evolve run artifact-read <run> <alias-or-id> --session <session>. This returns the sealed bytes and lineage from the Run's input binding. Write the outputs declared by the Skill to its run_dir. Use _meta in JSON, the first record of NDJSON, or YAML frontmatter in Markdown. Match the declared kind, schema, role and alias.
 
-Use `agent-memory context "<topic>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` for project knowledge. Add `--task` or `--path` when known. Use agent-memory wiki reference and memory get with the same trace and --from-search when opening a result. Other hosts can connect to evolve mcp --root <project> --session <session> --run <run>. This exposes Skill reads, frozen inputs and Memory search and exact reads for the Run. Select one knowledge receipt source per Run.
+Use Run MCP `wiki_context` with a keyword for project knowledge. It records the search and returns applicable constraints and candidate reference IDs. Open the references you use with `wiki_reference`. The Run records the originating search ID and exact body hash. Analysis seals those bodies and bound constraints as `session-priors`.
+
+For a later Run, open the bound `session-priors` with `read_artifact` before searching again. Use the entries matching its current Wiki scope. Supply the current `scope` with task, paths, categories or repository when it is known. Scope changes call for a fresh lookup. The consumer receipt records the opened artifact, digest and producer Run. CLI artifact reads take the same scope as a JSON object via `--scope`.
+
+Hosts can connect to `evolve mcp --root <project> --session <session> --run <run>` for Skill, artifact, Wiki and working Memory reads. CLI-only runs can use `agent-memory context "<topic>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` and pass the same file with the matching `--from-search` for exact reads. Select one source for direct knowledge reads per Run.
 
 For a bound Codex worker, use `evolve delegate "<prompt>" --to codex --mode analysis --session <session> --run <run>`. This connects Codex to that Run’s MCP tools. Use write mode for authorized edits. A host may also execute the step directly or use its own collaboration tools. Use `evolve delegate` without a Run binding for a second opinion from Agy.
 
 ## Verify and continue
 
-Use evolve run check <run> --session <session> and repeat --gate <id> for each verified exit gate. The controller checks required Skill reads, evidence and outputs. Seal with evolve run complete <run> --session <session> --actor <actor> --expected-orchestration-revision <revision> --expected-run-revision <revision> --summary "<observed result>" and the same gates. The controller registers outputs and advances the step in one transaction. Record qualified outcomes with --verdict done_with_concerns.
+Seal directly with `evolve run complete <run> --session <session> --actor <actor> --expected-orchestration-revision <revision> --expected-run-revision <revision> --summary "<observed result>"`. Repeat `--gate <id>` for each verified exit gate. Completion validates required reads, evidence and outputs, then seals and advances the step in one transaction. Use `run check` for diagnostics. Record qualified outcomes with `--verdict done_with_concerns`.
 
 Follow continuation.action. For decide, run evolve run decide <decision-id> --session <session> --actor <actor> --expected-orchestration-revision <revision> --verdict proceed|fix|escalate --summary "<decision evidence>". For next, allocate the pending step. For complete, use evolve session complete --session <session> --actor <actor> --expected-orchestration-revision <revision>. Review and harvest completed evidence through the [knowledge route](knowledge-route.md).
 

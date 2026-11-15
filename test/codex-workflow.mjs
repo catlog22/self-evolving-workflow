@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,8 +14,9 @@ const file = 'limits.mjs';
 const original = 'export const limit = 2;\n';
 const revised = 'export const limit = 3;\n';
 const memoryId = 'limits-acceptance';
+const wikiId = 'entries/limits-acceptance';
 
-async function codex(f, session, run, task, data, extraLinks = []) {
+async function codex(f, session, run, task, data, { extraLinks = [], knowledge = 'memory' } = {}) {
   const entry = run.skill_ref.entry;
   const links = [...run.skill_ref.required_links.filter(path => path !== entry)
     .map(path => ({ from: entry, destination: path })), ...extraLinks];
@@ -27,7 +29,11 @@ async function codex(f, session, run, task, data, extraLinks = []) {
   const prompt = [
     'Open the bound Skill via evolve_run read_skill with no arguments.',
     'Read each of these links via evolve_run read_skill: ' + JSON.stringify(links),
-    'Use evolve_run memory_search with query "limits acceptance" and memory_get for the matching ID.',
+    {
+      memory: 'Use evolve_run memory_search with query "limits acceptance" and memory_get for the matching ID.',
+      wiki: 'Use evolve_run wiki_context with query "limits acceptance" and wiki_reference for the returned policy ID. Record the numeric limit from the exact Wiki body.',
+      priors: 'Call evolve_run read_artifact with id="session-priors". Use its frozen Wiki bodies as the project knowledge. The lookup scope is unchanged in this fixture, so reuse those bodies as-is.',
+    }[knowledge],
     'Return only a JSON object. The coordinator writes fixture artifacts and owns the lifecycle.',
     'Task: ' + task, 'Task data: ' + JSON.stringify(data),
   ].join('\n');
@@ -56,62 +62,94 @@ async function codex(f, session, run, task, data, extraLinks = []) {
   assert.ok(events.some(event => event.type === 'turn.completed') && answer, run.task.command);
   const calls = events.filter(event => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' &&
     event.item.server === 'evolve_run' && event.item.status === 'completed' && !event.item.result?.isError);
-  for (const tool of ['read_skill', 'memory_search', 'memory_get']) assert.ok(calls.some(event => event.item.tool === tool), tool);
+  const used = calls.map(event => event.item.tool);
+  const expected = { memory: ['memory_search', 'memory_get'], wiki: ['wiki_context', 'wiki_reference'], priors: ['read_artifact'] };
+  for (const tool of ['read_skill', ...expected[knowledge]]) assert.ok(used.includes(tool), tool);
+  if (knowledge === 'priors') assert.ok(used.every(tool => !/^(wiki_|memory_)/.test(tool)), JSON.stringify(used));
   return JSON.parse(answer.trim().replace(/^\x60{3}(?:json)?\s*([\s\S]+?)\s*\x60{3}$/i, '$1'));
 }
 
-function checkedSeal(f, session, run, summary) {
+function seal(f, session, run, summary, revision, knowledge = 'memory') {
   const gates = run.gates.exit.flatMap(gate => ['--gate', gate]);
-  const check = f.evolve('run', 'check', run.run_id, '--session', session, ...gates);
-  assert.equal(check.completion_preflight.ready, true, JSON.stringify(check.completion_preflight));
-  assert.deepEqual(check.skill_reads.missing, []);
-  assert.equal(check.skill_reads.reference.commit, run.skill_ref.commit);
-  assert.ok(check.knowledge_reads.reads.some(read => read.id === memoryId && read.from_search_id));
-  const receipt = f.finish(session, run, summary, gates);
+  const receipt = f.finish(session, run, summary, gates, revision);
   assert.equal(receipt.status, 'sealed');
-  assert.deepEqual(receipt.knowledge_reads, check.knowledge_reads);
+  assert.deepEqual(receipt.skill_reads.missing, []);
+  assert.equal(receipt.skill_reads.reference.commit, run.skill_ref.commit);
+  if (knowledge === 'memory') assert.ok(receipt.knowledge_reads.reads.some(read => read.id === memoryId && read.from_search_id));
   return receipt;
 }
 
 async function chain(f) {
   const session = 'ew-chain';
-  f.open(session, 'ew-analyze,ew-plan,ew-execute,ew-review', 'Update the fixture item limit from project acceptance evidence');
-  const analyze = f.next(session);
+  f.write('wiki-draft.json', JSON.stringify({ operation: 'create', entry: wikiId, title: 'Limits acceptance policy',
+    mode: 'reference', body: 'Set the item limit in limits.mjs to 3 and preserve the existing export.' }));
+  const draft = f.agent('wiki', 'propose', 'wiki-draft.json', '--evidence', 'fixture:limits-policy');
+  f.agent('wiki', 'apply', draft.id);
+  const opened = f.open(session, 'ew-analyze,ew-plan,ew-execute,ew-review', 'Update the fixture item limit from project acceptance evidence');
+  const analyze = f.next(session, opened.orchestration_revision);
   const input = await codex(f, session, analyze,
-    'Use the acceptance memory and source. Return { finding: string, file: string, desired: number }.', { file, source: original });
+    'Use the acceptance Wiki and source. Return { finding: string, file: string, desired: number }.',
+    { file, source: original }, { knowledge: 'wiki' });
   assert.equal(input.file, file);
   assert.equal(input.desired, 3);
   f.saveArtifact(analyze, 'findings.json', input);
-  const analysis = checkedSeal(f, session, analyze, 'Found the expected limit in project memory');
+  const analysis = seal(f, session, analyze, 'Found the expected limit in the project Wiki', analyze.orchestration_revision, 'wiki');
+  const origin = analysis.knowledge_reads;
+  assert.equal(origin.searches.length, 1);
+  assert.equal(origin.searches[0].query, 'limits acceptance');
+  assert.deepEqual(origin.searches[0].filters, {});
+  assert.equal(origin.reads.length, 1);
+  assert.equal(origin.reads[0].id, wikiId);
+  assert.equal(origin.reads[0].from_search_id, origin.searches[0].search_id);
+  const priorsId = analysis.artifact_publication.aliases['session-priors'];
+  assert.ok(priorsId);
+  const reuse = [{ artifact_id: priorsId, producer_run_id: analyze.run_id,
+    content_sha256: analysis.artifact_publication.artifacts[priorsId].sha256 }];
 
-  const plan = f.next(session);
-  const proposal = await codex(f, session, plan, 'Call read_artifact for current-analysis. Return {file, change, verify} for one planned task.', {});
+  const plan = f.next(session, analysis.orchestration_revision);
+  const proposal = await codex(f, session, plan, 'Call read_artifact for current-analysis. Return {file, change, verify} for one planned task.',
+    {}, { knowledge: 'priors' });
   assert.equal(proposal.file, file);
   assert.match(proposal.change, /3/);
   assert.ok(proposal.verify);
   f.saveArtifact(plan, 'plan.json', proposal);
-  const planned = checkedSeal(f, session, plan, 'Planned and checked one change');
+  const planned = seal(f, session, plan, 'Planned and checked one change', plan.orchestration_revision, 'priors');
   assert.ok(Object.values(planned.artifact_publication.artifacts)[0].derived_from.includes(analysis.artifact_publication.aliases['current-analysis']));
 
-  const execute = f.next(session);
-  const change = await codex(f, session, execute, 'Read current-plan via read_artifact. Return {file,text} with the exact resulting JavaScript, including a terminal newline.', { source: original });
+  const execute = f.next(session, planned.orchestration_revision);
+  const change = await codex(f, session, execute, 'Read current-plan via read_artifact. Return {file,text} with the exact resulting JavaScript, including a terminal newline.',
+    { source: original }, { knowledge: 'priors' });
   assert.deepEqual(change, { file, text: revised });
   f.write(file, change.text);
   assert.equal(f.git('diff', '--name-only'), file);
   f.git('diff', '--check');
   f.run(process.execPath, ['--input-type=module', '-e', 'if ((await import("./limits.mjs")).limit !== 3) process.exit(1)']);
   f.saveArtifact(execute, 'execution.json', { file, verified: true });
-  checkedSeal(f, session, execute, 'Executed the Node acceptance check and scoped diff check');
+  const executed = seal(f, session, execute, 'Executed the Node acceptance check and scoped diff check', execute.orchestration_revision, 'priors');
 
-  const review = f.next(session);
+  const review = f.next(session, executed.orchestration_revision);
   const evaluated = await codex(f, session, review,
-    'Read current-execution via read_artifact. Review correctness, security, performance and architecture for this one-line diff. Return {dimensions: [string], findings: []} when acceptance passes.', { diff: f.git('diff', '--', file) });
+    'Read current-execution via read_artifact. Review correctness, security, performance and architecture for this one-line diff. Return {dimensions: [string], findings: []} when acceptance passes.',
+    { diff: f.git('diff', '--', file) }, { knowledge: 'priors' });
   assert.equal(evaluated.dimensions.length, 4);
   assert.deepEqual(evaluated.findings, []);
   f.saveArtifact(review, 'review.json', evaluated);
-  checkedSeal(f, session, review, 'Reviewed the accepted change across four dimensions');
-  assert.equal(f.sealSession(session).status, 'completed');
-  console.log('EW orchestration: Codex and Agent Memory completed ew-analyze → ew-plan → ew-execute → ew-review.');
+  const reviewed = seal(f, session, review, 'Reviewed the accepted change across four dimensions', review.orchestration_revision, 'priors');
+  assert.equal(f.evolve('session', 'complete', ...f.fence(session, reviewed.orchestration_revision)).status, 'completed');
+  const reopened = f.status(session);
+  for (const receipt of [planned, executed, reviewed]) {
+    assert.deepEqual(receipt.knowledge_reads.searches, []);
+    assert.deepEqual(receipt.knowledge_reads.reads, []);
+    assert.deepEqual(receipt.knowledge_reads.priors_reuse, reuse);
+    assert.deepEqual(reopened.runs.find(run => run.id === receipt.run_id).knowledge_reads, receipt.knowledge_reads);
+  }
+  const artifact = f.evolve('run', 'artifact-read', review.run_id, 'session-priors', '--session', session);
+  const priors = JSON.parse(artifact.content);
+  const sha = text => 'sha256:' + createHash('sha256').update(text).digest('hex');
+  assert.equal(sha(artifact.content), reuse[0].content_sha256);
+  assert.equal(sha(priors.wiki[0].content), origin.reads[0].content_sha256);
+  assert.equal(priors.source_run_id, analyze.run_id);
+  console.log('EW orchestration: four real Codex Runs completed with one Wiki query, one exact read and three durable reuse receipts.');
 }
 
 async function odyssey(f) {
@@ -125,13 +163,13 @@ async function odyssey(f) {
   const review = await codex(f, session, resumed,
     'Perform an audit-only review. Return { current_state:"END", dimensions:[string], findings:[] } when the supplied change satisfies correctness, security, performance and architecture.',
     { diff: '-export const limit = 2;\n+export const limit = 3;\n', target: file },
-    [{ from: 'SKILL.md', destination: 'references/odyssey-review.codex.md' },
-      { from: 'references/odyssey-review.codex.md', destination: 'odyssey-base-codex.md' }]);
+    { extraLinks: [{ from: 'SKILL.md', destination: 'references/odyssey-review.codex.md' },
+      { from: 'references/odyssey-review.codex.md', destination: 'odyssey-base-codex.md' }] });
   assert.equal(review.current_state, 'END');
   assert.equal(review.dimensions.length, 4);
   assert.deepEqual(review.findings, []);
   f.saveArtifact(run, 'session.json', review);
-  const published = checkedSeal(f, session, run, 'Odyssey review covered all four dimensions in read-only mode');
+  const published = seal(f, session, run, 'Odyssey review covered all four dimensions in read-only mode', run.orchestration_revision);
   assert.equal(published.continuation.action, 'decide');
   assert.throws(() => f.sealSession(session), /pending workflow steps and decisions/);
   const decision = f.evolve('run', 'decide', 'accept-audit', ...f.fence(session), '--verdict', 'proceed', '--summary', 'Accept audit');
@@ -224,7 +262,7 @@ async function swarm(f) {
   writeResult('outputs/swarm-report.json', result);
   writeFileSync(join(run.run_dir, 'outputs', 'best-solution.md'),
     '---\nkind: swarm-best-solution\nschema: swarm-best-solution/1.0\nrole: primary\n---\n# Winner\n\nb.mjs:1 declares limit 3.\n');
-  const sealed = checkedSeal(f, session, run, 'Scored both candidates with an independent Codex scorer and converged');
+  const sealed = seal(f, session, run, 'Scored both candidates with an independent Codex scorer and converged');
   assert.equal(Object.keys(sealed.artifact_publication.artifacts).length, 4);
   assert.equal(f.sealSession(session).status, 'completed');
   console.log('Swarm: two Codex ants and an independent scorer completed a Python ACO round with Agent Memory, CAS and replay.');

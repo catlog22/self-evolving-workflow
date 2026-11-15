@@ -86,7 +86,7 @@ When prior debug artifacts of the same scope exist, check their root cause first
 
 Keep domain progress in `outputs/session.json`. Keep the Run identity in the Evolve Session receipt. Resume Debug from the domain checkpoint after attaching to the exact Run.
 
-Use the artifact identities in the contract above. For `session.json` and `explore.json`, put `kind`, `schema`, `role` and `alias` in the top-level `_meta` object. Put the same fields in the first JSON record of `evidence.ndjson` under `_meta`, and append later observations as separate lines. Put those fields in the YAML frontmatter of `understanding.md`. Keep the Debug phase fields alongside the artifact metadata. Run `evolve run check` before sealing to verify artifact identity and availability.
+Use the artifact identities in the contract above. For `session.json` and `explore.json`, put `kind`, `schema`, `role` and `alias` in the top-level `_meta` object. Put the same fields in the first JSON record of `evidence.ndjson` under `_meta`, and append later observations as separate lines. Put those fields in the YAML frontmatter of `understanding.md`. Keep the Debug phase fields alongside the artifact metadata. `evolve run complete` validates artifact identities and availability as part of sealing.
 
 ## Risk Checklist
 

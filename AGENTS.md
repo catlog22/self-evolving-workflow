@@ -87,7 +87,7 @@ Search project knowledge before inspecting, analyzing, planning against, or chan
 | Task context | Required opening |
 | --- | --- |
 | Standalone task | In this checkout, run `node dist/cli.js context "<query>" --include-memory` as the first project-related tool call. The installed equivalent is `agent-memory context "<query>" --include-memory`. |
-| New Evolve Run | Inspect the Run packet, then use the scoped lookup below before exploring the project. The Run-bound `memory_search` and `memory_get` tools are available for Working Memory lookups. |
+| New Evolve Run | Inspect the Run packet. Open bound `session-priors` when it covers the current scope. Otherwise, use the Run MCP `wiki_context` and open selected IDs with `wiki_reference` before exploring the project. |
 | Resumed Evolve Run | Recover the packet with `evolve run brief <run-id> --session <session-id>`, then resolve project knowledge before resuming exploration. Reuse complete entries already in context and reload any entry represented only by an ID or summary. |
 
 For a CLI lookup in a Run, use `agent-memory context "<query>" --session <session-id> --include-memory --reads "<run-dir>/knowledge-reads.json"`. Add `--task` or `--path` when that scope is known. Use one receipt source per Run. Code search with `agent-memory code search <query>` is available after the opening lookup.

@@ -73,18 +73,18 @@ agent-memory --root <project> search "<query>" --scope memory --scene <scene> --
 - `search(query, filters?)` 用查询词、任务、路径和分类发现候选。按 `knowledge_id` 打开选中的条目。
 - 搜索结果返回稳定的 `knowledge_id`，供后续精确读取和审计使用。
 - `get(id)`、`query({ id })` 和 `reference(id)` 负责单条读取，必须接收稳定 ID。Wiki 可以兼容已登记的 `aliases`，写入操作不接受别名。
-- `constraints(context)` 根据 Skill、任务、路径和分类解析适用约束，不要求条目 ID。返回结果仍带 `knowledge_id`，用于 Run 快照和消费记录。
+- `constraints(context)` 根据任务、路径和分类解析适用约束。返回结果带 `knowledge_id`，用于 Run 快照和消费记录。
 - `propose`、`changes` 和 `apply` 属于变更接口，必须使用规范化条目 ID、候选 ID 或变更 ID，并校验基线哈希。
 
 标准调用顺序是 `search → get/query`。搜索只返回摘要和 ID，精确读取才返回完整正文、作用域和来源。
 
 ### 搜索回执
 
-阶段 Skill 可以在搜索和精确读取完成后使用 `--trace` 获取 `knowledge_reads/1.0`。默认查询保持无状态，只有显式传入 `--trace` 才在结果中附加回执数据。回执包含 `constraints_bound`、`searches` 和 `reads`，由 Run 封存时写入 `result.knowledge_reads`。
+Run MCP 的 `wiki_context` 和 `wiki_reference` 自动记录 `knowledge_reads/1.0`，封存时写入回执。分析 Run 也会封存已读取的 Wiki 正文和约束为 `session-priors`。后续 Run 实际打开该工件后，回执中的 `priors_reuse` 记录产物 ID、哈希和原 Run ID。
 
 - `searches[]` 记录查询词、阶段过滤条件、返回 ID 和命中数，不接收条目 ID。
 - `reads[]` 记录 `wiki reference <id>`、`wiki get <id>` 或 `memory get <id>` 的精确读取，必须带稳定 ID。
-- `reads[].from_search_id` 必须指向本次搜索或 `priors`，用于核对搜索到读取的链路。
+- `reads[].from_search_id` 将精确读取关联到对应搜索。已有的 CLI 历史回执还可使用 `priors` 来源标记。
 - 跨 CLI 调用时使用同一个 `--reads` 文件，精确读取再传 `--from-search <search-id>`，保持同一份回执中的搜索与读取关联。`--trace-file` 仍作为兼容别名。
 - `content_sha256` 和 `version` 用于确认读取内容与回执时点一致。
 - 没有执行搜索时不生成伪造记录。零命中使用 `returned_ids: []` 保留为可分析信号。

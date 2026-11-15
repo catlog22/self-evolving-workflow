@@ -11,6 +11,7 @@ import { bindWorkflowSkill, commandNames, workflowHash } from './workflow-skills
 import { serveWorkflowRun } from './workflow-mcp.js';
 import { Wiki } from './wiki.js';
 import { migrateLegacyWiki } from './wiki-migration.js';
+import { wikiLookupScope } from './workflow-knowledge.js';
 import { installSkills, installWorkflow, workflowDocument, workflowDocuments } from './workflow-install.js';
 
 const string = { type: 'string' } as const;
@@ -33,6 +34,7 @@ const usage = [
   'evolve session list|resume-view',
   'evolve session chain insert|replace|skip --session <id> --step-id <id>',
   'evolve run next|brief|check|skill-read|artifact-read|complete|transition|cancel|decide --session <id>',
+  'evolve run artifact-read <run> <alias> --session <id> [--scope <Wiki scope JSON>]',
   'evolve team controller|assign|report|cancel|list --session <id> --run <id>',
   'evolve skills [install <package>... | validate <command>]',
   'evolve install [--scope project|user | --global] [--host codex|claude] [--skill <package>] [--root <project>] [--yes]',
@@ -176,7 +178,8 @@ async function runWorkflowCli(argv: string[]) {
       if (action === 'brief') return print(store.brief(id(), runId()));
       if (action === 'check') return print(store.check(id(), runId(), gates));
       if (action === 'skill-read') return print(store.readSkill(id(), runId(), values.from, args[1]));
-      if (action === 'artifact-read') return print(store.readArtifact(id(), runId(), requireText(args[1], 'artifact ID or alias')));
+      if (action === 'artifact-read') return print(store.readArtifact(id(), runId(), requireText(args[1], 'artifact ID or alias'),
+        wikiLookupScope(values.scope === undefined ? undefined : JSON.parse(values.scope))));
       if (action === 'complete') return print(store.completeRun(id(), runId(), requireText(values.summary, 'Run summary'),
         select(values.verdict ?? 'done', ['done', 'done_with_concerns'], 'verdict'), gates, mutation()));
       if (action === 'transition' || action === 'cancel') return print(store.transition(id(), runId(),

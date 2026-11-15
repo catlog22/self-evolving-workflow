@@ -230,7 +230,7 @@ Read `goal.md`, use `evolve session status --session {session_id} --json` for th
 <success_criteria>
 - Public flags include `--auto`, `--resume <session-id>`, `-y`, `-c`, and `--amend`.
 - Initial classification is auditable and the Session exists before step execution.
-- Every step follows `run next` → brief → execute → `run check` → `run complete --advance`; decision nodes use `run decide`.
+- Follow the packet from `run next`, execute the step and seal it with `run complete`. Use `run decide` at decision nodes and `run check` to diagnose a failed completion.
 - Chain adaptation is Skill-proposed and atomically applied by the producing Run (`session chain insert|replace|skip`).
 - Normal output and recommendations contain only `evolve run …` lifecycle commands.
 </success_criteria>

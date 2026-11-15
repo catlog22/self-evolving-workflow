@@ -116,7 +116,7 @@ domainRouting   = Step 1 || build from delegate-config domain tags (frontend/bac
 
 ## Step 3: Load project rules
 
-For a Run with `wiki_constraints`, use `agent-memory wiki constraints --path <file> --category coding --json` for each task's known file. Repeat `--path` for multiple files. UI tasks add `--category ui`. An empty result still uses the Run's Wiki snapshot.
+Reuse the bound `session-priors` for covered Wiki scope. Use `wiki_context` for additional paths or coding and UI categories required by the implementation.
 
 Pass task rules to each executor in Step 4. The current package does not maintain a second Spec loader.
 

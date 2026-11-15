@@ -17,6 +17,11 @@ contract:
     required: false
     schema: artifacts/1.0
     role: primary
+  - kind: priors
+    alias: session-priors
+    required: false
+    schema: priors/1.0
+    role: evidence
   produces:
   - path: outputs/review.json
     kind: review-findings
@@ -33,6 +38,7 @@ Review is a quality step inside the Evolve Skill. Use the linked preparation and
 
 - Read [review preparation](references/prepare.md) before defining the audit scope.
 - Read [review workflow](references/workflow.md) for the four dimensions, evidence format and zero-residual gate.
+- Reuse the bound `session-priors` for the same Wiki scope. Search for additional evidence when the scope changes.
 - Write `outputs/review.json` with file and line evidence, severity, remediation and verification status.
 
 The review step reports findings and follows the confirmed Session chain. It does not create a separate orchestration entry.

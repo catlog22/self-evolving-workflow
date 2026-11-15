@@ -22,7 +22,7 @@ The output of plan is "task JSON an executor can follow to finish the work," not
 
 ## Required Context
 
-- With `session-priors`, reuse its document and reference context. For legacy Runs, reuse matching prior specs to avoid a second load.
+- Open bound `session-priors` and reuse its Wiki bodies for the same lookup scope. Query through Run MCP when the plan adds a task, path, category or repository scope.
 - With `current-analysis`: read `findings.json#decisions` — locked as inviolable constraints, free left to the implementer's discretion, deferred explicitly excluded; `findings[]` and recommendation as task-scope input. If upstream gave implementation_scope, 1 scope item → 1 task.
 - With `latest-review`/`latest-debug` (`--gaps`): preserve review finding IDs and severity, cluster shared root causes, and produce traceable fix tasks; issue-backed gaps keep bidirectional `issue_id` links.
 - Pass the Run's `wiki_constraints` to the planner when the field is present. An empty list is a resolved result. Follow the workflow's legacy rules lookup when the field is absent.

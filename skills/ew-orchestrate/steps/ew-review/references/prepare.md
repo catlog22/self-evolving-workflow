@@ -38,9 +38,7 @@ Target resolution table:
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, ownership
-- Wiki: `agent-memory wiki references "<target keywords>" --category review --json` → prior reviews and known patterns
-- Constraints: `agent-memory wiki constraints --category review --json` → active review standards
-- Coding constraints: `agent-memory wiki constraints --category coding --path <target> --json` → patterns relevant to the review area
+- Open bound `session-priors` for the same Wiki scope. When the audit adds review or coding categories or target paths, use `wiki_context` for that scope and open selected references.
 - Memory: `agent-memory memory search "<target keywords>" --type error --scene review` → select relevant IDs and read them with `agent-memory memory get <id>`
 
 When prior review artifacts of the same scope exist, check their findings first to avoid re-reviewing already-addressed patterns.

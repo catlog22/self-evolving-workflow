@@ -30,11 +30,18 @@ export interface KnowledgeConstraintRecord {
   categories?: string[];
 }
 
+export interface KnowledgePriorReuse {
+  artifact_id: string;
+  producer_run_id: string;
+  content_sha256: string;
+}
+
 export interface KnowledgeReadsReceipt {
   schema_version: typeof KNOWLEDGE_READS_VERSION;
   searches: KnowledgeSearchRecord[];
   reads: KnowledgeReadRecord[];
   constraints_bound: KnowledgeConstraintRecord[];
+  priors_reuse?: KnowledgePriorReuse[];
 }
 
 export interface KnowledgeSearchInput {
@@ -136,6 +143,17 @@ function parseConstraint(value: unknown, index: number): KnowledgeConstraintReco
   };
 }
 
+function parsePriorReuse(value: unknown): KnowledgePriorReuse {
+  const item = record(value, 'priors reuse');
+  const hash = optionalSha(item.content_sha256, 'priors content hash');
+  if (!hash) throw new InputError('Missing priors content hash');
+  return {
+    artifact_id: requireText(item.artifact_id, 'priors artifact ID'),
+    producer_run_id: requireText(item.producer_run_id, 'priors producer Run ID'),
+    content_sha256: hash,
+  };
+}
+
 export function validateKnowledgeReads(value: unknown): KnowledgeReadsReceipt {
   const input = record(value, 'receipt');
   if (input.schema_version !== KNOWLEDGE_READS_VERSION || !Array.isArray(input.searches) ||
@@ -151,11 +169,13 @@ export function validateKnowledgeReads(value: unknown): KnowledgeReadsReceipt {
       throw new InputError(`Unknown knowledge search ID: ${item.from_search_id}`);
     }
   }
+  if (input.priors_reuse !== undefined && !Array.isArray(input.priors_reuse)) throw new InputError('Invalid priors reuse receipt');
   return {
     schema_version: KNOWLEDGE_READS_VERSION,
     searches,
     reads,
     constraints_bound: input.constraints_bound.map(parseConstraint),
+    ...(input.priors_reuse === undefined ? {} : { priors_reuse: input.priors_reuse.map(parsePriorReuse) }),
   };
 }
 
@@ -164,6 +184,7 @@ export class KnowledgeReads {
   private readonly searches: KnowledgeSearchRecord[] = [];
   private readonly reads: KnowledgeReadRecord[] = [];
   private readonly constraints: KnowledgeConstraintRecord[] = [];
+  private readonly priorReuse?: KnowledgePriorReuse[];
 
   constructor(initial?: KnowledgeReadsReceipt) {
     if (!initial) return;
@@ -171,6 +192,7 @@ export class KnowledgeReads {
     this.searches.push(...receipt.searches);
     this.reads.push(...receipt.reads);
     this.constraints.push(...receipt.constraints_bound);
+    this.priorReuse = receipt.priors_reuse;
     for (const search of this.searches) {
       const match = /^search-(\d+)$/.exec(search.search_id);
       if (match) this.sequence = Math.max(this.sequence, Number(match[1]));
@@ -235,6 +257,7 @@ export class KnowledgeReads {
       searches: this.searches,
       reads: this.reads,
       constraints_bound: this.constraints,
+      ...(this.priorReuse ? { priors_reuse: this.priorReuse } : {}),
     });
   }
 }

@@ -77,9 +77,9 @@ Collect all available context:
    - `current-analysis.architecture_template_evidence`: reference-only architecture evidence
    - `blueprint`, `grill`, and `brainstorm` context-package `references[]` entries with `type=architecture-template`
    - research `SUMMARY.md` architecture template evidence, when present
-2. **Architecture rules**: pass the Run's frozen Wiki rules to the planner. After task paths are known, select their rules with `agent-memory wiki constraints --category arch --path <file> --json`. The current package has no separate legacy knowledge loader.
+2. **Architecture rules**: apply matching `session-priors`. If planning adds architecture or task path scope, use `wiki_context` for that scope before planning against it.
 3. **Codebase docs**: read `.workflow/codebase/doc-index.json` (if it exists), extract relevant feature/component/requirement
-4. **Wiki search** (optional): extract 2-5 keywords from phase goal/title → `agent-memory wiki references "<keywords>" --task <task-kind> --category arch --json` → top 10 as priors. Search planning lessons with `agent-memory memory search "<keywords>" --type work_method --scene plan`. If unavailable record W003 and continue.
+4. **Additional knowledge** (optional): look up Wiki evidence for newly added scope and open the references you use. Search working Memory for planning lessons when relevant. If unavailable record W003 and continue.
 5. **Design reference** (if any): if `design-ref/MASTER.md` exists load design-tokens/animation-tokens/layout; each UI task's read_first[] must include these. For UI work without that reference, use the project's applicable design guidance when planning.
 6. **Parallel exploration** (skipped when `--gaps` or upstream findings already exist): 1-4 exploration angles (architecture/implementation/integration/risk), spawn 1-4 cli-explore-agent (mandatory, manual Read/Grep is not a substitute), each with goal + success_criteria + one angle → write `{run_dir}/outputs/exploration-{angle}.json`
 6b. **CLI supplementary context** (parallel with 6, skipped when `--gaps` or no CLI tool): `evolve delegate` collects implementation context (existing patterns, dependency graph, collision points), MODE analysis, after callback parsing merge into explorationContext's `cli_context`
