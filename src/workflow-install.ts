@@ -9,6 +9,7 @@ import { workflowName } from './workflow-names.js';
 const bundle = fileURLToPath(new URL('../', import.meta.url));
 const source = join(bundle, 'skills');
 const hosts = { codex: ['.codex', 'AGENTS.md'], claude: ['.claude', 'CLAUDE.md'] } as const;
+const workflowTitle = 'Self-Evolving Workflow';
 
 type InstallScope = 'project' | 'user';
 type InstallHost = keyof typeof hosts;
@@ -81,10 +82,10 @@ function provisionInstructions(path: string) {
   const info = lstatSync(path, { throwIfNoEntry: false });
   if (info && !info.isFile()) throw new InputError('Use a regular instruction file: ' + path);
   const current = info ? readFileSync(path, 'utf8') : '';
-  if (/^# Evolve Workflow\s*$/m.test(current)) return;
+  if (/^# (?:Evolve Workflow|Self-Evolving Workflow)\s*$/m.test(current)) return;
   const newline = current.includes('\r\n') ? '\r\n' : '\n';
   const guide = [
-    '# Evolve Workflow',
+    '# ' + workflowTitle,
     '',
     'Use Evolve for Session and Run control. Run `agent-memory context "<task keywords>" --include-memory` before inspecting project files.',
     'Follow the project instructions for knowledge scope. Open controlling entries by ID and record Run knowledge reads.',
@@ -115,7 +116,7 @@ export async function installWorkflow(root: string, options: InstallOptions) {
     }
     const ui = createInterface({ input: process.stdin, output: process.stdout });
     try {
-      process.stdout.write('Evolve Workflow installer\n\n');
+      process.stdout.write(workflowTitle + ' installer\n\n');
       if (!options.scope && !host) {
         const answer = (await ui.question('Install to [1] project or [2] user profile [1]? ')).trim();
         if (answer && answer !== '1' && answer !== '2') throw new InputError('Choose project (1) or user (2)');

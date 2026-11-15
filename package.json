@@ -1,7 +1,7 @@
 {
   "name": "evolve-agent-memory",
   "version": "0.1.0",
-  "description": "Local code graph, Markdown wiki and agent memory search",
+  "description": "Self-Evolving Workflow with a local code graph, a Markdown wiki, and agent memory search",
   "license": "MIT",
   "type": "module",
   "engines": {

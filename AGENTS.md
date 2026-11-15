@@ -1,4 +1,4 @@
-# Evolve Workflow
+# Self-Evolving Workflow
 
 For this repository, the Knowledge Gate and Workflow Routing below take precedence over host-wide defaults for knowledge lookups and Session/Run control. The Agent Memory lookup here fulfills inherited knowledge-search requirements for this repository.
 

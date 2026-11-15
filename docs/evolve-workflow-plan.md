@@ -1,4 +1,4 @@
-# Evolve Workflow 规划
+# Self-Evolving Workflow 规划
 
 讨论日期为 2026 年 11 月 13 日。方案基于 Maestro2 源码、当前知识引擎，以及与 Agy 对 Wiki 和 Session/Run 架构的评审。文中的数据结构和运行流程用于后续实现评审。
 
@@ -6,7 +6,7 @@
 
 ## 1. 目标与架构
 
-Evolve Workflow 延续 Maestro2 的 Session、Run 和 Skill 生命周期。当前项目提供独立的 `evolve` 控制器，并用从 TencentDB Agent Memory 提取的本地引擎处理错误、用户纠正和验证结果，支持按证据回放和改进 Skill。
+Self-Evolving Workflow 延续 Maestro2 的 Session、Run 和 Skill 生命周期。当前项目提供独立的 `evolve` 控制器，并用从 TencentDB Agent Memory 提取的本地引擎处理错误、用户纠正和验证结果，支持按证据回放和改进 Skill。
 
 首版用一个项目内可控的 Skill 跑通完整流程，覆盖 Maestro Session 收尾、独立 Skill 收尾、知识检索与更新，以及 Skill 补丁的生成、回放、应用和回滚。
 
