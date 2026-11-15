@@ -86,6 +86,7 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   const reply = message('assistant', '保存了。', 'final_answer');
   await writeFile(transcript, meta('live', cwd) + event('task_started') +
     message('developer', 'INJECTED_CONFIGURATION') + message('assistant', 'UNFINISHED_COMMENT', 'commentary') +
+    message('user', '<recommended_plugins>INJECTED_PLUGIN_RECOMMENDATIONS</recommended_plugins>') +
     row('response_item', { type: 'function_call_output', output: 'PRIVATE_TOOL_OUTPUT' }) +
     message('user', 'remember 水力基准') + reply.slice(0, -5));
   await hook();
@@ -97,7 +98,7 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   await hook();
   await hook();
   assert.equal(requests.length, 1);
-  assert.doesNotMatch(requests[0], /INJECTED_CONFIGURATION|UNFINISHED_COMMENT|PRIVATE_TOOL_OUTPUT/);
+  assert.doesNotMatch(requests[0], /INJECTED_CONFIGURATION|INJECTED_PLUGIN_RECOMMENDATIONS|UNFINISHED_COMMENT|PRIVATE_TOOL_OUTPUT/);
   const [first] = await search('水力基准', 'live');
   assert.match(first.sourceMessageIds[0], /^codex:live:\d+$/);
 

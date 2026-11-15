@@ -66,7 +66,7 @@ function messageText(parts: unknown, kind: string): string {
   if (!Array.isArray(parts)) return '';
   return parts.flatMap(part => {
     if (part?.type !== kind || !readableText(part.text)) return [];
-    if (kind === 'input_text' && /^(?:# AGENTS\.md instructions for |<environment_context>)/.test(part.text.trimStart())) return [];
+    if (kind === 'input_text' && /^(?:# AGENTS\.md instructions for |<(?:environment_context|recommended_plugins)>)/.test(part.text.trimStart())) return [];
     return [part.text];
   }).join('\n');
 }
