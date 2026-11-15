@@ -21,7 +21,7 @@ When `current-plan` is absent (entry gate skipped, not failed), execute enters *
 | `latest-debug` (diagnosis + fix-directions) | fix-directions present | **Companion** if ≤2 files; **Odyssey planex** otherwise |
 | No upstream at all | — | **Abort**: report E001 "No plan and no alternative upstream; run plan first" |
 
-Degradation close: complete the Run honestly with `maestro run complete <run_id> ... --verdict done_with_concerns --advance --json`（report.md `concerns` 记录 degradation reason 与 target command），或 `maestro run cancel <run_id> ... --json` 后重新派发目标命令。这保留 run 记录而不伪造 plan。（v2 的 `maestro session done <run_id> --verdict needs-retry` 为 deprecated/legacy-only。）
+Degradation close: complete the Run honestly with `evolve run complete <run_id> ... --verdict done_with_concerns --advance --json`（report.md `concerns` 记录 degradation reason 与 target command），或 `evolve run cancel <run_id> ... --json` 后重新派发目标命令。这保留 run 记录而不伪造 plan。（v2 的 `evolve session done <run_id> --verdict needs-retry` 为 deprecated/legacy-only。）
 
 **Never fabricate a plan artifact to satisfy the gate.** The degradation path is the compliant escape.
 
@@ -45,7 +45,7 @@ Degradation close: complete the Run honestly with `maestro run complete <run_id>
 
 ### Artifact Compatibility Recovery
 
-For an incompatible sealed input, the exact order is **blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next**. Close the attempted execute Run with the current mode's fenced `needs-retry` completion or `run cancel`, confirm the execute step is pending with no allocated/active Run, run read-only `maestro artifact inspect` for the exact Artifact/consumer/alias, and use `maestro artifact republish` only for `classification=semantic_republish_required` with the unchanged assessment hash and returned Artifact/Session revisions. Re-read the immutable republish receipt, then explicitly allocate the retry with fenced `maestro run next`; neither atomic complete-and-seal nor republish advances implicitly.
+For an incompatible sealed input, the exact order is **blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next**. Close the attempted execute Run with the current mode's fenced `needs-retry` completion or `run cancel`, confirm the execute step is pending with no allocated/active Run, run read-only `maestro artifact inspect` for the exact Artifact/consumer/alias, and use `maestro artifact republish` only for `classification=semantic_republish_required` with the unchanged assessment hash and returned Artifact/Session revisions. Re-read the immutable republish receipt, then explicitly allocate the retry with fenced `evolve run next`; neither atomic complete-and-seal nor republish advances implicitly.
 
 Migration must preserve the sealed source bytes and raw registry role/alias semantics. Never repair this boundary with chain skip, Run rebind, direct Artifact Registry edits/rewrites, or source Artifact mutation; semantic republish creates a derived compatibility Artifact and receipt instead.
 
@@ -68,7 +68,3 @@ Migration must preserve the sealed source bytes and raw registry role/alias sema
 
 - `execution-complete`: every task in the plan reaches a terminal state (done / blocked with checkpoint); `execution.json` is written and completed tasks carry a summary + status.
 - `self-check-passed`: the gate fails only when the scoped build/test smoke over this run's changes was not run this round or an unhandled critical tech-stack violation (allowed_languages / disallowed_imports) remains. A self-check result of `gaps_found` does **not** block run completion — gaps are recorded as concerns in the report for the separate verify run to consume (formal acceptance lives in verify, not here).
-
-## Legacy `session/1.x/2.x` Compatibility Branch
-
-deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0` 产出 `outputs/execution.json`（alias `current-execution`）作为 Execution 状态记录；v3 下 Execution 记录由 Runtime 独占、不存在独立 Execution schema，等价产出为写入 Session artifact registry（`artifacts/1.0`）的 `outputs/execution.json` 域工件。

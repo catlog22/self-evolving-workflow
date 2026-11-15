@@ -16,9 +16,6 @@ allowed-tools:
   - followup_task
   - interrupt_agent
   - list_agents
-  - mcp__maestro__team_agent
-  - mcp__maestro__team_msg
-  - mcp__maestro__team_task
   - request_user_input
   - send_message
   - spawn_agent
@@ -55,10 +52,6 @@ version: 0.5.93
 ---
 
 > **Agent timeout**: `spawn_agent` 异步执行且无内置超时 — 除明确短任务外一律 `spawn_agent` 后立即 `wait_agent({ timeout_ms: 3600000 })`（上限 1 小时）阻塞等待，绝不依赖 30000 默认值；`timed_out: true` 且 Agent 未完成时再次 `wait_agent` 续等，不丢弃。批量场景使用 `spawn_agents_on_csv({ max_runtime_seconds: 3600, ... })`。
-
-<required_reading>
-@~/.maestro/workflows/run-mode-lite.md
-</required_reading>
 
 # Team Swarm
 
@@ -115,9 +108,9 @@ Parse `$ARGUMENTS`:
 - **Session path**: `{run_dir}/work/team/`
 - **Team name**: `swarm`
 - **Script root**: `<skill_root>/scripts/aco.py` (Python 3.10+)
-- **Message bus**: `mcp__maestro__team_msg(session_id=<run-id>, ...)`
+- **Roster**: `evolve team list --session <session> --run <run>`
 
-For a version-bound Run, open the role and protocol through `maestro run skill-read`. Before running Python, extract `scripts/` and the configuration template from the commit and package path in `skill_ref` into the current Run's work directory. Run the controller and its bundled imports from there. On resume use the same commit; keep coordination state under `{run_dir}/work/team/`.
+For a version-bound Run, open the role and protocol through `evolve run skill-read`. Before running Python, extract `scripts/` and the configuration template from the commit and package path in `skill_ref` into the current Run's work directory. Run the controller and its bundled imports from there. On resume use the same commit; keep coordination state under `{run_dir}/work/team/`.
 
 When the host has no `TeamCreate` / teammate tools, follow [MCP coordination](references/mcp-coordination.md) for member dispatch, task tracking, callbacks and recovery.
 
@@ -147,9 +140,7 @@ inner_loop: false
 
 ## Progress Milestones
 session_id: <run-id>
-Report progress via team_msg at natural phase boundaries.
-Report blockers immediately via team_msg type="blocker".
-Report completion via team_msg type="task_complete" after final send_message.
+Use the host to report progress or blockers. Submit each finished assignment with evolve team report and keep its returned digest.
 
 Read role_spec file (@<skill_root>/roles/<role>/role.md) to load Phase 2-4 domain instructions.
 Execute built-in Phase 1 (task discovery) -> role Phase 2-4 -> built-in Phase 5 (report).`

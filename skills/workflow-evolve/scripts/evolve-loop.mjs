@@ -243,10 +243,13 @@ try {
   state.state_sha256 = createHash('sha256').update(JSON.stringify(state)).digest('hex');
   writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n');
   const report = { output_dir: outputDir, ...state };
-  const runDir = process.env.MAESTRO_RUN_DIR || process.env.RUN_DIR;
+  const runDir = option('--run-dir', process.env.RUN_DIR);
   const reportPath = runDir ? join(runDir, 'outputs', 'evolution-report.json') : join(outputDir, 'evolution-report.json');
   mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+  const artifact = runDir ? { ...report, _meta: {
+    kind: 'workflow-evolution-report', schema: 'workflow-evolution/1.0', role: 'primary', alias: 'latest-workflow-evolution',
+  } } : report;
+  writeFileSync(reportPath, JSON.stringify(artifact, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   state.status = 'failed';

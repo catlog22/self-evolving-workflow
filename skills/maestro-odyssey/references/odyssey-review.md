@@ -73,7 +73,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared phase
 7. Discoveries
 8. Learnings
 
-Specs: `maestro load --type spec --category review`.
+Specs: `agent-memory wiki constraints --category review`.
 
 ---
 
@@ -105,7 +105,7 @@ Discover routes: fixable sibling → S_FIX; new target needing review → S_REVI
 
 Evidence phase=archaeology.
 
-`maestro delegate --role analyze --mode analysis` (`run_in_background: true`):
+`evolve delegate --role analyze --mode analysis` (`run_in_background: true`):
 - PURPOSE: review recent modifications related to {target}
 - EXPECTED: JSON `[{commit_sha, risk_level, analysis, could_cause_issue, explanation}]`
 
@@ -117,7 +117,7 @@ If an archaeology agent fails, log W003 and proceed with available results.
 
 Skip if no CLI tools (W006).
 
-`maestro delegate --role explore --mode analysis` (`run_in_background: true`):
+`evolve delegate --role explore --mode analysis` (`run_in_background: true`):
 - PURPOSE: call chains, recent changes, error gaps, similar patterns
 - EXPECTED: JSON `{call_chains, recent_changes, error_gaps, similar_patterns}`
 
@@ -150,7 +150,7 @@ Normal: request_user_input per tier | `-y`: auto-fix all. Remaining > 0 → retr
 
 ### A_CONFIRM
 
-Run tests + `maestro delegate --role review --mode analysis` (`run_in_background: true`) zero-residual review. `remaining == 0 AND new == 0` → confirmed, mark G3; otherwise → needs_rework → S_FIX. Update `confirmation` + `remaining_actionable` + §5.
+Run tests + `evolve delegate --role review --mode analysis` (`run_in_background: true`) zero-residual review. `remaining == 0 AND new == 0` → confirmed, mark G3; otherwise → needs_rework → S_FIX. Update `confirmation` + `remaining_actionable` + §5.
 
 **GATE: zero-remaining** — exhaustive fix applied tier-by-tier, `remaining_actionable == 0` (or all remaining individually classified as deferred after 5-round escalation), tests pass, CLI re-review confirms no new findings, confirmation + §5 written, G3 marked. `needs_rework` routes back to FIX; skippable only when `skip_fix == true`.
 
@@ -166,7 +166,7 @@ Review findings with severity >= medium.
 
 ## Knowledge Persistence (§8)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 
 | Category | Content | Follow-up |
@@ -243,9 +243,9 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues | `/maestro-issue list --source review-odyssey` |
-| Document pattern | `/maestro-learn decompose <module>` |
+| Discovery issues | `Open the follow-up findings in the project issue tracker` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
 | Debug root cause | `/maestro-odyssey <issue> --mode debug` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
-| Related question | `/maestro-learn investigate "<question>"` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
+| Related question | `Use an Evolve analyze step for the question` |
 | Pending decisions | Filter evidence phase=decision status=pending |

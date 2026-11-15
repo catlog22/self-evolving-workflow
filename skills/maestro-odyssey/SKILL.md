@@ -31,12 +31,7 @@ contract:
 version: 0.5.93
 ---
 
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-@~/.maestro/workflows/codex-run-mode.md
-</required_reading>
-
-If any required file above was not expanded into context by the host, or its content is no longer in context, Read it explicitly before executing any step.
+Use the [Evolve Session execution guide](../maestro/references/orchestrator-run-loop.md) for dispatch, decisions and recovery.
 
 ## Mode documents
 
@@ -100,7 +95,7 @@ For an existing Run, use the exact `odyssey-<mode>` command from its Resume Pack
 <context>
 $ARGUMENTS
 
-**Universal flags:** `--mode <name>` mode selector | `--skip-fix` audit/diagnose only, skip fix+verify | `--skip-generalize` skip GENERALIZE+DISCOVER | `-y` skip all confirmation interactions (including delegate/agent confirmations in execution phases), use default choices; decisions skipped this way are recorded as `deferred`; never bypasses mode ambiguity (E000), INTAKE gate blockers, escalation | `-c` resume the most recent unfinished Session of the SAME mode via exact Session resolution: locate it with `maestro session list --json` + `maestro session status --session {session_id} --json` (both read-only), re-attach context with `maestro session resume-view` and the `brief-result/3.0` Resume Packet via `run brief` (exact invocation per run-mode.md), then continue the chain with fenced `maestro run next` / `run check` / `run complete --advance`. If `--mode` conflicts with the resumed Session's mode → E003 (mode mismatch); no history → ignore -c, create new Session | `--heartbeat` /loop periodic progress
+**Universal flags:** `--mode <name>` mode selector | `--skip-fix` audit/diagnose only, skip fix+verify | `--skip-generalize` skip GENERALIZE+DISCOVER | `-y` skip all confirmation interactions (including delegate/agent confirmations in execution phases), use default choices; decisions skipped this way are recorded as `deferred`; never bypasses mode ambiguity (E000), INTAKE gate blockers, escalation | `-c` resume the most recent unfinished Session of the SAME mode via exact Session resolution: locate it with `evolve session list --json` + `evolve session status --session {session_id} --json` (both read-only), re-attach context with `evolve session resume-view` and the `Evolve Run brief` Resume Packet via `run brief` (see the Evolve Session execution guide), then continue the chain with fenced `evolve run next` / `run check` / `run complete --advance`. If `--mode` conflicts with the resumed Session's mode → E003 (mode mismatch); no history → ignore -c, create new Session | `--heartbeat` /loop periodic progress
 
 **Mode-scoped flags:**
 
@@ -120,7 +115,7 @@ $ARGUMENTS
 
 Mode-scoped flags passed to inapplicable mode: emit W008 warning and ignore the flag.
 
-**Session creation**: follow `run-mode.md` exactly. Negotiate capabilities, then use the receipt-chained self-start path: open an empty Session with `--actor` carrying the authorized identity, insert `odyssey-<mode>` plus every mode/domain argument through fenced repeatable `--arg`, and dispatch it with fenced `run next` using a third request ID. Every mutation consumes the exact revision returned by the preceding receipt. Consume the resulting birth packet's resolved `task` and structured executable `continuation`; never pass task prose via `--input`. A direct machine-protocol `run create` is allowed only with positional domain arguments, explicit `--session`/`--run`/`--step`, `--actor` identity, exact CAS revision, and `--input` values restricted to sealed same-Session Artifact IDs.
+**Session creation.** Open an Evolve Session, insert the selected odyssey-<mode> step with the mode arguments, then dispatch run next. Supply each argument through --arg and use the returned revision for the next mutation. Read the entry, selected preparation and mode workflow from the bound commit. Resume the same Run and its domain checkpoint on continuation.
 
 **Session**: `{run_dir}/outputs/`
 **Output**: `session.json` | `evidence.ndjson` | `understanding.md` | `explore.json` (debug/review only) | `anchors.json` (defensive only)
@@ -227,16 +222,16 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 | Condition | Next |
 |-----------|------|
 | Single-file mechanical fix discovered | Maestro internal Companion route |
-| Discovery issues created | `/maestro-issue list --source {mode}-odyssey` |
+| Discovery issues created | Review the findings in the project issue tracker. |
 | Deeper debug needed (from any mode) | `/maestro-odyssey <finding> --mode debug` |
 | Security findings need remediation | `/maestro-odyssey <finding> --mode improve` |
 | Defensive findings need remediation | `/maestro-odyssey <finding> --mode improve` |
 | Defensive root-cause needed | `/maestro-odyssey <finding> --mode debug` |
 | Formal review of changes | `/maestro-odyssey <changed-files> --mode review` |
 | UI-related findings | `/maestro-odyssey <component> --mode ui` |
-| Document pattern | `/maestro-learn decompose <module>` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
-| Related question | `/maestro-learn investigate "<question>"` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
+| Related question | `Use an Evolve analyze step for the question` |
 | Design/perf/arch pattern to persist | `/maestro-spec add ui\|coding\|arch "..."` |
 | Pending decisions | Filter evidence phase=decision status=pending |
 </next_step_routing>

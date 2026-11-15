@@ -27,13 +27,6 @@ contract:
 version: 0.5.93
 ---
 
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-@~/.maestro/workflows/codex-run-mode.md
-</required_reading>
-
-If any required file above was not expanded into context by the host, or its content is no longer in context, Read it explicitly before executing the state machine.
-
 <deferred_reading>
 - [Chain catalog](references/maestro.md) — read before initial intent classification.
 - [Planning and chain creation](references/planning.md) — read when creating a Session chain.
@@ -51,7 +44,7 @@ If any required file above was not expanded into context by the host, or its con
 </deferred_reading>
 
 <purpose>
-Route a user intent to the lightest sufficient execution path. For work requiring a durable chain, create one canonical topic Session through `maestro session open --chain <commands...>` and drive it through the shared Run loop. Recovery, verification and bounded retries use that same loop.
+Route a user intent to the lightest sufficient execution path. For work requiring a durable chain, create one canonical topic Session through `evolve session open --chain <commands...>` and drive it through the shared Run loop. Recovery, verification and bounded retries use that same loop.
 </purpose>
 
 <goal_long_chain>
@@ -85,13 +78,13 @@ All routing, chain creation, long-chain goal auditing and recovery stay inside t
 
 <invariants>
 1. **One chain** — every task uses the same Session/Run protocol; no static/dynamic or executor-specific Session type.
-2. **Session before execution** — open via `maestro session open "<objective>" --id <slug> --chain <commands...>` before allocating a step Run.
+2. **Session before execution** — open via `evolve session open "<objective>" --id <slug> --chain <commands...>` before allocating a step Run.
 3. **Creator owns decomposition** — Maestro creates `boundary_contract` and outcome-oriented goals; later orchestrators consume rather than overwrite them.
 4. **Runtime owns mutation** — prompt never writes session.json/run.json and never auto-uses admin chain commands.
 5. **Skill owns domain adaptation** — optional chain changes come only from the current Skill's validated `chain-proposal/1.0`.
-6. **Verdict advances** — execution steps advance only through fenced `maestro run complete ... --advance --verdict done|done_with_concerns`; decision steps only through fenced `maestro run decide`.
+6. **Verdict advances** — execution steps advance only through fenced `evolve run complete ... --advance --verdict done|done_with_concerns`; decision steps only through fenced `evolve run decide`.
 7. **Historical similarity remains read-only evidence** — it never selects a Session or binds outputs.
-8. **Compatibility commands are out of band** — normal orchestration calls only `maestro run ...`.
+8. **Compatibility commands are out of band** — normal orchestration calls only `evolve run …`.
 9. **Auto is bounded** — `-y` never bypasses high risk, low confidence, ambiguity, failed gates or drift escalation.
 10. **Entry commands stay outside the chain** — each persisted step names the executing Skill or decision point directly.
 11. **Running means continue** — while canonical continuation authority is `automatic`, execute it and re-read the receipt in the same turn; `suggest_only` is Runtime passivity, not a reason to end the turn.
@@ -203,7 +196,7 @@ Follow the linked planning and chain-creation procedure for knowledge checks, Sk
 
 ### A_CONTINUE
 
-For `--resume`, read `maestro session status --session {session_id} --json` and reattach the exact Run using its Resume Packet. For `-c`, resolve a unique compatible live Session from the read-only list and status views, and ask when several match. A pending decision follows the declared continuation. A stuck Run follows the recovery section of `orchestrator-run-loop.md`. A completed or archived Session stays terminal for this invocation.
+For `--resume`, read `evolve session status --session {session_id} --json` and reattach the exact Run using its Resume Packet. For `-c`, resolve a unique compatible live Session from the read-only list and status views, and ask when several match. A pending decision follows the declared continuation. A stuck Run follows the recovery section of `orchestrator-run-loop.md`. A completed or archived Session stays terminal for this invocation.
 
 ### A_AUTO
 
@@ -211,11 +204,11 @@ At an actionable continuation, evaluate the remaining scope, goal evidence and r
 
 At a decision gate, compare every pending goal's completion condition against the accumulated evidence. Use the linked automatic execution policy's confidence and risk rules before advancing. Keep the chain open when a decision needs more evidence or a user ruling.
 
-Before any mutation run `maestro capabilities --json` and use the shared `session_run_minimal_v3` capability gate. Carry `session/3.0`, `run/3.0`, `run-response/1.2` and the fresh `orchestration_revision` through the shared loop. Confidence below 60 blocks the loop. After `run complete --json` or `run decide --json`, take any authorized automatic continuation. Terminal completion uses `maestro session complete`.
+Use the Evolve lifecycle from the shared execution guide. Retain the current revision after each mutation and follow continuation.action. Confidence below 60 requires review before proceeding.
 
 ### A_AMEND
 
-Read `goal.md`, use `maestro session status --session {session_id} --json` for the snapshot, perform read-only impact analysis, confirm, then apply the amendment through a chain-aware typed proposal: goal/decomposition metadata is committed with fenced `maestro session chain insert|replace` (per-step `--goal-ref` / `--stage` / `--decision-ref`). `session meta update` is session/1.x/2.0 compatibility-only and must not be used in the canonical branch. Any pending-tail change must come from a planning step inside this Maestro Skill.
+Read `goal.md`, use `evolve session status --session {session_id} --json` for the snapshot, perform read-only impact analysis, confirm, then apply the amendment through a chain-aware typed proposal: goal/decomposition metadata is committed with fenced `evolve session chain insert|replace` (per-step `--goal-ref` / `--stage` / `--decision-ref`). Any pending-tail change must come from a planning step inside this Maestro Skill.
 
 </actions>
 
@@ -239,9 +232,5 @@ Read `goal.md`, use `maestro session status --session {session_id} --json` for t
 - Initial classification is auditable and the Session exists before step execution.
 - Every step follows `run next` → brief → execute → `run check` → `run complete --advance`; decision nodes use `run decide`.
 - Chain adaptation is Skill-proposed and atomically applied by the producing Run (`session chain insert|replace|skip`).
-- Normal output and recommendations contain only `maestro run ...` lifecycle commands.
+- Normal output and recommendations contain only `evolve run …` lifecycle commands.
 </success_criteria>
-
-## Legacy `session/1.x/2.x` Compatibility Branch
-
-The v2 command surface is **deprecated / compatibility-only** for explicitly selected old CLI/schema (see run-mode.md Legacy `session/1.x/2.x` Compatibility Branch): `maestro session create --chain-file`, `maestro session done --verdict`, `maestro session decide`, `maestro session meta update`, and the standalone `run prepare` dispatcher are never used by the canonical flow above. Normal orchestration calls only the v3 Session/Run surface. Knowledge operations follow [the internal knowledge route](references/knowledge-route.md) and use the Agent Memory Wiki proposal and application commands.

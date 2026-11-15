@@ -8,6 +8,7 @@ import type { LlmClient } from './upstream/llm.js';
 import { readCompletionTranscriptRefs, readTranscriptSnapshots } from './transcript-evidence.js';
 import type { Wiki } from './wiki.js';
 import { validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
+import { readEvolveSessions } from './workflow-runtime.js';
 
 export interface SkillSignal {
   id: string;
@@ -137,6 +138,38 @@ export async function reviewSession(
 ) {
   session = requireText(session, 'Session ID');
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(session)) throw new InputError('Invalid Session ID');
+  const [native] = readEvolveSessions(root, session);
+  if (native) {
+    const evidenceRuns = new Map<string, string[]>();
+    const messages: ConversationMessage[] = [];
+    const runs: ReviewedRun[] = native.runs.map(run => {
+      const timestamp = run.finished_at ?? native.created_at;
+      const source = `evolve:${session}#${run.id}`;
+      const record = (id: string, content: string, related = [run.id]) => {
+        messages.push({ id, timestamp, role: 'tool', content });
+        evidenceRuns.set(id, related);
+      };
+      if (run.summary) record(source, `${run.task.command} ${run.status}. ${run.summary}`);
+      if (run.retry_of_run_id) record(source + ':retry', `Run ${run.id} retries ${run.retry_of_run_id}.`, [run.id, run.retry_of_run_id]);
+      const files = Object.entries(run.reads).map(([path, sha256]) => ({ path, sha256 }));
+      const readSource = source + ':skill-reads';
+      if (files.length) record(readSource, 'Opened Skill documents: ' + files.map(file => file.path).join(', '));
+      const knowledgeSource = source + ':knowledge-reads';
+      if (run.knowledge_reads) record(knowledgeSource, knowledgeReadsMessage(run.knowledge_reads));
+      const { skill_id, commit, tree, package_path, entry } = run.skill;
+      return {
+        id: run.id, command: run.task.command, source, retryOf: run.retry_of_run_id,
+        skillRef: { skill_id, commit, tree, package_path, entry },
+        ...(files.length ? { skillReads: { source: readSource, files } } : {}),
+        ...(run.knowledge_reads ? { knowledgeReads: { source: knowledgeSource, receipt: run.knowledge_reads } } : {}),
+      };
+    });
+    for (const message of options.transcript ?? []) {
+      messages.push({ ...message, id: `conversation:${session}#${message.id}` });
+    }
+    validateConversationMessages(messages);
+    return { session, evidence: messages.length, runs, signals: await extractSignals(messages, session, options.model, evidenceRuns) };
+  }
   const directory = join(root, '.workflow', 'sessions', session);
   if (!lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
     throw new InputError(`Session not found: ${session}`);

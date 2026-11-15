@@ -3,8 +3,26 @@ name: odyssey-improve
 description: 6-dimension runtime quality audit → diagnose → fix → verify cycle with baseline metrics tracking and zero-residual enforcement
 argument-hint: "<target> [--dimensions <list>] [--fix-threshold <severity>] [--skip-fix] [--skip-generalize] [-y] [-c]"
 contract:
-refs:
-  - path: ../odyssey-base.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: session
+      schema: session/1.0
+      role: primary
+      alias: improve-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: improve-evidence
+      required: false
+    - path: outputs/understanding.md
+      kind: understanding
+      schema: understanding/1.0
+      role: primary
+      alias: improve-understanding
+      required: false
 goal: true
 ---
 
@@ -32,9 +50,9 @@ The six dimensions (default all, overridable via `--dimensions`): performance, s
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, layering rules
-- Wiki: `maestro search "<target keywords>"` → prior audits, known issues
-- Specs: `maestro load --type spec --category coding` + `maestro load --type spec --category debug` → coding standards, known vulnerability patterns
-- Role knowledge: `maestro search --category coding` → pick relevant items → `maestro load --type knowhow --id`
+- Wiki: `agent-memory wiki references "<target keywords>"` → prior audits, known issues
+- Specs: `agent-memory wiki constraints --category coding` + `agent-memory wiki constraints --category debug` → coding standards, known vulnerability patterns
+- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
 - Baseline metrics: capture current test pass rate, bundle size, dependency count, complexity hotspots before any changes — these form `session.json.baseline_metrics` for before/after comparison
 
 When prior improve sessions of the same target exist, check their audit results and fixes first to avoid re-diagnosing already-resolved issues.

@@ -80,18 +80,11 @@ session.iteration = <k>  (mark "in progress")
 session.active_workers = [<list of ant IDs>]
 ```
 
-Log state_update:
-```
-team_msg.log({
-  type: "state_update",
-  summary: "Iteration <k> dispatched: <N> ants",
-  data: { iteration: <k>, n_ants: <N>, status: "ants_running" }
-})
-```
+Persist the iteration and assignment IDs in team-session.json.
 
 ### Step 6: STOP
 
-Wait for ant callbacks. Each ant reports via team_msg(type="task_complete"). When ALL N reported, callback handler invokes "Iteration End" workflow.
+Wait for ant callbacks. Each ant uses evolve team report for its assignment. When ALL N reported, callback handler invokes "Iteration End" workflow.
 
 ---
 
@@ -159,13 +152,7 @@ Parse stdout JSON. Expected:
 
 ### Step 4: Log iteration result
 
-```
-team_msg.log({
-  type: "state_update",
-  summary: "Iter <k> done: best=<X>, mean=<Y>, delta=<Z>",
-  data: { iteration: <k>, best_score, mean_score, delta, elite_updated, hallucinations_flagged }
-})
-```
+Save the phase summary in team-session.json.
 
 If `hallucinations_flagged.length > N/2`: append warning to wisdom/issues.md (high-noise iteration).
 
@@ -211,5 +198,5 @@ After each iteration:
 | Ant produced no artifact | Script's update will skip it; if all skipped -> error -> halt |
 | `aco.py update` fails | Retry once; if persistent -> halt with error report |
 | Scorer worker fails | Record the failure. For an intentional self-score fallback in a Run, use `update --iter <k> --allow-score-fallback` and record that choice for replay. |
-| Iteration takes too long | After timeout (configurable), check `team_msg` for blockers |
+| Iteration takes too long | After timeout (configurable), check the host job and Evolve assignment roster |
 | User sends `feedback <text>` mid-iteration | Append to wisdom/learnings.md; apply at next iteration start (not mid-iter) |

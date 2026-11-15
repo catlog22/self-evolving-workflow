@@ -11,17 +11,17 @@ goal: true
 # Prepare: Maestro goal long-chain policy
 
 Maestro goal policy 是闭环长链策略层。本文件定义 **命令选择**（Stage Mapping）和 **建链规则**（Build Rules）。
-分派和恢复使用[执行循环](orchestrator-run-loop.md)，生命周期遵循 `~/.maestro/workflows/run-mode.md`。
+分派和恢复使用[执行循环](orchestrator-run-loop.md)。
 
 ## Execution Authority Invariants
 
-1. 首次 mutation 前执行 `maestro capabilities --json`，只接受 v3 六键 exact capability contract：`features.session_run_minimal_v3=true`、`features.entity_revision_cas=true`、`features.participant_identity=true`、`features.request_receipts_v2=true`、`features.execution_lease=false`、`features.operation_registry=false`；`session_schema_writes` 含 `session/3.0`、`execution_schema_writes` 为空、`run_response_writes` 含 `run-response/1.2`；不完整则 fail closed。
-2. Maestro 长链模式全程保留 exact `session_id + orchestration_revision`（run-target mutation 另含 `run_revision`）和单一 authorized `actor_id`，并把同一值传给 `--participant` 与 `--actor`。每个 orchestration mutation 使用 stable request ID unique to payload + 当前 `--expected-orchestration-revision`；run-target mutation 按 contract 另带 `--expected-run-revision`。每次 receipt（`run-response/1.2`）后刷新 fence，禁止按 Session status 或目录扫描猜 authority。
-3. chain/gate/decision 只能在 Session chain 内 mutation：dispatch 用 fenced `maestro run next`（birth packet 含 exact locator、`run_dir`/`upstream`/`guidance`/`knowledge_context`/`brief.command`、resolved `task`、structured executable `continuation`、`run_already_created=true`），重挂用 `maestro run brief`（`brief-result/3.0` Resume Packet 含相同 task/continuation contract 与 `orchestration_revision`），completion 用 fenced `maestro run complete ... --advance`（verdict `done`/`done_with_concerns`），决策用 `maestro run decide`（`proceed`/`fix`/`escalate`），链调整用 `session chain insert|replace|update|skip`，冲突先读 `maestro session status`，最终只走 `maestro session complete`。Run 封存后不可变，retry 经 `run next` 重新派发 pending step；无 Execution、无 lease、无 paused。
+1. 首次变更前用 evolve capabilities 读取运行时能力，随后沿回执处理 Session 和 Run 的修订号。
+2. Maestro 长链模式全程保留 exact `session_id + orchestration_revision`（run-target mutation 另含 `run_revision`）和单一 authorized `actor_id`，并把同一值传给 `--participant` 与 `--actor`。每个 orchestration mutation 使用 stable request ID unique to payload + 当前 `--expected-orchestration-revision`；run-target mutation 按 contract 另带 `--expected-run-revision`。每次 receipt（`Evolve mutation receipt`）后刷新 fence，禁止按 Session status 或目录扫描猜 authority。
+3. chain/gate/decision 只能在 Session chain 内 mutation：dispatch 用 fenced `evolve run next`（birth packet 含 exact locator、`run_dir`/`upstream`/`guidance`/`knowledge_context`/`brief.command`、resolved `task`、structured executable `continuation`、`run_already_created=true`），重挂用 `evolve run brief`（`Evolve Run brief` Resume Packet 含相同 task/continuation contract 与 `orchestration_revision`），completion 用 fenced `evolve run complete ... --advance`（verdict `done`/`done_with_concerns`），决策用 `evolve run decide`（`proceed`/`fix`/`escalate`），链调整用 `session chain insert|replace|update|skip`，冲突先读 `evolve session status`，最终只走 `evolve session complete`。Run 封存后不可变，retry 经 `run next` 重新派发 pending step；无 Execution、无 lease、无 paused。
 
 ## Stage Mapping
 
-从 `lifecycle_position` 到 `session-complete` 的完整命令目录。每个 chain step 由 Skill 执行；decision step 由只读 evaluator 评估。Session（`session/3.0`）提供 durable topic identity 与 chain；所有节点、gate 和终结条件都属于 Session chain。
+从 `lifecycle_position` 到 `session-complete` 的完整命令目录。每个 chain step 由 Skill 执行；decision step 由只读 evaluator 评估。Session（`evolve-session/1.0`）提供 durable topic identity 与 chain；所有节点、gate 和终结条件都属于 Session chain。
 
 | Stage | Skill 命令 | Decision after | quality_mode |
 |-------|-----------|----------------|--------------|
@@ -55,11 +55,11 @@ Maestro goal policy 是闭环长链策略层。本文件定义 **命令选择**�
 4. **决策节点**：每个 Decision after 非空的 stage 后绑定 post-step gate（`decision_ref: "<gate>"`）+ 对应 `decision_points` 条目；该 stage 的 Run 先完成并封存，随后必须 `run decide`，gate resolve 前不得派发下一 step。
 5. **goal-audit 插入**：有 `task_decomposition` 时，在最后一个 evidence-producing stage 后、`session-complete` 前插入 `post-goal-audit`。
 5.5. **re-grounding 插入**：有 decomposition 且执行 step ≥3 → 从第 3 个执行 step 起每隔 3 个插入 `post-reground`（不与已有 quality-gate 相邻）。
-6. **终点硬约束**：当前 Session 的 chain 以 `session-complete`(decision:post-execution) 结尾；standalone read-only 分析以最后一个质量门结尾。`maestro session complete` 完成 Session 身份，不销毁它（可 `unarchive` 再扩展）。
+6. **终点硬约束**：当前 Session 的 chain 以 `session-complete`(decision:post-execution) 结尾；standalone read-only 分析以最后一个质量门结尾。`evolve session complete` 完成 Session 身份，不销毁它（可 `unarchive` 再扩展）。
 7. **goal_ref 传播**：有 decomposition 时，每个 step 按 `stage ∈ goal.lifecycle` 匹配 `goal_ref`。
 8. **占位符**：`{session}` `{intent}` 由运行时替换。
-9. **skill 名预校验**：先把当前 host 映射为 Skill scanner 接受的 `target_platform`（`claude|codex|agent|agy|pi`），再通过 `maestro skills --steps --json --platform {target_platform}` 拉取该平台的 commands + skills + steps 注册表并匹配 step 名；未命中 → 报错 E005，阻断建链。不得省略 `--platform`，也不得为非 Claude host 回退到 `claude`。`pi` 的 Skill 来源是已安装 `pi-maestro-flow` npm 包中 `package.json#pi.skills` 声明的目录，不是用户主目录下的裸 `.pi/skills`。
-10. **step 形态**：Session chain step 仅 `command/args?/stage?/goal_ref?/retry_max?/decision_ref?`。chain definition 是 `session/3.0` 状态的一部分（`session open --chain` / `session chain insert`），不得作为任何独立 Execution/lifecycle 状态持久化。
+9. **skill 名预校验**：先把当前 host 映射为 Skill scanner 接受的 `target_platform`（`claude|codex|agent|agy|pi`），再通过 `evolve skills` 拉取该平台的 commands + skills + steps 注册表并匹配 step 名；未命中 → 报错 E005，阻断建链。不得省略 `--platform`，也不得为非 Claude host 回退到 `claude`。`pi` 的 Skill 来源是已安装 `pi-maestro-flow` npm 包中 `package.json#pi.skills` 声明的目录，不是用户主目录下的裸 `.pi/skills`。
+10. **step 形态**：Session chain step 仅 `command/args?/stage?/goal_ref?/retry_max?/decision_ref?`。chain definition 是 `evolve-session/1.0` 状态的一部分（`session open --chain` / `session chain insert`），不得作为任何独立 Execution/lifecycle 状态持久化。
 11. **scope_verdict gating**（起点 = analyze-macro 时）：
     - `large` + `wants_roadmap` → 保留 roadmap + analyze；plan 用 `--session`
     - 其余 → 跳过 roadmap + analyze；plan 用 `--from analyze:{id}`
@@ -130,12 +130,12 @@ CONFIDENCE_SCORE: 0-100
 ### Post-Execution Preflight（post-execution）
 
 1. 只读核验 exact `session_id + orchestration_revision`：所有 Run 已 sealed、chain terminal（completed/skipped with evidence）、无 open decision gate、goal audit 已通过。
-2. preflight clean -> verdict=proceed -> 通过当前 locator/revision 调用 `maestro run decide <post-execution> ... --verdict proceed --json`，消费新的 `run-response/1.2` fence，然后调用 `maestro session complete ... --json`。
+2. preflight clean -> verdict=proceed -> 通过当前 locator/revision 调用 `evolve run decide <post-execution> ... --verdict proceed --json`，消费新的 `Evolve mutation receipt` fence，然后调用 `evolve session complete ... --json`。
 3. preflight blocking -> verdict=fix + 精确 blocker；Session 保持 open，不得完成 Session 或报告整体完成。
 
 ## Chain Definition 格式
 
-该定义属于将要创建的 `session/3.0` Session chain。进入创建前必须先执行 `maestro capabilities --json`，要求 v3 六键 exact contract（`session_run_minimal_v3`/`entity_revision_cas`/`participant_identity`/`request_receipts_v2` 全 true，`execution_lease`/`operation_registry` 全 false；`session_schema_writes` 含 `session/3.0`、`execution_schema_writes` 空、`run_response_writes` 含 `run-response/1.2`）；创建/解析后必须保留 exact `session_id + orchestration_revision`，并把同一 authorized `actor_id` 传给 `--participant` 与 `--actor`。
+定义交给 Evolve Session。保留 Session ID 和最新修订号，并为每次变更提供 actor。
 
 ```json
 {
@@ -162,8 +162,4 @@ CONFIDENCE_SCORE: 0-100
 }
 ```
 
-新运行时创建顺序：`maestro session open "{intent}" --id {slug} [--definition-of-done ...] [--chain <commands...>] --participant ... --actor ... --request-id ... --reason ... --json` -> `session chain insert` 补齐 step 元数据（goal_ref/stage/decision_ref）-> `maestro run next` 派发首个 step。chain 是 `session/3.0` 状态的一部分，不存在独立的 Execution bootstrap surface。
-
-## Legacy `session/1.x/2.x` Compatibility Branch
-
-旧 CLI/schema（v2 契约：`session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1`）可继续用 `maestro session create "{intent}" --id {slug} --chain-file {path}`，并以 `maestro execution start`（`--expected-identity-revision`/`--expected-activity-revision`/`--expected-lease-epoch 0`/`--execution-owner`/`--owner-kind`）获取 bounded Execution 与 private core claim（`--owner-id/--owner-kind/--lease-epoch/--lease-id`），chain/gates/decision/lifecycle 在 Execution 内 mutation，paused recovery 走 `maestro execution resolve` -> `maestro execution resume`，最终 `maestro execution seal` 并验证 `execution-seal-receipt/1.0`。这些命令不是 `session/3.0` canonical authority，也不能用于替代丢失的 `orchestration_revision`。
+新运行时创建顺序：`evolve session open "{intent}" --id {slug} [--definition-of-done ...] [--chain <commands...>] --participant ... --actor ... --request-id ... --reason ... --json` -> `session chain insert` 补齐 step 元数据（goal_ref/stage/decision_ref）-> `evolve run next` 派发首个 step。chain 是 `evolve-session/1.0` 状态的一部分，不存在独立的 Execution bootstrap surface。

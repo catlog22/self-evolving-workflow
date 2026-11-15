@@ -32,11 +32,11 @@ IF latest-review (review-findings) is available:
   count findings with actionable fix scope
   IF ≤3 findings AND each touches ≤2 files:
     → Companion path: write report.md with degradation note,
-      run `maestro run cancel {run_id} --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
+      run `evolve run cancel {run_id} --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
       then surface the finding summaries to Maestro's internal Companion route
   ELSE:
     → Odyssey planex path: write report.md with degradation note,
-      run `maestro run cancel {run_id} --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
+      run `evolve run cancel {run_id} --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
       then surface: /odyssey-planex "<review findings as requirement>"
 
 ELSE IF latest-debug (diagnosis) is available AND fix-directions present:
@@ -48,7 +48,7 @@ ELSE IF latest-debug (diagnosis) is available AND fix-directions present:
 ELSE:
   → E001: No plan and no alternative upstream. Abort.
     Write report.md with verdict: blocked, summary: "No current-plan; run plan first"
-    run `maestro run transition {run_id} blocked --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --json`
+    run `evolve run transition {run_id} blocked --session {session_id} --actor {actor_id} --expected-run-revision {run_revision} --json`
 ```
 
 **Degradation transition protocol**: cancellation or blocked transition preserves the attempted Run without claiming completion. Each mutation uses the exact Run revision from the latest birth/check receipt, and the explicit Session locator. A cancelled/failed attempt leaves its chain step pending; do not allocate a retry implicitly. report.md MUST note: (1) why degradation was triggered, (2) which upstream was available, (3) the target command. The `next` field in report frontmatter points to the degradation target.
@@ -64,7 +64,7 @@ With `-y`, use the parsed defaults and skip all interactive questions (throughou
 Otherwise build the option prompts from the enabled tools:
 
 ```
-available tools = enabled tools from maestro delegate-config show --json (excluding agent, which is always available)
+available tools = enabled tools from the Codex or Agy executables available to the host (excluding agent, which is always available)
 frontendTool = first tool with the "frontend" tag, fall back to first enabled
 backendTool  = first tool with the "backend" tag, fall back to first enabled
 ```
@@ -143,7 +143,7 @@ Record the routing decision per task before dispatch: `TASK-001 [frontend] → g
 
 ### Delegate writing skeleton
 
-The CLI backend (maestro delegate) and the agent path build the prompt from the same task information:
+The CLI backend (evolve delegate) and the agent path build the prompt from the same task information:
 
 ```
 PURPOSE: implement ${task.id}: ${task.title}; success = all convergence criteria pass
@@ -177,9 +177,9 @@ for each wave in queue (serial):
         → write {run_dir}/outputs/summaries/${task.id}.md → update task status (checkpoint if blocked)
       the main flow verifies the agent wrote a summary + updated status, collects the result
 
-    ELSE (CLI path maestro delegate):
+    ELSE (CLI path evolve delegate):
       fixedId = "${scope_slug}-${task.id}", stored in the execution record
-      dispatch: maestro delegate "${prompt}" --to ${executor} --mode write --id ${fixedId}
+      dispatch: evolve delegate "${prompt}" --to ${executor} --mode write --id ${fixedId}
       after dispatch the main flow verifies convergence criteria against file state
       the main flow writes the summary, updates task status, auto-commits if enabled
 
@@ -219,7 +219,7 @@ Check 2 status consistency: cross-check task status against wave_results → mis
 Check 3 tech stack constraints: extract allowed_languages/disallowed_imports/required_patterns from specs,
         scan the files changed by completed tasks, hit on disallowed → critical "tech_stack_violation"
 Check 4 CLI supplementary validation (optional, skip if no CLI tool or no completed tasks):
-        maestro delegate analysis mode scans changed files for circular deps / dead code / breaking changes,
+        evolve delegate analysis mode scans changed files for circular deps / dead code / breaking changes,
         critical items merged into violations
 ```
 
@@ -229,7 +229,7 @@ Check 4 CLI supplementary validation (optional, skip if no CLI tool or no comple
 
 ## Step 6: Code review (optional)
 
-If `codeReviewTool == "Skip"` skip. Otherwise maestro delegate (run_in_background) reviews the git diff (execution start point → HEAD) for correctness/style/bugs, record the findings summary.
+If `codeReviewTool == "Skip"` skip. Otherwise evolve delegate (run_in_background) reviews the git diff (execution start point → HEAD) for correctness/style/bugs, record the findings summary.
 
 ---
 
@@ -240,7 +240,7 @@ If `verificationTool == "Skip"` or there are no completed tasks, skip. **This is
 ```
 1. Collect files changed by completed tasks, each task's convergence.criteria, session success criteria
 2. Resolve tool: Auto → first enabled, otherwise the specified tool
-3. Dispatch maestro delegate (analysis mode) to do one smoke pass:
+3. Dispatch evolve delegate (analysis mode) to do one smoke pass:
    - CONVERGENCE: verify each criterion against the code, with file:line evidence
    - Existence: expected output files exist on disk
    - Substance: files have real implementation, not stub/placeholder/TODO-only/empty return

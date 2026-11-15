@@ -3,8 +3,26 @@ name: odyssey-security
 description: "Odyssey security mode — read-only tiered security audit (OWASP Top 10, dependency supply chain, secrets, CI/CD, STRIDE, git history) producing severity matrix report with file:line evidence."
 argument-hint: "<target> [--tier quick|standard|deep] [--skip-generalize] [-y] [-c]"
 contract:
-refs:
-  - path: ../odyssey-base.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: security-audit-result
+      schema: security-audit-result/1.0
+      role: primary
+      alias: security-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: security-evidence
+      required: true
+    - path: outputs/understanding.md
+      kind: security-report
+      schema: security-report/1.0
+      role: primary
+      alias: security-understanding
+      required: true
 goal: true
 ---
 
@@ -38,9 +56,9 @@ Tier selection (default: `standard`):
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, trust zones
-- Wiki: `maestro search "<target keywords>"` → prior security audits, known vulnerabilities
-- Specs: `maestro load --type spec --category debug` → known vulnerability patterns
-- Role knowledge: `maestro search --category coding` → pick relevant items → `maestro load --type knowhow --id`
+- Wiki: `agent-memory wiki references "<target keywords>"` → prior security audits, known vulnerabilities
+- Specs: `agent-memory wiki constraints --category debug` → known vulnerability patterns
+- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
 
 When prior security audit sessions of the same target exist, check their findings first to avoid re-reporting already-documented issues.
 

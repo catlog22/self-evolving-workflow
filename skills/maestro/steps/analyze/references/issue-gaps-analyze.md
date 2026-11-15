@@ -32,14 +32,14 @@ Each group: `{ group_id, label, issues[], shared_context_keywords[] }`. Display 
 
 Merge and deduplicate keywords from every issue in the group (title, description, location, affected_components).
 
-- **standard**: `maestro explore` per group; grep fallback flags the analysis `[LOW CONFIDENCE]` (semantic depth lost).
-- **deep**: `maestro explore` multi-prompt + semantic Agent search (error handling, data flow, deps), merged.
+- **standard**: `agent-memory code search` per group; grep fallback flags the analysis `[LOW CONFIDENCE]` (semantic depth lost).
+- **deep**: `agent-memory code search` multi-prompt + semantic Agent search (error handling, data flow, deps), merged.
 
 Build `GROUP_CONTEXT`: related files, key snippets (≤50 lines), dependency chain.
 
 ### 4. Run analysis (per group, parallel across groups) — mandatory, not substitutable by manual Read/Grep
 
-Dispatch analysis per group via Agent (or `maestro delegate --role analyze --mode analysis`). For each issue: identify root cause (`file:line`) → assess impact → list related files → rate confidence → suggest fix direction, noting cross-issue relationships within the group.
+Dispatch analysis per group via Agent (or `evolve delegate --role analyze --mode analysis`). For each issue: identify root cause (`file:line`) → assess impact → list related files → rate confidence → suggest fix direction, noting cross-issue relationships within the group.
 
 Expected per issue: `{ iss_id, root_cause, impact, related_files[], confidence, suggested_approach, cross_refs[] }`. Evidence-only, no speculation.
 

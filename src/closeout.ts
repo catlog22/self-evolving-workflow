@@ -135,6 +135,13 @@ function appendRunEvidence(completion: Completion, directory: string): void {
 
 export function parseReceipt(value: unknown): Completion {
   const receipt = object(value);
+  if (receipt.schema_version === 'evolve-session-completion/1.0') {
+    if (!Array.isArray(receipt.messages)) throw new InputError('Invalid Evolve Session completion');
+    return {
+      id: requireText(receipt.id, 'completion ID'), session: requireText(receipt.session_id, 'Session ID'),
+      timestamp: requireText(receipt.recorded_at, 'completion time'), messages: receipt.messages,
+    };
+  }
   if (receipt.schema_version === 'skill-completion/1.0') {
     if (!terminalStatuses.has(receipt.status) || !Array.isArray(receipt.messages)) {
       throw new InputError('Invalid Skill completion');

@@ -11,7 +11,7 @@
 | 审查重复、重叠、冲突和证据 | `review` | 只读 | `closeout show`、`wiki get`、`wiki search` |
 | 发布或更新候选 | `publish` | 需要明确授权 | `wiki propose` → `wiki apply` 或 `closeout publish` |
 | 迁移旧 Spec 和 Knowhow | `migrate` | 预览 | `agent-memory wiki migrate` |
-| 发现可归因于 Skill 的问题 | `evolve` | 只读回溯 | `agent-memory session review` 或 `evolve review`，随后转交 `workflow-evolve` |
+| 发现可归因于 Skill 的问题 | `evolve` | 只读回溯 | `agent-memory session review` 或 `agent-memory evolve review`，随后转交 `workflow-evolve` |
 | 候选需要新 Skill 或新流程包 | `skill-design` | 只读决策 | `agent-memory closeout route`，满足结构条件时显式调用元 Skill 设计 |
 
 ### 统一 Wiki 条目
@@ -96,7 +96,7 @@ agent-memory --root <project> search "<query>" --scope memory --scene <scene> --
 ```text
 agent-memory --root <project> closeout session <session-id> --project <source-project-id> --receipt <receipt-id>
 agent-memory --root <project> closeout skill <execution-id> --skill <skill-id> --skill-version <version> --status <status> --transcript <messages.json> --project <source-project-id>
-agent-memory --root <project> closeout scan <maestro-root> --project <source-project-id>
+agent-memory --root <project> closeout scan <source-project-root> --project <source-project-id>
 agent-memory --root <project> closeout show <receipt-id> --project <source-project-id>
 agent-memory --root <project> closeout route <closeout-id> <candidate-id> --skill <skill-id> --skill-version <version>
 agent-memory --root <project> skill-design run <task-id> --runner <meta-skill-runner.mjs>

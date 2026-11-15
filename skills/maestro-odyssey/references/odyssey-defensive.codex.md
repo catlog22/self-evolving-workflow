@@ -1,9 +1,5 @@
 <!-- session-mode: inherited -->
 
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
-
 # Workflow: Odyssey Defensive (Codex)
 
 Codex-adapted: uses `spawn_agents_on_csv`, `request_user_input`, `update_plan`.
@@ -99,7 +95,7 @@ Phase-specific extension fields:
 8. Risk Matrix & Exception Classification (R=S×P×B×H scores + A/B/C/D + §14 standard report entries)
 9. Generalization & Discoveries & Learnings
 
-Specs: `maestro load --type spec --category coding` (defensive-programming patterns).
+Specs: `agent-memory wiki constraints --category coding` (defensive-programming patterns).
 
 ---
 
@@ -164,7 +160,7 @@ Commit: `"odyssey-defensive({slug}): ANCHOR — {N} anchors, {M} level-1 sinks"`
 
 (§4-§5 — recover local business flow + backward slice from critical results.)
 
-`maestro delegate --role analyze --mode analysis` (`run_in_background: true`):
+`evolve delegate --role analyze --mode analysis` (`run_in_background: true`):
 - PURPOSE: for each critical_var, recover the three-layer business-flow map (business-semantic ↔ software-component ↔ code-implementation) and backward-slice its source, answering the 7 questions (origin / default / type conversion / exception handling / auto-correction / multiple sources / intermediate-state substitution).
 - EXPECTED: JSON `{critical_var, three_layer_map, source_chain: [{step, passes_default, passes_except, auto_corrected, multiple_sources}], answers_to_7_questions}`
 
@@ -295,7 +291,7 @@ Critical/High findings that propagate to a level-1 sink + cross-module duplicate
 
 ## Knowledge Persistence (§9)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
@@ -391,9 +387,9 @@ Goals:       {done}/{total} ({skipped} skipped)
 | Critical/High findings need fix | `$maestro-odyssey <finding> --mode improve` |
 | Root-cause debug needed | `$maestro-odyssey <finding> --mode debug` |
 | Deeper audit tier needed | `$maestro-odyssey <target> --mode defensive --tier deep` |
-| Discovery issues created | `$maestro-issue list --source defensive-odyssey` |
-| Document pattern | `$maestro-learn decompose <module>` |
-| Second opinion | `$maestro-learn consult <understanding.md>` |
-| Related question | `$maestro-learn investigate "<question>"` |
+| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
+| Related question | `Use an Evolve analyze step for the question` |
 | Defensive pattern to persist | `stage spec → coding` |
 | Pending decisions | Filter evidence phase=decision status=pending |

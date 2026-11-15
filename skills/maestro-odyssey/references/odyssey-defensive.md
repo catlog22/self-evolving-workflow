@@ -99,7 +99,7 @@ Phase-specific extension fields:
 8. Risk Matrix & Exception Classification (R=S×P×B×H scores + A/B/C/D + §14 standard report entries)
 9. Generalization & Discoveries & Learnings
 
-Specs: `maestro load --type spec --category coding` (defensive-programming patterns).
+Specs: `agent-memory wiki constraints --category coding` (defensive-programming patterns).
 
 ---
 
@@ -265,7 +265,7 @@ Critical/High findings that propagate to a level-1 sink + cross-module duplicate
 
 ## Knowledge Persistence (§9)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
@@ -361,9 +361,9 @@ Goals:       {done}/{total} ({skipped} skipped)
 | Critical/High findings need fix | `/maestro-odyssey <finding> --mode improve` |
 | Root-cause debug needed | `/maestro-odyssey <finding> --mode debug` |
 | Deeper audit tier needed | `/maestro-odyssey <target> --mode defensive --tier deep` |
-| Discovery issues created | `/maestro-issue list --source defensive-odyssey` |
-| Document pattern | `/maestro-learn decompose <module>` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
-| Related question | `/maestro-learn investigate "<question>"` |
+| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
+| Related question | `Use an Evolve analyze step for the question` |
 | Defensive pattern to persist | `stage spec → coding` |
 | Pending decisions | Filter evidence phase=decision status=pending |

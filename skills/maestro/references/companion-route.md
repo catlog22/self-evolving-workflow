@@ -17,18 +17,18 @@ Companion 是 Maestro 内部的轻量执行通道。它使用同一套 Session/R
 ## 最小生命周期
 
 1. 读取通用 Run 规则和本文件，记录任务边界、目标文件和完成条件。
-2. 通过 `maestro capabilities --json` 校验 Session/Run 能力。
+2. 通过 `evolve capabilities --json` 校验 Session/Run 能力。
 3. 创建一条只有 `companion` 步骤的 Session 链。
 
 ```text
-maestro session open "<intent>" --id <slug> --actor <actor> --json
-maestro session chain insert --session <session-id> --step-id companion-1 --command companion --arg "<intent>" --actor <actor> --expected-orchestration-revision <revision> --json
-maestro run next --session <session-id> --actor <actor> --expected-orchestration-revision <revision> --json
+evolve session open "<intent>" --id <slug> --actor <actor> --json
+evolve session chain insert --session <session-id> --step-id companion-1 --command companion --arg "<intent>" --actor <actor> --expected-orchestration-revision <revision> --json
+evolve run next --session <session-id> --actor <actor> --expected-orchestration-revision <revision> --json
 ```
 
 4. 使用 `run next` 返回的 `task`、`continuation`、Run 定位和修订号。按共享循环执行准备、操作、检查和完成。
 5. 将最小证据追加到 `{run_dir}/evidence/companion-log.md`，记录目标、关键发现、执行结果和验证命令。
-6. 通过 `maestro run complete --advance --verdict done|done_with_concerns` 完成 Run，再用 `maestro session complete` 完成终态 Session。
+6. 通过 `evolve run complete --advance --verdict done|done_with_concerns` 完成 Run，再用 `evolve session complete` 完成终态 Session。
 
 Companion 不修改 `session.json`、`run.json` 或其他协议状态文件。所有状态变更都经过 Runtime 的受控命令。`-y` 只跳过低风险任务确认，不授予 Wiki 发布或 Skill 修改授权。
 

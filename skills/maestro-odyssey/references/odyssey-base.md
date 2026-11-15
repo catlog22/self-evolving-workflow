@@ -1,8 +1,5 @@
 <!-- session-mode: inherited -->
 
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
 # Odyssey Shared Base
 
 Shared by all Odyssey modes (debug, improve, planex, review, security, ui). Mode files own their front-half state machine, pattern source, category table, completion-summary format and error codes; everything below is single-source and MUST NOT be copied into a mode file.
@@ -11,7 +8,7 @@ Shared by all Odyssey modes (debug, improve, planex, review, security, ui). Mode
 
 1. **Phase auto-commit** — auto `git commit` after each phase
    - Code changes + understanding.md → `git add` → `git commit -m "{mode}({slug}): {phase} — {summary}"`
-   - `outputs/session.json` / `outputs/evidence.ndjson` are workflow-owned formal artifacts (registered atomically by fenced `maestro run complete ... --advance`), excluded from phase commits
+   - `outputs/session.json` / `outputs/evidence.ndjson` are workflow-owned formal artifacts (registered atomically by fenced `evolve run complete ... --advance`), excluded from phase commits
 
 2. **Confident edits only, but must attempt** — edit when confident; record decision only when human judgment truly needed
    - Confident → edit + commit
@@ -19,7 +16,7 @@ Shared by all Odyssey modes (debug, improve, planex, review, security, ui). Mode
    - **Decision gate** — only these qualify: cross-module architecture tradeoffs needing human direction | business semantics ambiguity where fix may change intent | new dependency or breaking API required
    - "Unsure how to fix", "Too large scope", "Pre-existing issue" are NOT valid decision reasons
 
-3. **Multi-CLI assist** — `maestro delegate` for cross-angle verification
+3. **Multi-CLI assist** — `evolve delegate` for cross-angle verification
    - Different `--role` per phase (analyze / review / explore)
    - All delegate calls `run_in_background: true`, wait for callback
 
@@ -264,10 +261,10 @@ Continue execution after output, do not block.
 | Layer | Command |
 |-------|---------|
 | Codebase docs | Read `.workflow/codebase/ARCHITECTURE.md` |
-| Wiki search | `maestro search "<keywords>"` (top 5) |
-| Specs | `maestro load --type spec --category <cat>` |
-| Role knowledge | `maestro search "<keywords>"` → `maestro load --type knowhow --id <id>` |
-| Prior sessions | `maestro load --type session --list` |
+| Wiki search | `agent-memory wiki references "<keywords>"` (top 5) |
+| Specs | `agent-memory wiki constraints --category <cat>` |
+| Role knowledge | `agent-memory wiki references "<keywords>"` → `agent-memory wiki reference <id>` |
+| Prior sessions | `evolve session list` |
 
 ### Error Codes
 

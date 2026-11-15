@@ -3,8 +3,26 @@ name: odyssey-review
 description: "Odyssey review mode — multi-dimensional deep code review through archaeology, exploration, 4-dimension audit, exhaustive severity-tiered fix, and zero-residual confirmation, producing review"
 argument-hint: "<target: file|dir|HEAD|staged|phase#|PR#> [--skip-fix] [--skip-generalize] [-y] [-c]"
 contract:
-refs:
-  - path: ref/cli-supplementary.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: session
+      schema: session/1.0
+      role: primary
+      alias: review-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: review-evidence
+      required: false
+    - path: outputs/understanding.md
+      kind: understanding
+      schema: understanding/1.0
+      role: primary
+      alias: review-understanding
+      required: false
 goal: true
 ---
 
@@ -40,10 +58,10 @@ Target resolution table:
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, ownership
-- Wiki: `maestro search "<target keywords>" --json` → prior reviews and known patterns
-- Specs: `maestro load --type spec --category review` → known review standards and recurring patterns
-- Coding specs: `maestro load --type spec --category coding` → patterns relevant to the review area
-- Role knowledge: `maestro search --category review` → pick relevant items → `maestro load --type knowhow --id`
+- Wiki: `agent-memory wiki references "<target keywords>" --json` → prior reviews and known patterns
+- Specs: `agent-memory wiki constraints --category review` → known review standards and recurring patterns
+- Coding specs: `agent-memory wiki constraints --category coding` → patterns relevant to the review area
+- Role knowledge: `agent-memory wiki references "<topic>" --category review` → pick relevant items → `agent-memory wiki reference <id>`
 
 When prior review artifacts of the same scope exist, check their findings first to avoid re-reviewing already-addressed patterns.
 

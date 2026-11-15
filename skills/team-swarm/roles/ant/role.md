@@ -135,20 +135,7 @@ Build the full artifact matching specs/ant-output-schema.md. All required fields
 
 ### State Update
 
-Set Phase 5 `team_msg.log` data:
-```json
-{
-  "task_id": "ANT-<k>-<i>",
-  "role": "ant",
-  "status": "completed",
-  "iteration": <k>,
-  "self_score": <float>,
-  "self_confidence": <float>,
-  "path_length": <int>,
-  "artifact_path": "{run_dir}/outputs/ant-<k>-<i>.json",
-  "verification": "schema_pass + node_valid + evidence_present"
-}
-```
+Report the completed assignment with evolve team report after re-reading the artifact. See the coordination guide for the exact flags.
 
 ## Error Handling
 

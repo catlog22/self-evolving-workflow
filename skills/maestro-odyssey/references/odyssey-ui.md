@@ -113,7 +113,7 @@ Discover routes: new component to audit → S_AUDIT; fixable sibling → S_FIX.
 
 ### Actions
 
-**A_SURVEY** — (1) Design system inventory: scan for design tokens, CSS variables, theme imports. (2) Current state analysis: styling patterns, layout strategy, component hierarchy. (3) CLI-assisted: `maestro delegate --role analyze --mode analysis` (`run_in_background: true`) — survey tokens, spacing, typography, hierarchy, consistency. (4) Evidence phase=survey. Update §2. Mark G1.
+**A_SURVEY** — (1) Design system inventory: scan for design tokens, CSS variables, theme imports. (2) Current state analysis: styling patterns, layout strategy, component hierarchy. (3) CLI-assisted: `evolve delegate --role analyze --mode analysis` (`run_in_background: true`) — survey tokens, spacing, typography, hierarchy, consistency. (4) Evidence phase=survey. Update §2. Mark G1.
 
 Commit: `"odyssey-ui({slug}): SURVEY — design context survey complete"`
 
@@ -131,7 +131,7 @@ Commit: `"odyssey-ui({slug}): AUDIT — dimension audit complete"`
 
 Each returns `[{idea, category (polish|delight), impact, effort, description, inspiration}]`.
 
-**Step 2 — CLI-assisted:** `maestro delegate --role analyze --mode analysis` (`run_in_background: true`) — polish opportunities, micro-interactions, visual rhythm, delight moments.
+**Step 2 — CLI-assisted:** `evolve delegate --role analyze --mode analysis` (`run_in_background: true`) — polish opportunities, micro-interactions, visual rhythm, delight moments.
 
 **Step 3 — Consolidate:** merge audit findings + divergent ideas → prioritized list (severity × impact × effort). Evidence phase=diverge. Update §4. Mark G3.
 
@@ -143,7 +143,7 @@ Commit: `"odyssey-ui({slug}): DIVERGE — divergent exploration complete"`
 
 Commit: `"odyssey-ui({slug}): FIX — {tier} tier addressed"`
 
-**A_VERIFY** — (1) Run tests (lint, unit, visual regression). (2) `maestro delegate --role review --mode analysis` (`run_in_background: true`) — visual correctness, interaction states, accessibility, responsive. (3) `needs_rework` → S_FIX; `verified` → mark G4. Update §5, write `confirmation`.
+**A_VERIFY** — (1) Run tests (lint, unit, visual regression). (2) `evolve delegate --role review --mode analysis` (`run_in_background: true`) — visual correctness, interaction states, accessibility, responsive. (3) `needs_rework` → S_FIX; `verified` → mark G4. Update §5, write `confirmation`.
 
 **GATE: zero-remaining-verified** — every prioritized finding and idea is fixed and verified, individually classified (issue / decision), or skipped via `--skip-fix`; tests pass (lint, unit, visual regression); confirmation written; no unaddressed actionable findings; understanding.md §5 updated. `needs_rework` routes back to FIX.
 
@@ -161,7 +161,7 @@ Audit findings + diverge ideas (severity >= medium OR impact = high).
 
 ## Knowledge Persistence (§8)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 
 | Category | Content | Follow-up |
@@ -240,11 +240,11 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues created | `/maestro-issue list --source ui-odyssey` |
+| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
 | Backend/data issue found | `/maestro-odyssey <target> --mode planex` |
 | Deep bug investigation | `/maestro-odyssey <target> --mode debug` |
 | Code quality review | `/maestro-odyssey <changed-files> --mode review` |
-| Document pattern | `/maestro-learn decompose <component>` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
+| Document pattern | Review the component and harvest reusable methods through Agent Memory. |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
 | Design/interaction pattern to persist | `stage spec → ui` |
 | Pending decisions | Filter evidence phase=decision status=pending |

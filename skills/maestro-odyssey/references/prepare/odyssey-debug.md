@@ -3,8 +3,32 @@ name: odyssey-debug
 description: "Odyssey debug mode — symptom-driven investigation through archaeology, exploration, hypothesis testing, fix, and confirmation, producing diagnosis with full evidence trail"
 argument-hint: "<issue> [--template performance|memory-leak|race-condition|regression|crash] [--skip-fix] [--skip-generalize] [-y] [-c]"
 contract:
-refs:
-  - path: ref/scientific-debug.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: session
+      schema: session/1.0
+      role: primary
+      alias: debug-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: debug-evidence
+      required: true
+    - path: outputs/understanding.md
+      kind: diagnosis-report
+      schema: diagnosis-report/1.0
+      role: primary
+      alias: debug-understanding
+      required: true
+    - path: outputs/explore.json
+      kind: exploration
+      schema: exploration/1.0
+      role: evidence
+      alias: debug-explore
+      required: false
 goal: true
 ---
 
@@ -39,10 +63,10 @@ Template strategies:
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, ownership
-- Wiki: `maestro search "<symptom keywords>" --json` → prior investigations
-- Specs: `maestro load --type spec --category debug --keyword "<symptom>"` → known issues/workarounds
-- Coding specs: `maestro load --type spec --category coding` → patterns relevant to the issue area
-- Role knowledge: `maestro search --category debug` → pick relevant items → `maestro load --type knowhow --id`
+- Wiki: `agent-memory wiki references "<symptom keywords>" --json` → prior investigations
+- Specs: `agent-memory wiki constraints --category debug --keyword "<symptom>"` → known issues/workarounds
+- Coding specs: `agent-memory wiki constraints --category coding` → patterns relevant to the issue area
+- Role knowledge: `agent-memory wiki references "<topic>" --category debug` → pick relevant items → `agent-memory wiki reference <id>`
 
 When prior debug artifacts of the same scope exist, check their root cause first to avoid re-investigating an already-confirmed root cause.
 
@@ -60,9 +84,9 @@ When prior debug artifacts of the same scope exist, check their root cause first
 
 ## Run Artifact Metadata
 
-Keep domain progress in `outputs/session.json`. Keep the lifecycle state and Run identity in the Maestro Run Store. Resume Debug from the domain checkpoint after attaching to the exact Run.
+Keep domain progress in `outputs/session.json`. Keep the Run identity in the Evolve Session receipt. Resume Debug from the domain checkpoint after attaching to the exact Run.
 
-Use the artifact identities in the contract above. For `session.json` and `explore.json`, put `kind`, `schema`, `role` and `alias` in the top-level `_meta` object. Put the same fields in the first JSON record of `evidence.ndjson` under `_meta`, and append later observations as separate lines. Put those fields in the YAML frontmatter of `understanding.md`. Keep the Debug phase fields alongside the artifact metadata. Run `maestro run check` before sealing to verify artifact identity and availability.
+Use the artifact identities in the contract above. For `session.json` and `explore.json`, put `kind`, `schema`, `role` and `alias` in the top-level `_meta` object. Put the same fields in the first JSON record of `evidence.ndjson` under `_meta`, and append later observations as separate lines. Put those fields in the YAML frontmatter of `understanding.md`. Keep the Debug phase fields alongside the artifact metadata. Run `evolve run check` before sealing to verify artifact identity and availability.
 
 ## Risk Checklist
 

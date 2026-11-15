@@ -120,7 +120,7 @@ S_CONFIRM → S_FIX           : needs_rework
 
 Evidence phase=archaeology.
 
-`maestro delegate --role analyze --mode analysis` (`run_in_background: true`):
+`evolve delegate --role analyze --mode analysis` (`run_in_background: true`):
 - PURPOSE: review recent modifications related to {issue}
 - EXPECTED: JSON `[{commit_sha, risk_level, analysis, could_cause_issue, explanation}]`
 
@@ -132,7 +132,7 @@ If an archaeology agent fails, log W003 and proceed with available results.
 
 Skip if no CLI tools (W006).
 
-`maestro delegate --role explore --mode analysis` (`run_in_background: true`):
+`evolve delegate --role explore --mode analysis` (`run_in_background: true`):
 - PURPOSE: call chains, recent changes, error gaps, similar patterns
 - EXPECTED: JSON `{call_chains, recent_changes, error_gaps, similar_patterns}`
 
@@ -155,7 +155,7 @@ Write `explore.json` + evidence phase=explore. Update §3 (Exploration). Mark G2
 
 `diagnosis_retries++`.
 
-- **retries < 3**: `maestro delegate --role analyze`, generate new hypotheses, → S_DIAGNOSE.
+- **retries < 3**: `evolve delegate --role analyze`, generate new hypotheses, → S_DIAGNOSE.
 - **retries >= 3**:
   - Normal: request_user_input
   - `-y`: INCONCLUSIVE → S_RECORD
@@ -170,7 +170,7 @@ Write `explore.json` + evidence phase=explore. Update §3 (Exploration). Mark G2
 ### A_CONFIRM
 
 1. Run covering tests.
-2. `maestro delegate --role review --mode analysis` (`run_in_background: true`):
+2. `evolve delegate --role review --mode analysis` (`run_in_background: true`):
    - EXPECTED: JSON `{verdict, findings [{severity, description, suggestion}], regression_risk}`
 3. `session.json.confirmation`:
    ```json
@@ -196,7 +196,7 @@ Confirmed root cause + applied fix.
 
 ## Knowledge Persistence (§9)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 
 | Category | Content | Follow-up |
@@ -275,9 +275,9 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues | `/maestro-issue list --source debug-odyssey` |
-| Document pattern | `/maestro-learn decompose <module>` |
+| Discovery issues | `Open the follow-up findings in the project issue tracker` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
 | Formal review | `/maestro-odyssey <changed-files> --mode review` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
-| Related question | `/maestro-learn investigate "<question>"` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
+| Related question | `Use an Evolve analyze step for the question` |
 | Pending decisions | Filter evidence phase=decision status=pending |

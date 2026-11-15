@@ -51,8 +51,7 @@ All trails: {run_dir}/work/team/trails/*.jsonl
 Original objective: <config.ant_prompt.objective>
 
 ## Progress Milestones
-Report via team_msg at: report loaded -> synthesis done -> verification done.
-Report completion via team_msg type="task_complete" after final send_message.`
+Record synthesis and verification in the Run summary.
 })
 ```
 
@@ -60,7 +59,7 @@ STOP. Resume on analyst callback.
 
 ### Step 3: On analyst callback
 
-Verify `{run_dir}/outputs/best-solution.md` exists and begins with `kind: swarm-best-solution`, `schema: swarm-best-solution/1.0`, and `role: primary` YAML frontmatter. Run `maestro run check <run_id> --session <session_id> --json` and repair any output contract blockers before completion.
+Verify `{run_dir}/outputs/best-solution.md` exists and begins with `kind: swarm-best-solution`, `schema: swarm-best-solution/1.0`, and `role: primary` YAML frontmatter. Run `evolve run check <run_id> --session <session_id> --json` and repair any output contract blockers before completion.
 
 If missing -> request_user_input (skip synthesis / retry analyst).
 
@@ -71,7 +70,7 @@ If missing -> request_user_input (skip synthesis / retry analyst).
   |   - Read run_id from team-session.json.run.run_id
   |   - Write {run_dir}/report.md with frontmatter per run-mode-lite.md Complete §1 (verdict/summary/constraints/decisions/concerns; constraints/decisions = {text,status} objects, id auto-derived)
   |   - Before requesting completion, merge-write team status="completed", converged_at=<iso8601>, convergence_reason=<triggered_by>, preserving run; log the final state_update now. If completion is blocked, leave it unsealed and merge-write status="paused" with the blocker.
-  |   - If self-started, use the complete fenced `maestro run complete ... --advance` (and `maestro session complete` when the chain is terminal) from run-mode-lite.md; if dispatched, return to the claim-holding orchestrator
+  |   - If self-started, use the complete fenced `evolve run complete ... --advance` (and `evolve session complete` when the chain is terminal) from run-mode-lite.md; if dispatched, return to the claim-holding orchestrator
   |   - If complete fails: fix the blocking gate and retry once; still failing -> do NOT archive/clean - keep the team active (status=paused) and report the blocking gate
 ```
 

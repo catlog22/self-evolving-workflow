@@ -4,10 +4,6 @@ role: coordinator
 
 > **Plan tracking**: codex 无 TaskCreate/TaskUpdate/TodoWrite 任务板。进度清单用 `update_plan({ explanation?, plan: [{ step, status }] })` 维护（整体提交步骤数组，status: `pending` | `in_progress` | `completed`），权威状态始终在 session 工件中；依赖/认领（addBlockedBy/owner）是工件字段，不是工具参数。
 
-<required_reading>
-@~/.maestro/workflows/run-mode-lite.md
-</required_reading>
-
 # Coordinator Role — team-swarm
 
 ## Identity
@@ -22,7 +18,7 @@ role: coordinator
 - Invoke `scripts/aco.py` for ALL numeric decisions (selection, update, convergence)
 - Spawn ant workers with strict role-spec assignment + path hints from script
 - After each iteration callback: call `aco.py update` -> `aco.py converged` -> decide loop/exit
-- Persist session state via team_msg between iterations
+- Persist session state in the Evolve assignment roster and Python controller checkpoints
 - Trigger analyst for final synthesis when converged
 
 ### MUST NOT
@@ -63,7 +59,7 @@ When coordinator needs to execute a phase command:
 | `scripts/aco.py` | Script | All numeric decisions (Bash subprocess) |
 | team-worker | Subagent | Worker spawning (ant, scorer, analyst) |
 | update_plan / list_agents / wait_agent / update_plan | System | Task lifecycle |
-| team_msg | System | Message bus |
+| evolve team | Evolve runtime | Assignment and result receipts |
 | send_message / request_user_input | System | Comms |
 
 ---
@@ -136,7 +132,7 @@ Delegate to `@commands/init-swarm.md`:
 4. Bash: `python <skill_root>/scripts/aco.py --session {run_dir}/work/team --run-dir <run_dir> init`
 5. Parse stdout JSON: capture `n_nodes`, `n_edges`, `pheromone_path`
 6. Initialize team-session.json with `iteration: 0`, `status: "active"`
-7. Log state_update via team_msg with config summary
+7. Record the config summary in team-session.json
 
 ### Run Lifecycle Integration
 
@@ -144,16 +140,16 @@ Before creating the session folder or writing `swarm-config.json`:
 
 1. **Resolve Run** (birth-packet first): if the dispatch context already carries `run_id` / `run_dir` (injected by an orchestrator), retain them in memory and persist them at init-swarm Step 7 after creating the parent directory; skip self-start — a second allocation mints a duplicate Run. Otherwise execute this receipt-chained self-start recipe; every revision comes from the immediately preceding receipt and `--actor` carries the authorized identity (`--participant` defaults to it; the CLI derives a stable request ID per distinct invocation):
    ```bash
-   maestro session open "<task summary>" --id <slug> --actor {actor_id} --json
-   maestro session chain insert --session {session_id} --step-id {step_id} --command team-swarm --arg "<task summary>" --actor {actor_id} --expected-orchestration-revision {open_orchestration_revision} --json
-   maestro run next --session {session_id} --actor {actor_id} --expected-orchestration-revision {insert_orchestration_revision} --json
+   evolve session open "<task summary>" --id <slug> --actor {actor_id} --json
+   evolve session chain insert --session {session_id} --step-id {step_id} --command team-swarm --arg "<task summary>" --actor {actor_id} --expected-orchestration-revision {open_orchestration_revision} --json
+   evolve run next --session {session_id} --actor {actor_id} --expected-orchestration-revision {insert_orchestration_revision} --json
    ```
    - Slug format: `YYYYMMDD-team-swarm-<topic>` (ASCII, ≤64 chars)
-   - Store returned canonical `session_id`, `run_id`, and `run_dir` in `team-session.json` (the top-level team `session_id` remains the Run ID for team_msg):
+   - Store returned canonical `session_id`, `run_id`, and `run_dir` in `team-session.json`:
      ```json
      "run": { "session_id": "<canonical-session-id>", "run_id": "<id>", "run_dir": "<path>" }
      ```
-2. **Resume**: Resolve exact `session_id` + `run_id` + `run_dir` from the birth packet or `team-session.json.run`; never infer a Run ID from output files. Read `maestro run check <run_id> --session <session_id> --json` for status/output blockers, then `maestro run brief <run_id> --session <session_id> --json` for the structured `continuation`. If sealed, follow the brief's continuation; allocate another Run only through a freshly fenced `run next` when it reports a pending step. If the locator is absent or inconsistent, fail closed rather than minting a duplicate Run.
+2. **Resume**: Resolve exact `session_id` + `run_id` + `run_dir` from the birth packet or `team-session.json.run`; never infer a Run ID from output files. Read `evolve run check <run_id> --session <session_id> --json` for status/output blockers, then `evolve run brief <run_id> --session <session_id> --json` for the structured `continuation`. If sealed, follow the brief's continuation; allocate another Run only through a freshly fenced `run next` when it reports a pending step. If the locator is absent or inconsistent, fail closed rather than minting a duplicate Run.
 
 ---
 

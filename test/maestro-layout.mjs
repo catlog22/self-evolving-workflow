@@ -43,7 +43,7 @@ for (const marker of ['统一 Wiki', 'closeout', 'mode: constraint', 'mode: refe
 }
 
 const goal = markdown(join(maestro, 'references', 'goal.md'));
-for (const marker of ['session/3.0', 'goal_ref', 'session complete', 'pending-tail']) assert.match(goal, new RegExp(marker));
+for (const marker of ['evolve-session/1.0', 'goal_ref', 'session complete', 'pending-tail']) assert.match(goal, new RegExp(marker));
 
 for (const step of steps) {
   const stepEntry = markdown(join(maestro, 'steps', step, 'SKILL.md'));
@@ -76,10 +76,17 @@ for (const file of walk(maestro)) {
   for (const match of readFileSync(file, 'utf8').matchAll(/\]\(([^)]+)\)/g)) {
     const href = match[1].split('#', 1)[0];
     if (!href || /^(?:[a-z][a-z0-9+.-]*:|\/\/|@|\/)/i.test(href)) continue;
-    const target = join(directory, href.replaceAll('/', '\\'));
+    const target = join(directory, href);
     assert.ok(statSync(target, { throwIfNoEntry: false })?.isFile(),
       `Broken local Markdown link ${relative(project, file)} -> ${href}`);
   }
+}
+
+for (const file of walk(join(project, 'skills'))) {
+  if (!file.endsWith('.md')) continue;
+  assert.doesNotMatch(readFileSync(file, 'utf8'),
+    /(?:\bmaestro\s+(?:run|session|delegate|execution|skills|capabilities|search|load|kg|knowledge|agent-msg)\b|mcp__maestro|~\/\.maestro)/,
+    `External workflow command in ${relative(project, file)}`);
 }
 
 console.log(`Maestro layout passed: goal long-chain + ${steps.join(', ')} + internal Companion are inside one package; no legacy routing packages remain.`);

@@ -3,8 +3,32 @@ name: odyssey-defensive
 description: "Odyssey defensive mode — read-only defensive-programming risk audit driven by business anchors: identify critical business sinks, backward-slice to defensive nodes, scan 8 defensive patterns (broad catch, exception swallowing, defaults, null fallback, auto-correction/clamp, silent conversion, duplicate constraints, duplicate defaults), forward-propagate to business sinks, classify exception semantics, and score risk R=S×P×B×H. Produces severity matrix report with full propagation chains. No fix loop."
 argument-hint: "<target: file|dir|HEAD|staged|phase#|PR#> [--tier quick|standard|deep] [--sink-depth <list>] [--skip-generalize] [-y] [-c]"
 contract:
-refs:
-  - path: ../odyssey-base.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: defensive-audit-result
+      schema: defensive-audit-result/1.0
+      role: primary
+      alias: defensive-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: defensive-evidence
+      required: true
+    - path: outputs/understanding.md
+      kind: defensive-report
+      schema: defensive-report/1.0
+      role: primary
+      alias: defensive-understanding
+      required: true
+    - path: outputs/anchors.json
+      kind: defensive-anchors
+      schema: defensive-anchors/1.0
+      role: evidence
+      alias: defensive-anchors
+      required: false
 goal: true
 ---
 
@@ -54,10 +78,10 @@ Tier selection (default: `standard`):
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, business-semantic layer, ownership
-- Wiki: `maestro search "<target keywords>"` → prior defensive audits, known failure→value patterns
-- Specs: `maestro load --type spec --category coding` → known defensive-programming patterns and standards
-- Coding specs: `maestro load --type spec --category review` → recurring review standards (e.g. degradation/fallback rules)
-- Role knowledge: `maestro search --category coding` → pick relevant items → `maestro load --type knowhow --id`
+- Wiki: `agent-memory wiki references "<target keywords>"` → prior defensive audits, known failure→value patterns
+- Specs: `agent-memory wiki constraints --category coding` → known defensive-programming patterns and standards
+- Coding specs: `agent-memory wiki constraints --category review` → recurring review standards (e.g. degradation/fallback rules)
+- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
 
 When prior defensive-audit sessions of the same target exist, check their findings first to avoid re-reporting already-documented defensive patterns.
 

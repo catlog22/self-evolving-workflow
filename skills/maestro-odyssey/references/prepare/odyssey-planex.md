@@ -3,8 +3,26 @@ name: odyssey-planex
 description: "Odyssey planex mode — single requirement delivery loop through acceptance criteria definition, task planning, execution, verification, and fix iteration until all criteria pass"
 argument-hint: "<requirement> [--template feature|bugfix|refactor|migration|api-endpoint] [--method auto|agent|<cli>] [--skip-verify] [--skip-generalize] [--max-iterations N] [-y] [-c]"
 contract:
-refs:
-  - path: ../odyssey-base.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: session
+      schema: session/1.0
+      role: primary
+      alias: planex-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: planex-evidence
+      required: false
+    - path: outputs/understanding.md
+      kind: understanding
+      schema: understanding/1.0
+      role: primary
+      alias: planex-understanding
+      required: false
 goal: true
 ---
 
@@ -47,11 +65,11 @@ Execution method is configurable at S_EXECUTE via interactive confirmation or `-
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, integration points
-- Wiki: `maestro search "<requirement keywords>"` → prior implementations, patterns
-- Specs: `maestro load --type spec --category coding` → coding standards, implementation patterns
-- Review specs: `maestro load --type spec --category review` → acceptance criteria templates
-- Role knowledge: `maestro search --category coding` → pick relevant items → `maestro load --type knowhow --id`
-- CLI tools: `maestro delegate-config show --json` → available executors for task dispatch
+- Wiki: `agent-memory wiki references "<requirement keywords>"` → prior implementations, patterns
+- Specs: `agent-memory wiki constraints --category coding` → coding standards, implementation patterns
+- Review specs: `agent-memory wiki constraints --category review` → acceptance criteria templates
+- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
+- CLI tools: `the Codex or Agy executables available to the host` → available executors for task dispatch
 
 When prior planex sessions of the same scope exist, check their acceptance criteria and plan to avoid duplicating work or re-implementing already-delivered features.
 

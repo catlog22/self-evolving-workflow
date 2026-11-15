@@ -107,7 +107,7 @@ Run-scoped `select` saves `assignments/k.json` and returns the same batch on rep
 - User input is natural language → needs LLM to map to swarm-config
 - Worker spawning, message routing, session management → all framework-bound to LLM coordinator
 - Script as a sub-tool keeps the same team-* lifecycle (spawn-and-stop, callback-driven)
-- Same pattern as `maestro delegate` — Bash-callable subprocess from inside an LLM role
+- Same pattern as `evolve delegate` — Bash-callable subprocess from inside an LLM role
 
 ## Universality
 

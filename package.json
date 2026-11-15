@@ -8,7 +8,8 @@
     "node": ">=22.16.0"
   },
   "bin": {
-    "agent-memory": "./dist/cli.js"
+    "agent-memory": "./dist/cli.js",
+    "evolve": "./dist/workflow-cli.js"
   },
   "exports": {
     ".": {
@@ -44,9 +45,12 @@
     "test:codex-replay-contract": "npm run build && node test/codex-replay-contract.mjs",
     "test:codex-evolve": "npm run build && node test/codex-evolve-native.mjs",
     "test:legacy-codex-evolve": "npm run build && node test/maestro-closeout.mjs --codex-evolve",
-    "test:codex-standalone": "npm run build && node test/codex-standalone.mjs",
-    "test:codex-chain": "node test/codex-chain.mjs",
-    "test:codex-campaigns": "node test/codex-campaigns.mjs",
+    "test:legacy-codex-standalone": "npm run build && node test/codex-standalone.mjs",
+    "test:codex-workflow": "npm run build && node test/codex-workflow.mjs",
+    "test:codex-chain": "npm run build && node test/codex-workflow.mjs chain",
+    "test:codex-campaigns": "npm run build && node test/codex-workflow.mjs odyssey swarm",
+    "test:legacy-codex-chain": "node test/codex-chain.mjs",
+    "test:legacy-codex-campaigns": "node test/codex-campaigns.mjs",
     "test:release-gate-flow": "npm run build && node test/release-gate-flow.mjs",
     "test:maestro-layout": "node test/maestro-layout.mjs",
     "test:maestro-closeout": "npm run build && node test/maestro-closeout.mjs",

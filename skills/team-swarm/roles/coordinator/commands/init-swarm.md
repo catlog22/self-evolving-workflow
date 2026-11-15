@@ -103,22 +103,7 @@ Create empty wisdom files with headers:
 
 ### Step 9: Log initialization state_update
 
-```
-team_msg({
-  operation: "log",
-  session_id: "<run-id>",
-  from: "coordinator",
-  type: "state_update",
-  summary: "Swarm initialized: <n_nodes> nodes, <n_ants> ants/iter, max <K> iterations",
-  data: {
-    iteration: 0,
-    n_nodes: <n>,
-    n_ants: <n>,
-    max_iterations: <K>,
-    scoring_mode: "<mode>"
-  }
-})
-```
+Save the phase summary in team-session.json.
 
 ### Step 10: Proceed to Phase 3 (iterate.md)
 

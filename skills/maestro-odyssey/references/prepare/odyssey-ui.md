@@ -3,8 +3,26 @@ name: odyssey-ui
 description: "6-dimension visual experience audit with divergent exploration — survey design context, audit visual/interaction/a11y/responsive/motion/edge dimensions, diverge for polish+delight, fix, verify,"
 argument-hint: "<target> [--dimensions <list>] [--skip-fix] [--skip-generalize] [-y] [-c]"
 contract:
-refs:
-  - path: ../odyssey-base.md
+  contract_version: 2.1
+  produces:
+    - path: outputs/session.json
+      kind: session
+      schema: session/1.0
+      role: primary
+      alias: ui-session
+      required: true
+    - path: outputs/evidence.ndjson
+      kind: evidence
+      schema: evidence/1.0
+      role: evidence
+      alias: ui-evidence
+      required: false
+    - path: outputs/understanding.md
+      kind: understanding
+      schema: understanding/1.0
+      role: primary
+      alias: ui-understanding
+      required: false
 goal: true
 ---
 
@@ -32,10 +50,10 @@ The six dimensions (default all, overridable via `--dimensions`): visual_hierarc
 Context injection (optional, may continue if missing):
 
 - Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → component hierarchy, design system structure
-- Wiki: `maestro search "<target keywords>"` → prior UI audits, design decisions
-- Specs: `maestro load --type spec --category ui` → design patterns, interaction specs, accessibility rules
-- Coding specs: `maestro load --type spec --category coding` → component patterns, generalization patterns
-- Role knowledge: `maestro search --category ui` → pick relevant items → `maestro load --type knowhow --id`
+- Wiki: `agent-memory wiki references "<target keywords>"` → prior UI audits, design decisions
+- Specs: `agent-memory wiki constraints --category ui` → design patterns, interaction specs, accessibility rules
+- Coding specs: `agent-memory wiki constraints --category coding` → component patterns, generalization patterns
+- Role knowledge: `agent-memory wiki references "<topic>" --category ui` → pick relevant items → `agent-memory wiki reference <id>`
 - Design system scan: scan for design tokens, CSS variables, theme imports at survey phase — these inform the audit baseline
 
 When prior UI sessions of the same target exist, check their audit results and diverge ideas first to avoid re-auditing already-addressed dimensions.

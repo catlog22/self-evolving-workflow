@@ -7,6 +7,9 @@ search_profile:
   wiki: [constraints, references]
   memory: [error, correction, verified_fix]
 session-mode: run
+required_links:
+  - references/prepare.md
+  - references/workflow.md
 contract:
   consumes:
   - kind: artifact

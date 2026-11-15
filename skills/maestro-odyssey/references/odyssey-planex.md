@@ -109,7 +109,7 @@ Discover routes to S_EXECUTE (not FIX): area needing same implementation → new
 
 **A_PLAN** — (1) Decompose requirement into ordered tasks mapped to acceptance criteria. (2) CLI-assisted planning (optional):
 ```bash
-maestro delegate "PURPOSE: Create implementation plan for: {requirement}
+evolve delegate "PURPOSE: Create implementation plan for: {requirement}
 TASK: Decompose into subtasks | Map to acceptance criteria | Identify dependencies
 MODE: analysis
 CONTEXT: @**/* | Criteria: {criteria_summary}
@@ -122,13 +122,13 @@ Commit: `"odyssey-planex({slug}): PLAN — requirement decomposed into tasks"`
 
 **A_EXECUTE** —
 
-- **Step 1 — Execution Options Confirmation.** Skip if `-y` OR `--method` explicitly set OR `execution_config.confirmed == true` (resume). Load tools: `maestro delegate-config show --json`. request_user_input 3 questions: Executor (Auto domain routing | Agent all | specific CLI | custom) / Review (Skip | {tool}) / Verify (Auto | specific tool | Skip). Parse → write `execution_config`, set `confirmed: true`. `--skip-verify` overrides verification to `"Skip"`.
+- **Step 1 — Execution Options Confirmation.** Skip if `-y` OR `--method` explicitly set OR `execution_config.confirmed == true` (resume). Load tools: `the Codex or Agy executables available to the host`. request_user_input 3 questions: Executor (Auto domain routing | Agent all | specific CLI | custom) / Review (Skip | {tool}) / Verify (Auto | specific tool | Skip). Parse → write `execution_config`, set `confirmed: true`. `--skip-verify` overrides verification to `"Skip"`.
 
 - **Step 2 — Executor Resolution** (method == "auto"): domain routing — frontend (UI/component/page/style, .tsx/.jsx/.vue/.css/.html/.svelte) | backend (API/server/db/service, .go/.rs/.java/.py/.sql/.proto) | general (mixed/config/tests, .ts/.js/other). Resolution: `execution_config.domain_routing[domain]` → fallback `.default` ("agent").
 
 - **Step 3 — Task Execution** per plan order (independent tasks may parallelize). **Agent path:** spawn Agent with task definition + criteria refs + prior task summaries + specs_content → implement → verify convergence → auto-fix (max 3) → return. **CLI path:**
 ```bash
-maestro delegate "PURPOSE: Implement task ${task_id}: ${title}; success = criteria ${criteria_refs} satisfied
+evolve delegate "PURPOSE: Implement task ${task_id}: ${title}; success = criteria ${criteria_refs} satisfied
 TASK: ${description} | Read existing code first | Verify convergence criteria after changes
 MODE: write
 CONTEXT: @${scope}/**/* | Criteria: ${criteria_summary}
@@ -154,7 +154,7 @@ Run `run_in_background: true`, wait for callback. **Deviation Rule (MANDATORY ha
 
 - **Step 5 — Post-Execution Validation.** Skip if `verification_tool == "Skip"` OR `--skip-verify` OR no completed tasks. **Check 1** Summary Consistency (task status vs git diff). **Check 2** CLI Verification Gate:
 ```bash
-maestro delegate "PURPOSE: Verify execution output meets acceptance criteria; success = all criteria verified with file:line evidence
+evolve delegate "PURPOSE: Verify execution output meets acceptance criteria; success = all criteria verified with file:line evidence
 TASK:
 1. CONVERGENCE: For each criterion, read actual code, verify behavior exists, report status with evidence
 2. EXISTENCE: Verify all expected files exist on disk
@@ -172,7 +172,7 @@ ${acceptance_criteria.map(c => c.criterion).join('\n')}
 ${modified_files.join('\n')}
 " --to ${execution_config.verification_tool} --mode analysis
 ```
-Run `run_in_background: true`. `overall == "passed"` → proceed to S_VERIFY with boosted confidence; `gaps_found` → log findings, proceed. **Check 3** Code Review (if `code_review_tool != "Skip"`): `maestro delegate "Review git diff for correctness, style, bugs" --to ${code_review_tool} --mode analysis --rule analysis-review-code-quality`.
+Run `run_in_background: true`. `overall == "passed"` → proceed to S_VERIFY with boosted confidence; `gaps_found` → log findings, proceed. **Check 3** Code Review (if `code_review_tool != "Skip"`): `evolve delegate "Review git diff for correctness, style, bugs" --to ${code_review_tool} --mode analysis --rule analysis-review-code-quality`.
 
 - **Step 6 — Completion:** update §3. Mark G3.
 
@@ -186,7 +186,7 @@ Commit: `"odyssey-planex({slug}): EXECUTE — task implementation complete"`
 |--------|--------|
 | `test` | Run relevant tests, check pass/fail |
 | `grep` | Grep for expected pattern |
-| `cli-review` | `maestro delegate "PURPOSE: Verify criterion {id}: {criterion}\nTASK: Read implementation \| Check behavior \| Report pass/fail with file:line\nMODE: analysis\nCONTEXT: @{relevant_files}\nEXPECTED: JSON {criterion_id, status, evidence}" --role review --mode analysis` |
+| `cli-review` | `evolve delegate "PURPOSE: Verify criterion {id}: {criterion}\nTASK: Read implementation \| Check behavior \| Report pass/fail with file:line\nMODE: analysis\nCONTEXT: @{relevant_files}\nEXPECTED: JSON {criterion_id, status, evidence}" --role review --mode analysis` |
 | `manual` | Normal: request_user_input / `-y`: record `deferred` |
 
 Record per criterion: `{"phase":"verification","type":"criterion-check","criterion_id":"AC1","method":"","result":"passed|failed","evidence":"","iteration":N}`. Update `acceptance_criteria[].status`. Append to `iterations[]`. Update §4 pass/fail table. **Route:** all passed → mark G4 → next. Some failed + iteration < max → S_FIX. Some failed + iteration >= max → Normal: request_user_input (continue/lower bar/accept) / `-y`: `deferred`, proceed S_RECORD.
@@ -195,7 +195,7 @@ Record per criterion: `{"phase":"verification","type":"criterion-check","criteri
 
 Commit: `"odyssey-planex({slug}): VERIFY — criteria verification iteration {N}"`
 
-**A_FIX** — (1) Increment `current_iteration`. (2) For each failed criterion: diagnose gap → targeted code fix (not re-implementation). (3) CLI fix review (optional): `maestro delegate` review fixes for regressions, EXPECTED `{verdict, regression_risk, concerns}`. (4) Append evidence (fix), update §5 → S_VERIFY.
+**A_FIX** — (1) Increment `current_iteration`. (2) For each failed criterion: diagnose gap → targeted code fix (not re-implementation). (3) CLI fix review (optional): `evolve delegate` review fixes for regressions, EXPECTED `{verdict, regression_risk, concerns}`. (4) Append evidence (fix), update §5 → S_VERIFY.
 
 Commit: `"odyssey-planex({slug}): FIX — iteration {N} gap fixes"`
 
@@ -223,7 +223,7 @@ Max iterations (default 3) prevents infinite loops.
 
 ## Knowledge Persistence (§8)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 
 | Category | Content | Follow-up |
@@ -302,11 +302,11 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues created | `/maestro-issue list --source planex-odyssey` |
+| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
 | Deeper debug needed | `/maestro-odyssey <finding> --mode debug` |
 | Formal review of changes | `/maestro-odyssey <changed-files> --mode review` |
 | UI-related findings | `/maestro-odyssey <component> --mode ui` |
-| Document pattern | `/maestro-learn decompose <module>` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
 | Reusable pattern to persist | `stage spec → coding` |
 | Pending decisions | Filter evidence phase=decision status=pending |

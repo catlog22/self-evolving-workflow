@@ -154,7 +154,7 @@ Security findings with severity >= medium + vulnerability patterns across scan p
 
 ## Knowledge Persistence (§7)
 
-Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
 
 
 | Category | Content | Follow-up |
@@ -241,9 +241,9 @@ Goals:       {done}/{total} ({skipped} skipped)
 |-----------|------|
 | Critical findings need fix | `/maestro-odyssey <finding> --mode improve` |
 | Deeper debug needed | `/maestro-odyssey <finding> --mode debug` |
-| Discovery issues created | `/maestro-issue list --source security-odyssey` |
+| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
 | Need deeper audit tier | `/maestro-odyssey <target> --mode security --tier deep` |
-| Document pattern | `/maestro-learn decompose <module>` |
-| Second opinion | `/maestro-learn consult <understanding.md>` |
+| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
+| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
 | Security pattern to persist | `stage spec → debug` |
 | Pending decisions | Filter evidence phase=decision status=pending |

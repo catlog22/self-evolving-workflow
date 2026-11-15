@@ -4,7 +4,7 @@
 
 ## 1. 目标与架构
 
-Evolve Workflow 是 Maestro2 的升级。Maestro2 提供 Session、Run 和 Skill 的执行生命周期，Evolve 使用从 TencentDB Agent Memory 提取的本地引擎，把任务中的错误、用户纠正和验证结果沉淀为项目知识，并用可回放的证据改进 Skill。
+Evolve Workflow 延续 Maestro2 的 Session、Run 和 Skill 生命周期。当前项目提供独立的 `evolve` 控制器，并用从 TencentDB Agent Memory 提取的本地引擎处理错误、用户纠正和验证结果，支持按证据回放和改进 Skill。
 
 首版用一个项目内可控的 Skill 跑通完整流程，覆盖 Maestro Session 收尾、独立 Skill 收尾、知识检索与更新，以及 Skill 补丁的生成、回放、应用和回滚。
 
@@ -17,8 +17,8 @@ Maestro Session 完成 / 独立 Skill 明确结束
 
 | 组件 | 职责 |
 | --- | --- |
-| Maestro2 Session/Run | 管理步骤链、执行状态、决策、产物和完成回执，校验已绑定的执行契约。 |
-| Maestro 入口与宿主 | 入口负责路由、编排和推进。宿主执行端沿版本固定的 Markdown 链接读取 Skill 及其流程。 |
+| Evolve Session/Run | 管理步骤链、执行状态、决策、产物和完成回执，校验已绑定的执行契约。 |
+| 编排 Skill 与宿主 | Skill 入口负责路由和编排。宿主执行端沿版本固定的 Markdown 链接读取 Skill 及其流程。 |
 | MemoryCore L1 | 从有边界的任务证据中提取情境和经验，保留来源消息。 |
 | MemoryKnowledge | 提供 Wiki 全文检索和页面关系。涉及代码时，可用 CodeGraph 定位文件、符号和调用关系。 |
 | Evolve | 负责回执消费、证据校验、Wiki 条目、候选更新、旧库迁移和 Skill 改动的验证流程。 |
@@ -33,9 +33,9 @@ Maestro Session 完成 / 独立 Skill 明确结束
 
 本项目的重构 Skill 统一落在当前仓库的 `skills/` 下。`skills/maestro/` 是唯一的编排 Skill，内部包含 `steps/brainstorm`、`steps/analyze`、`steps/plan`、`steps/execute` 和 `steps/review`，并由 `--goal` 构建长链。`skills/maestro-skill-design`、`skills/maestro-odyssey` 和 `skills/team-swarm` 保留为独立元 Skill 或长期协作 Skill。外部 Maestro 工作树只作为运行时源码和验收来源，不作为本项目的写入目标。
 
-### 保留 Session/Run v3
+### Evolve 原生 Session/Run
 
-Session 管理目标、步骤链、决策和同一 Session 内的产物关系。Run 记录一次执行尝试，按既有操作检查输入与产物，完成时提交封存回执。继续使用 `run next`、`run brief`、`run check`、`run complete --advance`、`run decide` 和 `session complete`。协调器消费 Runtime 返回的定位、修订号和结构化续步，同一任务在单步、多步和恢复之间沿用同一 Session。 [Session 状态机](/D:/maestro2/src/run/v3/session-machine.ts:8) · [Run 生命周期](/D:/maestro2/workflows/run-mode.md:14)
+Session 管理目标、步骤链、决策和同一 Session 内的产物关系。Run 固定本次执行的 Git 版本和输入工件。Evolve 在 `.agent-memory/workflow.db` 的同一事务内封存产物并记录执行回执，Agent Memory 只读消费该数据库的证据。协调器调用 `evolve run next`、`run brief`、`run check`、`run complete`、`run decide` 和 `session complete`，以返回的定位、修订号和续步为准。旧 Session 仍可按其既有回执查询与沉淀。 [Evolve 运行手册](/D:/evolve_workflow/skills/maestro/references/orchestrator-run-loop.md)
 
 ### Skill 自带流程，用 Markdown 链接连接
 
@@ -73,13 +73,13 @@ skills/
 
 ### 合并 Next、Ralph 和现有 Maestro 入口
 
-统一使用 `maestro`。意图识别与任务分级沿用 Next，初始步骤链规划沿用 Maestro，已确认步骤推进、恢复和有限重试沿用 Ralph。正常模式与自动模式共用一个执行循环。协调器逐次读取 Runtime 的续步与最新修订号，完成同一 Session。自动策略在原授权范围内增加低风险选择，涉及新授权、风险升级或门禁未解决时保留人工决策。
+保留 Maestro Skill 作为意图入口，使用 `evolve` 执行 Session 和 Run 操作。正常模式与自动模式共用一个执行循环，协调器逐次读取续步和最新修订号。自动策略采用授权范围内的低风险选择，涉及风险升级或门禁未解决时保留人工决策。
 
 | 入口用法 | 行为 |
 | --- | --- |
-| `maestro <任务>` | 轻量任务进入 Maestro 内部 Companion 路由。需要状态恢复、门禁或产物交接时，建立一条 Session 步骤链并执行已确认步骤。 |
-| `maestro --auto <任务>` | 使用同一循环和步骤链，允许授权范围内的有限重试与低风险调整。 |
-| `maestro --resume <session-id>` | 使用确切 Session ID 恢复，沿用原 Run、决策和产物绑定。 |
+| Maestro Skill 的任务入口 | 轻量任务进入 Companion；需要产物交接时建立 Session 步骤链。 |
+| Maestro Skill 的 `--auto` | 使用同一循环，允许授权范围内的有限重试与低风险调整。 |
+| Maestro Skill 的 `--resume <session-id>` | 用 `evolve session status` 和 `evolve run brief` 恢复原 Run、决策和产物绑定。 |
 
 迁移期的 Next 和 Ralph 入口不再作为独立 Skill 分发。原有路由、自动策略、目标修订和恢复规则统一收入 Maestro，由 `--auto` 与 `--goal` 选择执行模式。旧命令名只作为外部兼容映射，不再拥有独立的指令副本。 [Maestro 主入口](/D:/evolve_workflow/skills/maestro/SKILL.md:45) · [目标长链策略](/D:/evolve_workflow/skills/maestro/references/goal.md:8)
 
@@ -87,7 +87,7 @@ skills/
 
 | Skill | 职责 |
 | --- | --- |
-| 元 Skill | `maestro-skill-design` 负责设计、迁移和校验 Skill 包，按需引用契约和回放说明。`maestro skills validate <id>` 用 Git 固定版本检查契约、必读链接和可达 Markdown。 |
+| 元 Skill | `maestro-skill-design` 负责设计、迁移和校验 Skill 包，按需引用契约和回放说明。`evolve skills validate <id>` 检查 Git 绑定、契约和必读链接。 |
 | Odyssey | 保留长期诊断、修复和复验的迭代策略。各模式与共享阶段随 Odyssey 包分发，Session/Run 管理外层进度。 |
 | Swarm | 保留并行探索、评分及迭代收敛。协调器提交 Run 结果，角色、迭代文件和脚本由 Swarm 管理并随包分发。 |
 
@@ -407,13 +407,13 @@ A1 的对照以现有 `contract_version: 2.1` 和流程分支为准。`--from` �
 | 幂等与兼容 | 同请求重复启动只返回原 Run。恢复旧运行中 Run 与读取已封存 Run 均保留原 ID、回执和 Artifact 关系。关闭试迁后新分派可走旧入口，已绑定 Run 仍可完成。 |
 | 实际交付 | 在真实宿主完成 `analyze → plan` 小样本，在构建后的 CLI 跑状态与回执测试，并在独立安装目录验证 Skill 相对链接可解析。复用现有 `check:session-run-contract-parity`、`check:session-run-release-machine` 和 `check:session-run-packaged-install` 作为回归入口。 |
 
-用 `npm run test:codex-chain` 验证真实 Codex 读取固定版本的三步 Skill、生成快速分析及方案、独立检查方案并输出候选文件。验收程序读取 Session 中绑定的上游产物，落盘并执行 Git 差异和字节检查，再通过标准 CLI 封存 Run 与完成 Session。此样本验证了 Git 改版后的旧 Run 恢复和产物来源。交互式分析、宿主自行调用 shell 与分派子代理仍需在对应环境验收。
+用 `npm run test:codex-workflow` 验证三套编排 Skill。Maestro 用真实 Codex 串联分析、计划、执行和审查，提交协调器根据 Codex 输出写入修改并执行 Node 验收。Odyssey 完成一次只读审计，经协调器决策后封存。Swarm 用两个 Codex 工作者和一个独立评分者完成一轮 Python ACO。三套测试都验证固定版本的 Skill 读取、Agent Memory 精确读取和 Session 完成，并检测是否调用了旧 CLI。也可分别运行 `npm run test:codex-chain` 和 `npm run test:codex-campaigns`。Git 改版后的原 Run 恢复由 `npm test` 覆盖。
 
 ### 7.5 知识闭环的端到端验收
 
 用 `npm run test:codex-replay` 验证真实 Codex 与 Agent Memory 的 Skill 回放、应用与回滚，核对 Git 提交中的文档哈希、新增链接的读取条件和 Memory 检索回执。已有 Maestro Session 回执的兼容验收使用 `npm run test:maestro-closeout`。为该验收设置 `MAESTRO_REPLAY_CLI`，指向用于生成旧回执的运行时入口。该验收使用本地模型测试端点固定提取结果，覆盖会话纠正、Run 重试、重复投递、Wiki 发布、索引重建及临时网络故障。
 
-用 `npm run test:codex-standalone` 验证独立 Skill 的宿主结束回调。测试让真实 Codex 读取提交中的 Markdown，再用本地模型测试端点检查收尾取证和回执重试。测试也覆盖宿主失败产生零候选，以及已有 Session 归属的调用退出独立入口。
+用 `npm run test:legacy-codex-standalone` 回归历史宿主的独立 Skill 结束回调。测试让真实 Codex 读取提交中的 Markdown，再用本地模型测试端点检查收尾取证和回执重试。测试也覆盖宿主失败产生零候选，以及已有 Session 归属的调用退出独立入口。
 
 端到端验收使用一个有实际用户纠正的场景。例如数据库迁移预检 Skill 漏传 `--dry-run`，补参后验证通过。结束回执触发沉淀，重复投递只处理一次。发布后，新 Session 能检索相关参考，并按原作用域加载迁移来的约束。自进化 Skill 生成补丁，旧版复现漏参，候选版首条命令即带齐参数，已有的成功用例继续通过。应用后重新调用，核对宿主加载新版，再验证回滚。
 

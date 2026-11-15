@@ -76,4 +76,4 @@ node skills/workflow-evolve/scripts/evolve-loop.mjs `
   --auto
 ```
 
-The script writes one state file and one directory per round under `.workflow/evolution/<timestamp>/`. When invoked inside a Run, it writes the final result to `outputs/evolution-report.json` in that Run.
+The script writes one state file and one directory per round under `.workflow/evolution/<timestamp>/`. Pass `--run-dir <run_dir>` for an Evolve Run. The script writes the final result to that Run’s `outputs/evolution-report.json`.

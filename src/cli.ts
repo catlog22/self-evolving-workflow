@@ -21,6 +21,7 @@ import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.j
 import { applyWikiChange, listWikiChanges, proposeWikiChange } from './wiki-change.js';
 import { KnowledgeReads, validateKnowledgeReads } from './knowledge-reads.js';
 import { decideSkillRoute } from './skill-route.js';
+import { evolveSessionReceipt, readEvolveSessions, workflowDbPath } from './workflow-runtime.js';
 import {
   applySkillDesign, createSkillDesignTask, readSkillDesignTask, replaySkillDesign,
   reviewSkillDesign, runSkillDesign,
@@ -48,7 +49,7 @@ const help = `Usage: agent-memory <command> [options]
   closeout skill <execution-id>            Record and harvest a standalone Skill completion
                                           (--skill, --skill-version, --status, --transcript, --knowledge-receipt, --project, --record-only)
   closeout resume <receipt-id>             Compatibility alias for closeout harvest <receipt-id>
-  closeout scan [maestro-root]              Reconcile committed Session and standalone Skill receipts (--project)
+  closeout scan [source-project-root]      Reconcile committed Session and standalone Skill receipts (--project)
   closeout show <receipt-id>                Show harvested candidates (--project)
   closeout route <closeout-id> <candidate-id> Decide Wiki, Skill addition, or meta Skill design
   closeout publish <closeout-id> <candidate-id> <title>
@@ -498,6 +499,12 @@ async function main() {
     if (action === 'show') return print(readHarvest(wiki, project, requireText(args[0], 'completion receipt ID')));
     if (action === 'session') {
       const session = requireText(args[0], 'Session ID');
+      const [native] = readEvolveSessions(root, session);
+      if (native) {
+        const receipt = evolveSessionReceipt(native);
+        if (values.receipt && values.receipt !== receipt.id) throw new InputError('Evolve Session receipt ID mismatch');
+        return print(await harvestCompletion(wiki, project, receipt, modelClient));
+      }
       const receipts = [...readCompletionReceipts(root, session, values.receipt)];
       if (receipts.length !== 1) {
         throw new InputError(`Expected one committed completion receipt for ${session}, found ${receipts.length}`);
@@ -524,7 +531,11 @@ async function main() {
       const results: Awaited<ReturnType<typeof harvestCompletion>>[] = [];
       const errors: Array<{ receipt: string; error: string }> = [];
       const sessionSource = args[0] ?? root;
-      const sessionReceipts = args[0] || existsSync(join(sessionSource, '.workflow', 'sessions'))
+      const hasHistoricalSessions = existsSync(join(sessionSource, '.workflow', 'sessions'));
+      if (args[0] && !hasHistoricalSessions && !existsSync(workflowDbPath(sessionSource))) {
+        throw new InputError('Cannot locate Evolve or historical Sessions in the source project');
+      }
+      const sessionReceipts = hasHistoricalSessions
         ? readCompletionReceipts(sessionSource) : [];
       const consume = async (id: string, receipt: unknown, directory?: string) => {
         try {
@@ -535,6 +546,10 @@ async function main() {
       };
       for (const { receipt, directory } of sessionReceipts) {
         await consume(requireText(receipt.transition_id, 'transition ID'), receipt, directory);
+      }
+      for (const session of readEvolveSessions(sessionSource).filter(item => item.status === 'completed')) {
+        const receipt = evolveSessionReceipt(session);
+        await consume(receipt.id, receipt);
       }
       for (const { id, receipt } of readSkillCompletions(wiki, project)) {
         await consume(id, receipt);

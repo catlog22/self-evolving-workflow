@@ -18,7 +18,7 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分�
 | Flag | 行为 |
 |------|------|
 | `-y` | 自动确认低风险分类和 proposal；不越高风险、低置信度、边界歧义、drift 熔断 |
-| `-c` | 继续唯一 live compatible Session（`session/3.0`）；多候选必须询问；有 open decision gate 时进入 audited recovery |
+| `-c` | 继续唯一 live compatible Session（`evolve-session/1.0`）；多候选必须询问；有 open decision gate 时进入 audited recovery |
 | `--amend` | 修改唯一 live Session 的目标；剩余文本为 change request |
 
 其余文本全部视为 intent。Platform、roadmap、quality、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
@@ -43,7 +43,7 @@ chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存�
 
 ### 2. Skill 名预校验
 
-先把当前 host 映射为 Skill scanner 接受的 `target_platform`（`claude|codex|agent|agy|pi`），再通过 `maestro skills --steps --json --platform {target_platform}` 预校验所有 step 名（project 覆盖 global）。不得省略 `--platform`，也不得为非 Claude host 回退到 `claude`；未命中 → 报错 E005，阻断建链。`pi` 的 Skill 来源是已安装 `pi-maestro-flow` npm 包中 `package.json#pi.skills` 声明的目录。
+通过 evolve skills 列出内置步骤，并用 evolve skills validate <command> 核对目标项目提交中的步骤契约。
 
 ### 3. 组装 chain 定义
 
@@ -78,7 +78,7 @@ chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存�
 
 ### 4. 创建
 
-`maestro session open "{intent}" --id maestro-{slug} [--definition-of-done "<text>"] [--chain <argument-free commands...>] --participant {actor_id} --actor {actor_id} --request-id {open_request_id} --reason "<reason>" [--evidence <ref> ...] --json`
+`evolve session open "{intent}" --id maestro-{slug} [--definition-of-done "<text>"] [--chain <argument-free commands...>] --participant {actor_id} --actor {actor_id} --request-id {open_request_id} --reason "<reason>" [--evidence <ref> ...] --json`
 
 chain 可随 `session open --chain` 建入无参数 steps；带 domain args 的 step 随后必须用 fenced `session chain insert --arg` 写入，使用与 actor 相同的 participant、fresh request ID 和 open receipt 返回的 exact `orchestration_revision`。无临时 chain-file。随后进入共享执行循环（orchestrator-run-loop.md）。
 
@@ -132,15 +132,6 @@ Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风
 2. **Session before execution** — session.json 经 `session open --chain` 创建后才执行（`orchestration_revision` CAS 保护所有 mutation）
 3. **Creator owns decomposition** — Maestro 创建 boundary_contract + goals；后续 orchestrator 只消费不覆盖
 4. **Classification evidence** — 分类必须留痕（匹配 pattern、排除备选、confidence）
-5. **Verdict 驱动链推进** — 由 fenced `maestro run complete ... --advance --verdict done|done_with_concerns` 驱动 chain step 完成；链终结后 `session complete`
+5. **Verdict 驱动链推进** — 由 fenced `evolve run complete ... --advance --verdict done|done_with_concerns` 驱动 chain step 完成；链终结后 `session complete`
 6. **禁止以上游文消耗为由中断执行** — harness 自动处理 context compression
 7. **控制权优先级** — Maestro 拥有 initial chain 选择 + proposal disposition；Skill 拥有领域判断；Runtime 独占 mutation authority
-
-## Legacy `session/1.x/2.x` Compatibility Branch
-
-deprecated/legacy-only（旧 CLI/schema，v2 契约 `session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1`）：
-
-- 创建：`maestro session create "{intent}" --id maestro-{slug} --chain-file {path}`（删除临时 chain-file 后进入共享循环）。
-- chain 推进：`session done --verdict` 驱动 chain step 完成；`-c` 对 paused Execution 进入 audited recovery。
-- chain 终结条件：session.json 中 chain[*].status ∈ {completed,sealed,skipped}。
-- `engine: coordinator` 是兼容持久化字段（v2 保留），不是 Session 类型或策略。
