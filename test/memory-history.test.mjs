@@ -35,7 +35,7 @@ async function runMemoryCli(root, env, args, input, expectedCode = 0) {
   return stdout ? JSON.parse(stdout) : stderr;
 }
 
-async function assertExactSource(invoke, { host, session, path, content, scope }) {
+async function assertExactSource(invoke, { host, session, path, content, rawContent = content, scope }) {
   const search = async value => (await invoke(['memory', 'search', value, '--session', session])).results;
   const [record] = await search(originalId(host));
   assert.ok(record);
@@ -54,7 +54,7 @@ async function assertExactSource(invoke, { host, session, path, content, scope }
   const nextLine = transcript.indexOf(10, source.location.byteOffset);
   const raw = JSON.parse(transcript.subarray(source.location.byteOffset, nextLine).toString('utf8'));
   const payload = raw.payload?.content ?? raw.message?.content ?? raw.content;
-  assert.equal(Array.isArray(payload) ? payload[0].text : payload, content);
+  assert.equal(Array.isArray(payload) ? payload[0].text : payload, rawContent);
   return record;
 }
 
@@ -241,8 +241,9 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
 
   const claudeFact = `remember claudenew with ${originalId('claude')} at ${originalNumber}.`;
   const agyFact = `remember agynew with ${originalId('agy')} at ${originalNumber}.`;
+  const agyEnvelope = `<USER_REQUEST>\n${agyFact}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nHOST_CONFIGURATION_789012\n</ADDITIONAL_METADATA>`;
   await appendFile(claudePath, claude('user', 'u2', claudeFact) + claude('assistant', 'a3', text('confirmed'), { stop_reason: 'end_turn' }));
-  await writeFile(agyPath, '  ' + firstAgyTurn + agy(4, 'USER_INPUT', 'USER_EXPLICIT', agyFact) +
+  await writeFile(agyPath, '  ' + firstAgyTurn + agy(4, 'USER_INPUT', 'USER_EXPLICIT', agyEnvelope) +
     agy(5, 'PLANNER_RESPONSE', 'MODEL', 'confirmed'));
   const claudeEvent = { hook_event_name: 'Stop', session_id: 'claude-session', cwd: root, transcript_path: claudePath };
   const agyEvent = { terminationReason: 'model_stop', conversationId: 'agy-session', workspacePaths: [root], transcriptPath: agyPath };
@@ -253,7 +254,9 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   await invoke(['memory', 'host-hook', '--host', 'agy'], { ...agyEvent, cwd: root, workspacePaths: [] });
   const repeated = await invoke(['memory', 'sync', '--host', 'claude,agy']);
   assert.deepEqual(repeated.hosts.map(item => item.processed), [0, 0]);
-  const agyMemory = await assertExactSource(invoke, { host: 'agy', session: 'agy-session', path: agyPath, content: agyFact, scope: 'turn' });
+  assert.doesNotMatch(requests.at(-1).prompt, /HOST_CONFIGURATION_789012/);
+  assert.deepEqual((await invoke(['memory', 'search', 'HOST_CONFIGURATION_789012', '--session', 'agy-session'])).results, []);
+  const agyMemory = await assertExactSource(invoke, { host: 'agy', session: 'agy-session', path: agyPath, content: agyFact, rawContent: agyEnvelope, scope: 'turn' });
   assert.equal(agyMemory.content, agyFact);
   assert.deepEqual(agyMemory.sourceMessageIds, ['agy:agy-session:4']);
   const claudeMemory = await assertExactSource(invoke, { host: 'claude', session: 'claude-session', path: claudePath, content: claudeFact, scope: 'messages' });

@@ -170,7 +170,10 @@ async function* agyTurns({ path }: Transcript, session: string, offset: number, 
         row.step_index < offset || row.status !== 'DONE' || !readableText(row.created_at) || !readableText(row.content)) continue;
     const id = `agy:${session}:${row.step_index}`;
     if (row.type === 'USER_INPUT' && row.source === 'USER_EXPLICIT') {
-      messages.push({ id, role: 'user', timestamp: row.created_at, content: row.content, location: { path, byteOffset: start } });
+      // Antigravity 的完整日志会把宿主附加说明拼在用户正文之外。
+      const wrapped = /^<USER_REQUEST>\r?\n([\s\S]*?)\r?\n<\/USER_REQUEST>(?=\s*(?:<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>|$))/.exec(row.content);
+      const content = wrapped?.[1] ?? row.content;
+      if (readableText(content)) messages.push({ id, role: 'user', timestamp: row.created_at, content, location: { path, byteOffset: start } });
     } else if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL' && messages.length &&
         !(Array.isArray(row.tool_calls) && row.tool_calls.length)) {
       messages.push({ id, role: 'assistant', timestamp: row.created_at, content: row.content, location: { path, byteOffset: start } });
