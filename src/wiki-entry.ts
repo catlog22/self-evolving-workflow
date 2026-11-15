@@ -1,6 +1,7 @@
 import { posix } from 'node:path';
 import { InputError } from './common.js';
 import type { PageFrontmatter } from './upstream/frontmatter.js';
+import { workflowName } from './workflow-names.js';
 
 export const wikiCategories = ['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui'] as const;
 export type WikiCategory = typeof wikiCategories[number];
@@ -88,9 +89,10 @@ export function appliesToContext(entry: WikiEntryMetadata, context: WikiContext,
   const exact = keyword && entry.keywords?.includes(keyword);
   if (keyword && !(entry.keywords ? exact : body.toLowerCase().includes(keyword))) return false;
   if (entry.categories && categories?.length && !exact && !entry.categories.some(category => categories.includes(category))) return false;
+  const skill = context.skill === undefined ? undefined : workflowName(context.skill);
   return entry.scope.some(scope => {
     if (scope === 'project') return true;
-    if (scope.startsWith('skill:')) return scope.slice(6) === context.skill;
+    if (scope.startsWith('skill:')) return workflowName(scope.slice(6)) === skill;
     if (scope.startsWith('task:')) return scope.slice(5) === context.task;
     return context.includePathScoped || (context.paths ?? []).some(path => posix.matchesGlob(path.replaceAll('\\', '/'), scope.slice(5)));
   });
@@ -98,7 +100,8 @@ export function appliesToContext(entry: WikiEntryMetadata, context: WikiContext,
 
 export function contextSpecificity(entry: WikiEntryMetadata, context: WikiContext): number {
   let score = 0;
-  if (context.skill && entry.scope.includes(`skill:${context.skill}`)) score += 8;
+  const skill = context.skill === undefined ? undefined : workflowName(context.skill);
+  if (entry.scope.some(scope => scope.startsWith('skill:') && workflowName(scope.slice(6)) === skill)) score += 8;
   if (context.task && entry.scope.includes(`task:${context.task}`)) score += 6;
   if (context.paths?.length && entry.scope.some(scope => scope.startsWith('path:') &&
       context.paths!.some(path => posix.matchesGlob(path.replaceAll('\\', '/'), scope.slice(5))))) score += 4;

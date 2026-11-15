@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileS
 import { dirname, join } from 'node:path';
 import { InputError, openDb, requireText, transaction } from './common.js';
 import { KnowledgeReads, validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
+import { workflowName } from './workflow-names.js';
 import {
   bindWorkflowSkill, readWorkflowLink, readWorkflowMarkdown, workflowBlob, workflowHash, workflowHeader, workflowMeta,
   workflowPath, workflowRecord, type ArtifactType, type WorkflowSkill, type OutputSlot,
@@ -284,7 +285,7 @@ export class WorkflowStore {
           throw new InputError('Duplicate chain step or decision: ' + step.id);
         }
         existing.add(step.id);
-        return { ...step, status: 'pending' as const };
+        return { ...step, command: workflowName(step.command), status: 'pending' as const };
       });
       const session: Session = {
         schema_version: 'evolve-session/1.0', id, objective: requireText(objective, 'objective'), definition_of_done: definition,
@@ -299,7 +300,7 @@ export class WorkflowStore {
     workflowId(step.id, 'step ID');
     if (step.decision_ref) workflowId(step.decision_ref, 'decision ID');
     bindWorkflowSkill(this.root, step.command);
-    if (/^odyssey-(security|defensive)$/.test(step.command) && step.args.includes('--fix')) {
+    if (/^ew-odyssey-(security|defensive)$/.test(workflowName(step.command)) && step.args.includes('--fix')) {
       throw new InputError('This Odyssey mode uses a read-only audit');
     }
   }
@@ -329,7 +330,7 @@ export class WorkflowStore {
         if ((after && index === 0) || index < (firstPending < 0 ? session.steps.length : firstPending)) {
           throw new InputError('Insert the step in the pending chain');
         }
-        session.steps.splice(index, 0, { ...step, status: 'pending' });
+        session.steps.splice(index, 0, { ...step, command: workflowName(step.command), status: 'pending' });
       } else {
         const original = findStep(session, step.id);
         if (original.status !== 'pending') throw new InputError('Select a pending step');
@@ -339,7 +340,7 @@ export class WorkflowStore {
           if (replacement.decision_ref && session.steps.some(item => item.id !== step.id && item.decision_ref === replacement.decision_ref)) {
             throw new InputError('Decision already exists');
           }
-          session.steps[current] = replacement;
+          session.steps[current] = { ...replacement, command: workflowName(replacement.command) };
         } else {
           if (!change.evidence?.length) throw new InputError('Supply evidence for a skipped step');
           original.status = 'skipped';
@@ -369,12 +370,13 @@ export class WorkflowStore {
       if (nextAction(session).action !== 'next') throw new InputError('Workflow continuation does not dispatch a Run');
       const step = session.steps.find(item => item.status === 'pending')!;
       if (stepId && step.id !== stepId) throw new InputError('Run creation must follow the pending chain');
-      const skill = bindWorkflowSkill(this.root, step.command);
+      const command = workflowName(step.command);
+      const skill = bindWorkflowSkill(this.root, command);
       const missing = skill.gates.entry.filter(gate => !gates.includes(gate));
       if (missing.length) throw new InputError('Missing entry gates: ' + missing.join(', '));
       const run: Run = {
         id: 'run-' + randomUUID(), owner: change.actor, step_id: step.id, status: 'running', revision: 0, skill,
-        task: { command: step.command, args: step.args, goal: session.objective },
+        task: { command, args: step.args, goal: session.objective },
         inputs: [], input_aliases: {}, reads: {},
         ...(step.run_id ? { retry_of_run_id: step.run_id } : {}),
       };
@@ -466,7 +468,7 @@ export class WorkflowStore {
         if (meta.kind !== slot.kind || meta.schema !== slot.schema || meta.role !== slot.role || meta.alias !== slot.alias) {
           errors.push('Artifact metadata does not match the Skill contract: ' + path);
         }
-        if (run.task.command.startsWith('odyssey-') && path === 'outputs/session.json' &&
+        if (workflowName(run.task.command).startsWith('ew-odyssey-') && path === 'outputs/session.json' &&
             workflowRecord(JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')), 'Odyssey checkpoint').current_state !== 'END') {
           errors.push('Finish the Odyssey domain checkpoint before sealing');
         }
@@ -538,7 +540,7 @@ export class WorkflowStore {
     return this.mutate(id, 'run.decide', change, { decisionId, verdict, summary }, session => {
       const step = activeDecision(session);
       if (step?.decision_ref !== decisionId) throw new InputError('Select the pending decision');
-      if (verdict === 'fix' && /^odyssey-(security|defensive)$/.test(step.command)) {
+      if (verdict === 'fix' && /^ew-odyssey-(security|defensive)$/.test(workflowName(step.command))) {
         throw new InputError('Route read-only audit findings to a separate remediation step');
       }
       step.decision = verdict;

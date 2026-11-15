@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { parse } from 'yaml';
 import { InputError, requireText } from './common.js';
+import { historicalWorkflowName, odysseyModes, orchestrationSteps, workflowName } from './workflow-names.js';
 
 export interface ArtifactType {
   kind: string;
@@ -30,11 +31,10 @@ export interface WorkflowSkill {
   gates: { entry: string[]; exit: string[] };
 }
 
-const internal = new Set(['companion', 'brainstorm', 'analyze', 'plan', 'execute', 'review']);
-const odyssey = /^(?:odyssey-)(debug|improve|planex|review|security|defensive|ui)$/;
+const internal = new Set(orchestrationSteps.map(workflowName));
+const odyssey = new Map(odysseyModes.map(mode => ['ew-odyssey-' + mode, mode]));
 export const commandNames = [
-  ...internal, 'odyssey-debug', 'odyssey-improve', 'odyssey-planex', 'odyssey-review',
-  'odyssey-security', 'odyssey-defensive', 'odyssey-ui', 'team-swarm',
+  ...internal, ...odyssey.keys(), 'team-swarm',
 ];
 
 export function workflowHash(bytes: Buffer | string) {
@@ -61,12 +61,19 @@ export function workflowPath(value: string, extension?: string) {
   return value;
 }
 
-function treeMember(root: string, commit: string, path: string) {
+function findTreeMember(root: string, commit: string, path: string) {
   workflowPath(path);
   const record = git(root, 'ls-tree', '-z', commit, '--', path).toString();
+  if (!record) return;
   const match = /^(100644|100755|040000) (blob|tree) ([0-9a-f]{40}|[0-9a-f]{64})\t([^\0]+)\0$/.exec(record);
   if (!match || match[4] !== path) throw new InputError('Workflow path is unavailable or is not a regular entry: ' + path);
   return { type: match[2], object: match[3] };
+}
+
+function treeMember(root: string, commit: string, path: string) {
+  const member = findTreeMember(root, commit, path);
+  if (!member) throw new InputError('Workflow path is unavailable: ' + path);
+  return member;
 }
 
 export function workflowBlob(root: string, commit: string, path: string) {
@@ -123,13 +130,22 @@ export function bindWorkflowSkill(root: string, command: string, commit = workfl
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(command) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit)) {
     throw new InputError('Invalid Skill command or Git commit');
   }
-  const mode = odyssey.exec(command)?.[1];
-  const packagePath = internal.has(command) ? 'skills/maestro/steps/' + command : 'skills/' + (mode ? 'maestro-odyssey' : command);
-  const tree = treeMember(root, commit, packagePath);
+  const name = workflowName(command);
+  const mode = odyssey.get(name);
+  const expectedId = mode ? 'ew-odyssey' : name;
+  const isStep = internal.has(name);
+  let packagePath = isStep ? 'skills/ew-orchestrate/steps/' + name : 'skills/' + expectedId;
+  let tree = findTreeMember(root, commit, packagePath);
+  const oldName = historicalWorkflowName(expectedId);
+  if (!tree && oldName) {
+    packagePath = isStep ? 'skills/maestro/steps/' + oldName : 'skills/' + oldName;
+    tree = findTreeMember(root, commit, packagePath);
+  }
+  if (tree?.type !== 'tree') throw new InputError('Workflow package is unavailable: ' + packagePath);
   const entry = 'SKILL.md';
   const header = workflowHeader(workflowBlob(root, commit, packagePath + '/' + entry).toString('utf8'));
   const skillId = requireText(header.name, 'Skill name');
-  if (skillId !== (mode ? 'maestro-odyssey' : command)) throw new InputError('Skill name does not match ' + command);
+  if (workflowName(skillId) !== expectedId) throw new InputError('Skill name does not match ' + name);
   const preparation = mode ? 'references/prepare/odyssey-' + mode + '.md' : undefined;
   const modeHeader = preparation ? workflowHeader(workflowBlob(root, commit, packagePath + '/' + preparation).toString('utf8')) : undefined;
   const contract = workflowRecord(modeHeader?.contract ?? header.contract ?? {}, 'Skill contract');

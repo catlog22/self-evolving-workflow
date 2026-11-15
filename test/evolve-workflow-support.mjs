@@ -48,7 +48,7 @@ export function fixture(prefix) {
     writeFileSync(filename, JSON.stringify({ ...body, _meta: { kind, schema, role, alias } }) + '\n');
   };
   try {
-    const names = ['maestro', 'maestro-odyssey', 'team-swarm'];
+    const names = ['ew-orchestrate', 'ew-odyssey', 'team-swarm'];
     assert.deepEqual(evolve('skills', 'install', ...names).installed, names);
     assert.deepEqual(evolve('skills', 'install', ...names).installed, []);
     git('init', '-q');

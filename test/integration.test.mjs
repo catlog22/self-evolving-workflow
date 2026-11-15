@@ -141,6 +141,8 @@ test('managed Wiki entries resolve active scopes independently of search and pre
   const wiki = new Wiki(root);
   assert.deepEqual(wiki.constraints(), []);
   assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'analyze')).map(page => page.id), ['entries/required']);
+  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'ew-analyze')).map(page => page.id), ['entries/required']);
+  assert.deepEqual((await cliJson(root, 'wiki', 'constraints', '--skill', 'maestro-analyze')).map(page => page.id), ['entries/required']);
   assert.equal(wiki.getEntry('legacy:spec:S-42').id, 'entries/required');
   assert.equal(wiki.getEntry('retired').entry.status, 'deprecated');
   wiki.build();
@@ -296,10 +298,10 @@ test('Evolve installs selected Skills and their workflow files without replacing
   const original = '# Project instructions\r\n\r\nUse the release branch.\r\n';
   await writeFile(guidance, original);
 
-  const installArgs = ['install', '--scope', 'project', '--skill', 'maestro-odyssey', '--yes'];
+  const installArgs = ['install', '--scope', 'project', '--skill', 'ew-odyssey', '--yes'];
   const installed = JSON.parse(await evolve(...installArgs));
-  assert.deepEqual(installed.installed, ['maestro', 'maestro-odyssey']);
-  assert.ok(installed.workflows.some(item => item.id === 'odyssey-review'));
+  assert.deepEqual(installed.installed, ['ew-orchestrate', 'ew-odyssey']);
+  assert.ok(installed.workflows.some(item => item.id === 'ew-odyssey-review'));
   const after = await readFile(guidance, 'utf8');
   assert.ok(after.startsWith(original));
   assert.match(after, /agent-memory context/);
@@ -308,7 +310,7 @@ test('Evolve installs selected Skills and their workflow files without replacing
 
   const workflows = JSON.parse(await evolve('workflows'));
   assert.equal(new Set(workflows.map(workflow => workflow.id)).size, workflows.length);
-  const review = workflows.find(item => item.id === 'odyssey-review');
+  const review = workflows.find(item => item.id === 'ew-odyssey-review');
   assert.equal(await evolve('workflows', 'show', review.id), await readFile(join(root, review.path), 'utf8'));
   await assert.rejects(evolve('workflows', 'show', '../AGENTS.md'), /Unknown workflow/);
   await mkdir(join(root, 'skills', 'team-swarm'));
@@ -919,7 +921,7 @@ test('Knowledge closeout routes local fixes and structural changes to the right 
   });
   assert.equal(design.route, 'skill-design');
   assert.equal(design.invoke_meta_skill, true);
-  assert.equal(design.meta_skill.id, 'maestro-skill-design');
+  assert.equal(design.meta_skill.id, 'ew-skill-design');
 
   const wiki = decideSkillRoute({ content: 'Use the staging inventory as a reference.', sources: ['receipt:run-3#check'] });
   assert.equal(wiki.route, 'wiki');

@@ -74,8 +74,8 @@ function checkedSeal(f, session, run, summary) {
 }
 
 async function chain(f) {
-  const session = 'maestro-chain';
-  f.open(session, 'analyze,plan,execute,review', 'Update the fixture item limit from project acceptance evidence');
+  const session = 'ew-chain';
+  f.open(session, 'ew-analyze,ew-plan,ew-execute,ew-review', 'Update the fixture item limit from project acceptance evidence');
   const analyze = f.next(session);
   const input = await codex(f, session, analyze,
     'Use the acceptance memory and source. Return { finding: string, file: string, desired: number }.', { file, source: original });
@@ -111,13 +111,13 @@ async function chain(f) {
   f.saveArtifact(review, 'review.json', evaluated);
   checkedSeal(f, session, review, 'Reviewed the accepted change across four dimensions');
   assert.equal(f.sealSession(session).status, 'completed');
-  console.log('Maestro: Codex and Agent Memory completed an Evolve analyze → plan → execute → review chain.');
+  console.log('EW orchestration: Codex and Agent Memory completed ew-analyze → ew-plan → ew-execute → ew-review.');
 }
 
 async function odyssey(f) {
-  const session = 'odyssey-review';
+  const session = 'ew-odyssey-review';
   f.open(session, '');
-  const step = f.evolve('session', 'chain', 'insert', ...f.fence(session), '--step-id', 'audit', '--command', 'odyssey-review',
+  const step = f.evolve('session', 'chain', 'insert', ...f.fence(session), '--step-id', 'audit', '--command', 'ew-odyssey-review',
     '--arg=--skip-fix', '--arg=' + file, '--decision-ref', 'accept-audit');
   const run = f.next(session, step.orchestration_revision);
   const resumed = f.evolve('run', 'brief', run.run_id, '--session', session);

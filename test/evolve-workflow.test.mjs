@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -18,7 +18,7 @@ test('Evolve pins each attempt, fences retries and publishes bytes with the requ
   const f = fixture('evolve-runtime-');
   try {
     const session = 'pin-and-publish';
-    const opened = f.open(session, 'analyze,plan');
+    const opened = f.open(session, 'ew-analyze,ew-plan');
     const attempt = f.next(session, opened.orchestration_revision, '--request-id', 'first');
     assert.deepEqual(f.next(session, opened.orchestration_revision, '--request-id', 'first'), attempt);
     assert.throws(() => f.next(session, 1, '--request-id', 'first'), /IDEMPOTENCY_PAYLOAD_MISMATCH/);
@@ -26,7 +26,7 @@ test('Evolve pins each attempt, fences retries and publishes bytes with the requ
     assert.throws(() => f.evolve('run', 'skill-read', attempt.run_id, 'references/workflow.md',
       '--from', 'SKILL.md', '--session', session), /Read the source document first/);
 
-    const guide = 'skills/maestro/steps/analyze/references/workflow.md';
+    const guide = 'skills/ew-orchestrate/steps/ew-analyze/references/workflow.md';
     f.write(guide, '# Changed after the first dispatch\n');
     f.git('add', guide);
     f.git('commit', '-qm', 'Update the analysis procedure');
@@ -80,20 +80,51 @@ test('All shipped step and mode contracts resolve in the installed Git packages'
   try {
     const names = f.evolve('skills').map(item => item.command);
     assert.equal(names.length, 14);
+    assert.equal(names.filter(name => name.startsWith('ew-')).length, 13);
     for (const name of names) {
       const binding = f.evolve('skills', 'validate', name);
       assert.match(binding.commit, /^[0-9a-f]{40}$/);
       assert.equal(binding.entry, 'SKILL.md');
-      if (name.startsWith('odyssey-')) {
-        assert.ok(binding.required_links.includes('references/prepare/' + name + '.md'));
+      if (name.startsWith('ew-odyssey-')) {
+        assert.equal(binding.skill_id, 'ew-odyssey');
+        assert.ok(binding.required_links.includes('references/prepare/' + name.slice(3) + '.md'));
         assert.ok(binding.produces.some(slot => slot.path === 'outputs/session.json' && slot.required));
+      } else {
+        assert.equal(binding.skill_id, name);
       }
     }
     const session = 'readonly-audit';
     f.open(session, '');
     assert.throws(() => f.evolve('session', 'chain', 'insert', ...f.fence(session), '--step-id', 'audit',
-      '--command', 'odyssey-security', '--arg=--fix'), /read-only audit/);
+      '--command', 'ew-odyssey-security', '--arg=--fix'), /read-only audit/);
     assert.equal(existsSync(f.sentinel), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Run recovery still reads the original revision after an EW package rename', () => {
+  const f = fixture('evolve-runtime-renames-');
+  try {
+    const current = f.git('rev-parse', 'HEAD');
+    f.git('mv', 'skills/ew-orchestrate', 'skills/maestro');
+    f.git('mv', 'skills/maestro/steps/ew-analyze', 'skills/maestro/steps/analyze');
+    const legacyEntry = 'skills/maestro/steps/analyze/SKILL.md';
+    f.write(legacyEntry, readFileSync(join(f.root, legacyEntry), 'utf8').replace('name: ew-analyze', 'name: analyze'));
+    f.git('add', legacyEntry);
+    f.git('commit', '-qm', 'Record a legacy Skill revision');
+
+    const session = 'resume-old-name';
+    f.open(session, 'analyze');
+    const oldRun = f.next(session);
+    assert.equal(oldRun.task.command, 'ew-analyze');
+    assert.equal(oldRun.skill_ref.skill_id, 'analyze');
+    f.git('checkout', '--detach', current);
+    const original = f.evolve('run', 'skill-read', oldRun.run_id, '--session', session);
+    assert.match(original.markdown, /^name: analyze$/m);
+    const currentBinding = f.evolve('skills', 'validate', 'analyze');
+    assert.equal(currentBinding.skill_id, 'ew-analyze');
+    assert.notEqual(currentBinding.commit, oldRun.skill_ref.commit);
   } finally {
     f.cleanup();
   }

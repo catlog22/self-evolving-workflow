@@ -90,21 +90,21 @@ Search project knowledge before inspecting, analyzing, planning against, or chan
 | New Evolve Run | Inspect the Run packet, then use the scoped lookup below before exploring the project. The Run-bound `memory_search` and `memory_get` tools are available for Working Memory lookups. |
 | Resumed Evolve Run | Recover the packet with `evolve run brief <run-id> --session <session-id>`, then resolve project knowledge before resuming exploration. Reuse complete entries already in context and reload any entry represented only by an ID or summary. |
 
-For a CLI lookup in a Run, use `agent-memory context "<query>" --skill <command> --session <session-id> --include-memory --reads "<run-dir>/knowledge-reads.json"`. Include task or path scope when known. Use one receipt source per Run. Code search with `agent-memory code search <query>` is available after the opening lookup.
+For a CLI lookup in a Run, use `agent-memory context "<query>" --skill <skill-id> --session <session-id> --include-memory --reads "<run-dir>/knowledge-reads.json"`. Take the Skill ID from `skill_ref.skill_id` and include task or path scope when known. Use one receipt source per Run. Code search with `agent-memory code search <query>` is available after the opening lookup.
 
 - Inspect the applicable constraints and open governing hits by exact ID with `agent-memory wiki reference <id>` or `agent-memory memory get <id>`. In a Run, use its bound tools or the same `--reads` receipt with `--from-search <search-id>` so the exact read is recorded.
 - Refine an empty or irrelevant query before exploring. Proceed after inspecting a successful zero-result response to the refined query. Follow any initialization or recovery hint and retry. Re-query when the task enters a new subsystem, an approach needs a decision, or the same fix fails twice.
-- Seal verified outputs and evidence through Evolve. Follow the [knowledge route](skills/maestro/references/knowledge-route.md) to stage reusable findings through Agent Memory. Review candidates before promotion. Zero candidates is a valid outcome. Keep previous project knowledge directories as migration inputs.
+- Seal verified outputs and evidence through Evolve. Follow the [knowledge route](skills/ew-orchestrate/references/knowledge-route.md) to stage reusable findings through Agent Memory. Review candidates before promotion. Zero candidates is a valid outcome. Keep previous project knowledge directories as migration inputs.
 
 ## Workflow Routing
 
 | Intent | Entry |
 | --- | --- |
-| Ordinary orchestration and goal chains | [Maestro](skills/maestro/SKILL.md) |
-| Iterative audit, debugging, improvement or review | [Odyssey](skills/maestro-odyssey/SKILL.md) |
+| Ordinary orchestration and goal chains | [ew-orchestrate](skills/ew-orchestrate/SKILL.md) |
+| Iterative audit, debugging, improvement or review | [ew-odyssey](skills/ew-odyssey/SKILL.md) |
 | Parallel ACO exploration and scoring | [Swarm](skills/team-swarm/SKILL.md) |
-| Session/Run, artifact and recovery commands | [Evolve controller](skills/maestro/references/orchestrator-run-loop.md) |
-| Historical review and knowledge governance | [Agent Memory knowledge route](skills/maestro/references/knowledge-route.md) |
+| Session/Run, artifact and recovery commands | [Evolve controller](skills/ew-orchestrate/references/orchestrator-run-loop.md) |
+| Historical review and knowledge governance | [Agent Memory knowledge route](skills/ew-orchestrate/references/knowledge-route.md) |
 | Evidence-driven Skill improvement | [Workflow Evolve](skills/workflow-evolve/SKILL.md) |
 | External Codex or Agy execution | `evolve delegate --help` and the controller guide |
 

@@ -25,7 +25,7 @@ export interface SkillRouteDecision {
   reasons: string[];
   invoke_meta_skill: boolean;
   meta_skill?: {
-    id: 'maestro-skill-design';
+    id: 'ew-skill-design';
     mode: 'design';
     instruction: string;
   };
@@ -72,7 +72,7 @@ export function decideSkillRoute(input: SkillRouteContext): SkillRouteDecision {
       route: 'skill-design', confidence: 'high', reasons,
       invoke_meta_skill: true,
       meta_skill: {
-        id: 'maestro-skill-design', mode: 'design',
+        id: 'ew-skill-design', mode: 'design',
         instruction: `基于已验证证据设计 Skill。保留当前入口约束，声明 Markdown 链接、契约、产物、恢复路径和验收场景。证据：${sources.join(', ')}`,
       },
     };

@@ -77,6 +77,7 @@ Options:
   --wiki-root <dir>    Override the parent of wiki/
   --db <path>          Memory DB (default <root>/.agent-memory/memory.db)
   --namespace <name>   Memory namespace (default default)
+  --skill <id>         Include Wiki entries scoped to this Skill in context and Wiki lookups
   --memory-session <id> Memory session filter (context uses this instead of its context session)
   --context-file <path> Load shared Skill/Task/Path/Wiki context from JSON
   --trace               Include knowledge_reads search/read evidence in the result

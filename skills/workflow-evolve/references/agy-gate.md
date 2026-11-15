@@ -18,7 +18,7 @@ The first call receives the baseline observations and history review. It must re
 }
 ```
 
-`approved` means the suggestion is ready to turn into a draft. Agy must set it to `false` when the evidence is missing, the change is broader than the observed failure, or the request needs a new Skill contract. Contract changes route to `maestro-skill-design` after the loop.
+`approved` means the suggestion is ready to turn into a draft. Agy must set it to `false` when the evidence is missing, the change is broader than the observed failure, or the request needs a new Skill contract. Contract changes route to `ew-skill-design` after the loop.
 
 ## Confirmation response
 

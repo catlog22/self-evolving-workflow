@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { InputError } from './common.js';
+import { workflowName } from './workflow-names.js';
 
 const bundle = fileURLToPath(new URL('../', import.meta.url));
 const source = join(bundle, 'skills');
@@ -29,7 +30,8 @@ export function workflowDocuments(): WorkflowDocument[] {
 }
 
 export function workflowDocument(id: string) {
-  const document = workflowDocuments().find(item => item.id === id);
+  const name = id === 'odyssey' || id === 'skill-design' ? 'ew-' + id : workflowName(id);
+  const document = workflowDocuments().find(item => item.id === name);
   if (!document) throw new InputError('Unknown workflow: ' + id);
   return readFileSync(join(bundle, document.path), 'utf8');
 }
@@ -39,10 +41,10 @@ function shippedSkills() {
 }
 
 function selectSkills(shipped: string[], requested: string[]) {
-  const selected = requested.length ? [...new Set(requested)] : shipped;
+  const selected = requested.length ? [...new Set(requested.map(workflowName))] : shipped;
   if (selected.some(name => !shipped.includes(name))) throw new InputError('Choose a shipped Skill package');
-  if (selected.some(name => name === 'maestro-odyssey' || name === 'workflow-closeout') && !selected.includes('maestro')) {
-    return ['maestro', ...selected];
+  if (selected.some(name => name === 'ew-odyssey' || name === 'workflow-closeout') && !selected.includes('ew-orchestrate')) {
+    return ['ew-orchestrate', ...selected];
   }
   return selected;
 }
