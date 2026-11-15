@@ -255,6 +255,66 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   assert.ok((await cliJson(root, ...args, '--apply')).every(row => row.existing));
 });
 
+test('Evolve imports legacy knowledge into the source project or an explicit global destination', async t => {
+  const project = await temp(t);
+  const globalSource = await temp(t);
+  const globalDestination = await temp(t);
+  const workflowCli = fileURLToPath(new URL('../dist/workflow-cli.js', import.meta.url));
+  const migrate = async (...args) => JSON.parse((await run(process.execPath,
+    [workflowCli, 'knowledge', 'import', ...args], { cwd: project, encoding: 'utf8' })).stdout);
+
+  for (const source of [join(project, '.workflow'), globalSource]) {
+    await mkdir(join(source, 'specs'), { recursive: true });
+    await mkdir(join(source, 'knowhow'));
+    await writeFile(join(source, 'specs', 'test-conventions.md'),
+      '<spec-entry title="Calibration gate" sid="S-1">Run the calibration check.</spec-entry>\n');
+    await writeFile(join(source, 'knowhow', 'K-1.md'), '# Calibration method\n\nInspect the calibration gauge.\n');
+  }
+  const preview = await migrate();
+  assert.equal(preview.applied, false);
+  assert.equal(preview.new_entries, 2);
+  assert.deepEqual(new Wiki(project).constraints(), []);
+  const applied = await migrate(project, '--apply');
+  assert.equal(applied.project, preview.project);
+  assert.deepEqual(applied.entries, preview.entries);
+  assert.equal((await migrate('--apply')).existing_entries, 2);
+  const projectContext = await cliJson(project, 'context', 'calibration');
+  assert.deepEqual(projectContext.constraints.map(entry => entry.title), ['Calibration gate']);
+  assert.deepEqual(projectContext.references.map(entry => entry.title), ['Calibration method']);
+  const global = await migrate(globalSource, '--global', '--root', globalDestination, '--apply');
+  assert.equal(global.new_entries, 2);
+  assert.equal(global.scope, 'global');
+  assert.deepEqual((await cliJson(globalDestination, 'context', 'calibration')).references.map(entry => entry.title),
+    ['Calibration method']);
+});
+
+test('Evolve installs selected Skills and their workflow files without replacing project instructions', async t => {
+  const root = await temp(t);
+  const workflowCli = fileURLToPath(new URL('../dist/workflow-cli.js', import.meta.url));
+  const evolve = async (...args) => (await run(process.execPath, [workflowCli, ...args], { cwd: root, encoding: 'utf8' })).stdout;
+  const guidance = join(root, 'AGENTS.md');
+  const original = '# Project instructions\r\n\r\nUse the release branch.\r\n';
+  await writeFile(guidance, original);
+
+  const installArgs = ['install', '--scope', 'project', '--skill', 'maestro-odyssey', '--yes'];
+  const installed = JSON.parse(await evolve(...installArgs));
+  assert.deepEqual(installed.installed, ['maestro', 'maestro-odyssey']);
+  assert.ok(installed.workflows.some(item => item.id === 'odyssey-review'));
+  const after = await readFile(guidance, 'utf8');
+  assert.ok(after.startsWith(original));
+  assert.match(after, /agent-memory context/);
+  assert.deepEqual(JSON.parse(await evolve(...installArgs)).kept, installed.installed);
+  assert.equal(await readFile(guidance, 'utf8'), after);
+
+  const workflows = JSON.parse(await evolve('workflows'));
+  assert.equal(new Set(workflows.map(workflow => workflow.id)).size, workflows.length);
+  const review = workflows.find(item => item.id === 'odyssey-review');
+  assert.equal(await evolve('workflows', 'show', review.id), await readFile(join(root, review.path), 'utf8'));
+  await assert.rejects(evolve('workflows', 'show', '../AGENTS.md'), /Unknown workflow/);
+  await mkdir(join(root, 'skills', 'team-swarm'));
+  await assert.rejects(evolve('install', '--skill', 'team-swarm', '--yes'), /no SKILL.md/);
+});
+
 test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {
   const root = await temp(t);
   const { harvestCompletion, publishReference } = await import('../dist/closeout.js');

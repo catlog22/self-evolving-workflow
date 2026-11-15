@@ -36,10 +36,12 @@
   "files": [
     "dist",
     "skills",
+    "workflows",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "setup": "npm run build && npm link && node dist/workflow-cli.js install",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:codex-replay": "npm run build && node test/codex-replay.mjs",
     "test:codex-replay-contract": "npm run build && node test/codex-replay-contract.mjs",

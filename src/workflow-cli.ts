@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { InputError, requireText } from './common.js';
 import { WorkflowStore, workflowId, type Mutation, type WorkflowStep } from './workflow-runtime.js';
-import { bindWorkflowSkill, commandNames } from './workflow-skills.js';
+import { bindWorkflowSkill, commandNames, workflowHash } from './workflow-skills.js';
 import { serveWorkflowRun } from './workflow-mcp.js';
+import { Wiki } from './wiki.js';
+import { migrateLegacyWiki } from './wiki-migration.js';
+import { installSkills, installWorkflow, workflowDocument, workflowDocuments } from './workflow-install.js';
 
 const string = { type: 'string' } as const;
 const strings = { type: 'string', multiple: true } as const;
@@ -19,6 +23,8 @@ const options = {
   'definition-of-done': string, chain: strings, 'step-id': string, command: string, arg: strings, 'after-step': string,
   'decision-ref': string, 'goal-ref': string, stage: string, gate: strings, from: string, verdict: string, summary: string,
   to: string, tool: string, role: string, mode: string, model: string, cd: string, 'prompt-file': string, path: string,
+  project: string, global: bool, apply: bool,
+  scope: string, host: string, skill: strings, yes: bool,
 } as const;
 
 const usage = [
@@ -29,6 +35,9 @@ const usage = [
   'evolve run next|brief|check|skill-read|artifact-read|complete|transition|cancel|decide --session <id>',
   'evolve team controller|assign|report|cancel|list --session <id> --run <id>',
   'evolve skills [install <package>... | validate <command>]',
+  'evolve install [--scope project|user | --global] [--host codex|claude] [--skill <package>] [--root <project>] [--yes]',
+  'evolve workflows [show <id>]',
+  'evolve knowledge import [<source>] [--root <destination>] [--project <legacy-id>] [--global] [--apply]',
   'evolve mcp --session <id> --run <id>',
   'evolve delegate <prompt> --to codex|agy --mode analysis|write',
 ].join('\n');
@@ -45,22 +54,19 @@ function select<T extends string>(value: string | undefined, choices: readonly T
   throw new InputError(label + ' must be one of: ' + choices.join(', '));
 }
 
-function installSkills(root: string, requested: string[]) {
-  const source = fileURLToPath(new URL('../skills', import.meta.url));
-  const shipped = readdirSync(source, { withFileTypes: true }).filter(item => item.isDirectory()).map(item => item.name);
-  const packages = requested.length ? [...new Set(requested)] : shipped;
-  const target = join(root, 'skills');
-  if (packages.some(name => !shipped.includes(name))) throw new InputError('Choose a shipped Skill package');
-  if (lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) throw new InputError('Use a regular project skills directory');
-  mkdirSync(target, { recursive: true });
-  const installed: string[] = [];
-  for (const name of packages) {
-    const path = join(target, name);
-    if (existsSync(path)) continue;
-    cpSync(join(source, name), path, { recursive: true, force: false, errorOnExist: true });
-    installed.push(name);
-  }
-  return { skills: packages, installed };
+function importLegacyKnowledge(root: string, sourceArg: string | undefined, values: {
+  root?: string; global?: boolean; project?: string; apply?: boolean;
+}) {
+  const scope = values.global ? 'global' : 'project';
+  const source = realpathSync(sourceArg ?? (values.global ? join(homedir(), '.maestro') : root));
+  if (!lstatSync(source).isDirectory()) throw new InputError('Legacy knowledge source must be a directory');
+  const destination = values.root ? root : values.global ? join(homedir(), '.evolve') : source;
+  const project = values.project ?? (values.global && !sourceArg ? 'maestro-global' : 'legacy-' + workflowHash(source).slice(7, 23));
+  const entries = migrateLegacyWiki(new Wiki(destination), source, project, values.apply, { scope });
+  return { source, destination, project, scope, applied: values.apply ?? false,
+    new_entries: entries.filter(entry => !entry.existing).length,
+    existing_entries: entries.filter(entry => entry.existing).length,
+    needs_review: entries.filter(entry => entry.status === 'needs_review').length, entries };
 }
 
 function delegate(root: string, values: {
@@ -104,6 +110,28 @@ async function runWorkflowCli(argv: string[]) {
   const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
   if (group === 'capabilities') return print({ schema_version: 'evolve-workflow/1.0', session: 'evolve-session/1.0',
     features: ['revision-cas', 'request-receipts', 'git-skill-binding', 'atomic-artifact-seal', 'run-knowledge', 'swarm-coordination'] });
+  if (group === 'knowledge') {
+    if (action !== 'import' || args.length > 1) throw new InputError('Usage: evolve knowledge import [<source>] [--apply]');
+    return print(importLegacyKnowledge(root, args[0], values));
+  }
+  if (group === 'workflows') {
+    if (!action) return print(workflowDocuments());
+    if (action === 'show' && args.length === 1) {
+      process.stdout.write(workflowDocument(args[0]));
+      return;
+    }
+    throw new InputError('Usage: evolve workflows [show <id>]');
+  }
+  if (group === 'install' && !action) {
+    if (values.global && values.scope === 'project') throw new InputError('--global selects the user scope');
+    const scope = values.global ? 'user'
+      : values.scope === undefined ? undefined : select(values.scope, ['project', 'user'] as const, 'Install scope');
+    return print(await installWorkflow(root, {
+      scope,
+      host: values.host === undefined ? undefined : select(values.host, ['codex', 'claude'] as const, 'Install host'),
+      skill: values.skill, yes: values.yes,
+    }));
+  }
   if (group === 'skills') {
     if (action === 'install') return print(installSkills(root, args));
     if (action === 'validate') return print(bindWorkflowSkill(root, requireText(args[0], 'Skill command')));

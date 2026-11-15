@@ -110,9 +110,30 @@ function readLegacySpecFolder(sourceRoot: string, relative: string): LegacyEntry
   );
 }
 
-function collectLegacy(sourceRoot: string, layer: LegacyWikiLayer): LegacyEntry[] {
-  if (layer.scope === 'global') return readLegacySpecFolder(sourceRoot, 'specs');
+function readLegacyKnowhowFolder(sourceRoot: string, relative: string): LegacyEntry[] {
   const entries: LegacyEntry[] = [];
+  const directory = join(sourceRoot, relative);
+  const info = lstatSync(directory, { throwIfNoEntry: false });
+  if (!info) return entries;
+  if (!info.isDirectory()) throw new InputError(`Invalid legacy knowledge directory: ${directory}`);
+  for (const file of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!file.isFile() || !file.name.endsWith('.md')) continue;
+    const source = readFileSync(join(directory, file.name), 'utf8').replace(/^\uFEFF/, '');
+    const origin = `${relative}/${file.name}`;
+    const parsed = parseFrontmatter(source);
+    if (source.startsWith('---') && !parsed.hasFrontmatter) throw new InputError(`Invalid Knowhow frontmatter: ${origin}`);
+    const oldId = typeof parsed.frontmatter.id === 'string' ? parsed.frontmatter.id : basename(file.name, '.md');
+    const title = parsed.frontmatter.title || parsed.body.match(/^#\s+(.+)$/m)?.[1] || oldId;
+    entries.push({ origin, oldId, title, body: parsed.body, mode: 'reference', metadata: parsed.frontmatter,
+      repositories: parsed.frontmatter.appliesToRepoIds ?? parsed.frontmatter['applies-to-repo-ids'] });
+  }
+  return entries;
+}
+
+function collectLegacy(sourceRoot: string, layer: LegacyWikiLayer): LegacyEntry[] {
+  if (layer.scope === 'global') {
+    return [...readLegacySpecFolder(sourceRoot, 'specs'), ...readLegacyKnowhowFolder(sourceRoot, 'knowhow')];
+  }
   const workflow = join(sourceRoot, '.workflow');
   if (!lstatSync(workflow, { throwIfNoEntry: false })?.isDirectory()) {
     throw new InputError(`Legacy project has no regular .workflow directory: ${workflow}`);
@@ -128,23 +149,7 @@ function collectLegacy(sourceRoot: string, layer: LegacyWikiLayer): LegacyEntry[
     if (!specs.isDirectory()) throw new InputError('Invalid legacy collaboration Spec directory');
     return readLegacySpecFolder(sourceRoot, `${shared}/${layer.uid}`);
   }
-  entries.push(...readLegacySpecFolder(sourceRoot, '.workflow/specs'));
-  const directory = join(workflow, 'knowhow');
-  const info = lstatSync(directory, { throwIfNoEntry: false });
-  if (!info) return entries;
-  if (!info.isDirectory()) throw new InputError(`Invalid legacy knowledge directory: ${directory}`);
-  for (const file of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!file.isFile() || !file.name.endsWith('.md')) continue;
-    const source = readFileSync(join(directory, file.name), 'utf8').replace(/^\uFEFF/, '');
-    const origin = `.workflow/knowhow/${file.name}`;
-    const parsed = parseFrontmatter(source);
-    if (source.startsWith('---') && !parsed.hasFrontmatter) throw new InputError(`Invalid Knowhow frontmatter: ${origin}`);
-    const oldId = typeof parsed.frontmatter.id === 'string' ? parsed.frontmatter.id : basename(file.name, '.md');
-    const title = parsed.frontmatter.title || parsed.body.match(/^#\s+(.+)$/m)?.[1] || oldId;
-    entries.push({ origin, oldId, title, body: parsed.body, mode: 'reference', metadata: parsed.frontmatter,
-      repositories: parsed.frontmatter.appliesToRepoIds ?? parsed.frontmatter['applies-to-repo-ids'] });
-  }
-  return entries;
+  return [...readLegacySpecFolder(sourceRoot, '.workflow/specs'), ...readLegacyKnowhowFolder(sourceRoot, '.workflow/knowhow')];
 }
 
 function statusFor(entry: LegacyEntry): WikiEntryMetadata['status'] {
@@ -179,7 +184,7 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
       if (oldIds.has(oldKey)) throw new InputError(`Duplicate legacy Wiki ID: ${entry.oldId}`);
       oldIds.set(oldKey, id);
     }
-    if (kind === 'knowhow') knowhowPaths.set(entry.origin.slice('.workflow/'.length).toLowerCase(), id);
+    if (kind === 'knowhow') knowhowPaths.set(entry.origin.replace(/^\.workflow\//, '').toLowerCase(), id);
     return { entry, id, key, kind, status: statusFor(entry) };
   });
   const planned = writes.map(({ entry, id, key, kind, status }) => {
