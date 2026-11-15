@@ -40,7 +40,7 @@ const help = `Usage: agent-memory <command> [options]
   wiki references <query>                  Search active applicable references (--repository, --task, --path)
   wiki reference <id>                      Compatibility alias for wiki get <id> --resolved
   wiki constraints                         Resolve active constraints (--task, --path, --category, --repository, --keyword)
-  wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --scope project|global|team|personal, --uid, --apply)
+  wiki migrate <legacy-root>               Preview legacy Wiki migration (--project, --scope project|global|team|personal, --uid, --knowhow-only, --apply)
   wiki propose <change.json>               Stage create, update, promote, or retire (--evidence or --closeout and --candidate)
   wiki changes [change-id]                 Read change previews and application receipts (--entry)
   wiki apply <change-id>                   Apply an approved Wiki change
@@ -127,6 +127,7 @@ const options = {
   history: { type: 'boolean' },
   project: { type: 'string' },
   uid: { type: 'string' },
+  'knowhow-only': { type: 'boolean' },
   apply: { type: 'boolean' },
   transcript: { type: 'string' },
   'knowledge-receipt': { type: 'string' },
@@ -427,7 +428,9 @@ async function main() {
         const layerRoot = scope === 'global' ? source : scope === 'team' ? collab
           : uid ? join(collab, 'personal', uid) : root;
         const destination = new Wiki(values['wiki-root'] ?? layerRoot);
-        return print(migrateLegacyWiki(destination, source, requireText(values.project, 'legacy project ID'), values.apply, { scope, uid }));
+        return print(migrateLegacyWiki(destination, source, requireText(values.project, 'legacy project ID'), values.apply, {
+          scope, uid, knowhowOnly: values['knowhow-only'],
+        }));
       }
       case 'propose': {
         const change = JSON.parse(readFileSync(requireText(args[0], 'change file'), 'utf8').replace(/^\uFEFF/, ''));

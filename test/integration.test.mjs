@@ -225,6 +225,10 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   const args = ['wiki', 'migrate', legacy, '--project', 'legacy-project'];
   const preview = await cliJson(root, ...args);
   assert.equal(preview.length, 9);
+  assert.deepEqual(await cliJson(root, ...args, '--knowhow-only'),
+    preview.filter(row => row.origin.startsWith('.workflow/knowhow/')));
+  await assert.rejects(cliJson(root, ...args, '--scope', 'team', '--knowhow-only'),
+    /--knowhow-only requires project or global scope/);
   const wiki = new Wiki(root);
   assert.deepEqual(wiki.constraints(), []);
   assert.deepEqual(await cliJson(root, ...args, '--apply'), preview);
@@ -281,16 +285,31 @@ test('Evolve imports legacy knowledge into the source project or an explicit glo
   assert.equal(preview.applied, false);
   assert.equal(preview.new_entries, 2);
   assert.deepEqual(new Wiki(project).constraints(), []);
+  const knowhowPreview = await migrate('--knowhow-only');
+  assert.equal(knowhowPreview.applied, false);
+  assert.deepEqual(knowhowPreview.entries, preview.entries.filter(row => row.origin.startsWith('.workflow/knowhow/')));
+  const knowhowApplied = await migrate(project, '--knowhow-only', '--apply');
+  assert.equal(knowhowApplied.applied, true);
+  assert.equal(knowhowApplied.new_entries, 1);
+  assert.deepEqual(knowhowApplied.entries, knowhowPreview.entries);
+  assert.deepEqual(new Wiki(project).constraints(), []);
+  assert.equal((await migrate('--knowhow-only')).existing_entries, 1);
   const applied = await migrate(project, '--apply');
   assert.equal(applied.project, preview.project);
-  assert.deepEqual(applied.entries, preview.entries);
+  assert.equal(applied.new_entries, 1);
+  assert.equal(applied.existing_entries, 1);
+  assert.deepEqual(applied.entries.map(row => row.id), preview.entries.map(row => row.id));
   assert.equal((await migrate('--apply')).existing_entries, 2);
   const projectContext = await cliJson(project, 'context', 'calibration');
   assert.deepEqual(projectContext.constraints.map(entry => entry.title), ['Calibration gate']);
   assert.deepEqual(projectContext.references.map(entry => entry.title), ['Calibration method']);
+  const globalKnowhow = await migrate(globalSource, '--global', '--root', globalDestination, '--knowhow-only');
+  assert.equal(globalKnowhow.applied, false);
+  assert.deepEqual(globalKnowhow.entries.map(row => row.origin), ['knowhow/K-1.md']);
   const global = await migrate(globalSource, '--global', '--root', globalDestination, '--apply');
   assert.equal(global.new_entries, 2);
   assert.equal(global.scope, 'global');
+  assert.equal(global.entries.find(row => row.origin === 'knowhow/K-1.md').id, globalKnowhow.entries[0].id);
   assert.deepEqual((await cliJson(globalDestination, 'context', 'calibration')).references.map(entry => entry.title),
     ['Calibration method']);
 });

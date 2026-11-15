@@ -24,7 +24,7 @@ const options = {
   'definition-of-done': string, chain: strings, 'step-id': string, command: string, arg: strings, 'after-step': string,
   'decision-ref': string, 'goal-ref': string, stage: string, gate: strings, from: string, verdict: string, summary: string,
   to: string, tool: string, role: string, mode: string, model: string, cd: string, 'prompt-file': string, path: string,
-  project: string, global: bool, apply: bool,
+  project: string, global: bool, apply: bool, 'knowhow-only': bool,
   scope: string, host: string, skill: strings, yes: bool,
 } as const;
 
@@ -39,7 +39,7 @@ const usage = [
   'evolve skills [install <package>... | validate <command>]',
   'evolve install [--scope project|user | --global] [--host codex|claude] [--skill <package>] [--root <project>] [--yes]',
   'evolve workflows [show <id>]',
-  'evolve knowledge import [<source>] [--root <destination>] [--project <legacy-id>] [--global] [--apply]',
+  'evolve knowledge import [<source>] [--root <destination>] [--project <legacy-id>] [--global] [--knowhow-only] [--apply]',
   'evolve mcp --session <id> --run <id>',
   'evolve delegate <prompt> --to codex|agy --mode analysis|write',
 ].join('\n');
@@ -57,14 +57,16 @@ function select<T extends string>(value: string | undefined, choices: readonly T
 }
 
 function importLegacyKnowledge(root: string, sourceArg: string | undefined, values: {
-  root?: string; global?: boolean; project?: string; apply?: boolean;
+  root?: string; global?: boolean; project?: string; apply?: boolean; 'knowhow-only'?: boolean;
 }) {
   const scope = values.global ? 'global' : 'project';
   const source = realpathSync(sourceArg ?? (values.global ? join(homedir(), '.maestro') : root));
   if (!lstatSync(source).isDirectory()) throw new InputError('Legacy knowledge source must be a directory');
   const destination = values.root ? root : values.global ? join(homedir(), '.evolve') : source;
   const project = values.project ?? (values.global && !sourceArg ? 'maestro-global' : 'legacy-' + workflowHash(source).slice(7, 23));
-  const entries = migrateLegacyWiki(new Wiki(destination), source, project, values.apply, { scope });
+  const entries = migrateLegacyWiki(new Wiki(destination), source, project, values.apply, {
+    scope, knowhowOnly: values['knowhow-only'],
+  });
   return { source, destination, project, scope, applied: values.apply ?? false,
     new_entries: entries.filter(entry => !entry.existing).length,
     existing_entries: entries.filter(entry => entry.existing).length,
@@ -113,7 +115,9 @@ async function runWorkflowCli(argv: string[]) {
   if (group === 'capabilities') return print({ schema_version: 'evolve-workflow/1.0', session: 'evolve-session/1.0',
     features: ['revision-cas', 'request-receipts', 'git-skill-binding', 'atomic-artifact-seal', 'run-knowledge', 'swarm-coordination'] });
   if (group === 'knowledge') {
-    if (action !== 'import' || args.length > 1) throw new InputError('Usage: evolve knowledge import [<source>] [--apply]');
+    if (action !== 'import' || args.length > 1) {
+      throw new InputError('Usage: evolve knowledge import [<source>] [--knowhow-only] [--apply]');
+    }
     return print(importLegacyKnowledge(root, args[0], values));
   }
   if (group === 'workflows') {

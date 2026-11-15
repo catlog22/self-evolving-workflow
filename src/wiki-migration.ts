@@ -22,6 +22,7 @@ interface LegacyEntry {
 interface LegacyWikiLayer {
   scope: 'project' | 'global' | 'team' | 'personal';
   uid?: string;
+  knowhowOnly?: boolean;
 }
 
 export function validateWikiMemberUid(uid: string | undefined): string {
@@ -131,25 +132,24 @@ function readLegacyKnowhowFolder(sourceRoot: string, relative: string): LegacyEn
 }
 
 function collectLegacy(sourceRoot: string, layer: LegacyWikiLayer): LegacyEntry[] {
-  if (layer.scope === 'global') {
-    return [...readLegacySpecFolder(sourceRoot, 'specs'), ...readLegacyKnowhowFolder(sourceRoot, 'knowhow')];
-  }
   const workflow = join(sourceRoot, '.workflow');
-  if (!lstatSync(workflow, { throwIfNoEntry: false })?.isDirectory()) {
+  if (layer.scope !== 'global' && !lstatSync(workflow, { throwIfNoEntry: false })?.isDirectory()) {
     throw new InputError(`Legacy project has no regular .workflow directory: ${workflow}`);
   }
-  if (layer.scope !== 'project') {
-    const collab = lstatSync(join(workflow, 'collab'), { throwIfNoEntry: false });
-    if (!collab) return [];
-    if (!collab.isDirectory()) throw new InputError('Invalid legacy collaboration directory');
-    const shared = '.workflow/collab/specs';
-    if (layer.scope === 'team') return readLegacySpecFolder(sourceRoot, shared);
-    const specs = lstatSync(join(sourceRoot, shared), { throwIfNoEntry: false });
-    if (!specs) return [];
-    if (!specs.isDirectory()) throw new InputError('Invalid legacy collaboration Spec directory');
-    return readLegacySpecFolder(sourceRoot, `${shared}/${layer.uid}`);
+  if (layer.scope === 'project' || layer.scope === 'global') {
+    const prefix = layer.scope === 'project' ? '.workflow/' : '';
+    const specs = layer.knowhowOnly ? [] : readLegacySpecFolder(sourceRoot, `${prefix}specs`);
+    return [...specs, ...readLegacyKnowhowFolder(sourceRoot, `${prefix}knowhow`)];
   }
-  return [...readLegacySpecFolder(sourceRoot, '.workflow/specs'), ...readLegacyKnowhowFolder(sourceRoot, '.workflow/knowhow')];
+  const collab = lstatSync(join(workflow, 'collab'), { throwIfNoEntry: false });
+  if (!collab) return [];
+  if (!collab.isDirectory()) throw new InputError('Invalid legacy collaboration directory');
+  const shared = '.workflow/collab/specs';
+  if (layer.scope === 'team') return readLegacySpecFolder(sourceRoot, shared);
+  const specs = lstatSync(join(sourceRoot, shared), { throwIfNoEntry: false });
+  if (!specs) return [];
+  if (!specs.isDirectory()) throw new InputError('Invalid legacy collaboration Spec directory');
+  return readLegacySpecFolder(sourceRoot, `${shared}/${layer.uid}`);
 }
 
 function statusFor(entry: LegacyEntry): WikiEntryMetadata['status'] {
@@ -165,6 +165,9 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
   layer: LegacyWikiLayer = { scope: 'project' }) {
   project = requireText(project, 'legacy project ID');
   if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(project)) throw new InputError('Legacy project ID must be a stable slug');
+  if (layer.knowhowOnly && (layer.scope === 'team' || layer.scope === 'personal')) {
+    throw new InputError('--knowhow-only requires project or global scope');
+  }
   if (layer.scope === 'personal') validateWikiMemberUid(layer.uid);
   const sources = collectLegacy(sourceRoot, layer);
   const destination = join(wiki.root, 'wiki', 'entries');

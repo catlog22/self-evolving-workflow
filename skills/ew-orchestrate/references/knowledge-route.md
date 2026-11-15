@@ -18,6 +18,8 @@
 
 在原项目根目录运行 `evolve knowledge import` 查看迁移条目和待审查数，追加 `--apply` 后写入该项目的 Agent Memory Wiki。也可以用 `evolve knowledge import "<项目路径>" --apply` 从其他目录执行。用 `--root "<目标项目路径>"` 指定不同目标，用 `--project <来源 ID>` 沿用已使用的迁移身份。
 
+只迁移 Knowhow 时，在项目或全局导入命令中加 `--knowhow-only`，例如 `evolve knowledge import "<项目路径>" --knowhow-only`。核对预览后用相同参数加 `--apply`。底层命令 `agent-memory wiki migrate` 也支持该选项。
+
 `evolve knowledge import --global --apply` 将用户目录 `.maestro` 中的知识导入独立的 `~/.evolve` Wiki，用 `agent-memory --root "<用户目录>/.evolve" context "<查询>"` 查阅。重复导入保留已存在的相同条目，原始 Markdown 保留为出处。
 
 ### 统一 Wiki 条目
