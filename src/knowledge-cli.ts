@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
-import { configureMemory, installCodexMemoryHook, memoryModelSettings, parseMemoryHosts } from './memory-config.js';
+import { configureMemory, installCodexMemoryHook, memoryHosts, memoryModelSettings, parseMemoryHosts } from './memory-config.js';
 import { handleMemoryHook, readMemoryConversation, syncMemoryHost } from './memory-history.js';
 import { InputError, requireText } from './common.js';
 import { createSearchServer } from './http.js';
@@ -77,8 +77,9 @@ export function knowledgeHelp(invocation: 'agent-memory' | 'evolve') {
   memory get|delete <id>                   Read or delete a memory
   memory sources <id>                      Read a memory's original messages and transcript locations
   memory search <query>                    Search memory (--type, --scene, --session, --page, --limit)
+                                          Shows previews and copyable view and navigation commands
   memory conversation <session-or-memory-id>  View a conversation page (--host, --page, --limit)
-                                              A memory ID opens the page containing its source by default
+                                              A memory ID opens the source page. Copy navigation commands to browse
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
   context <query>                          Build Agent Memory context envelope (--scope all|code|wiki|memory, --include-memory)
   serve                                    Serve GET /search on 127.0.0.1 (--port 4310)
@@ -95,7 +96,7 @@ Options:
   --trace-file <path>   Compatibility alias for --reads
   --from-search <id>    Associate an exact read with an earlier search ID
   --resolved            Read Wiki references using the active scope context
-  --json                Compatibility flag. Agent Memory output is always JSON
+  --json                Return raw memory search results or conversation pages. Output is always JSON
   --limit <n>          Maximum results per source (default 10)
   --help               Show this message
 
@@ -240,6 +241,26 @@ function cliWikiContext(values: Record<string, unknown>): CliWikiContext {
     keyword: typeof values.keyword === 'string' ? values.keyword : file.keyword,
     includePathScoped: typeof values['include-path-scoped'] === 'boolean'
       ? values['include-path-scoped'] : file.includePathScoped,
+  };
+}
+
+type CommandFlags = Record<string, string | number | boolean | undefined>;
+
+function quoteCommandArgument(value: string) {
+  // PowerShell 会消耗未加引号的 --，npm 的启动脚本也收不到它。
+  if (value !== '--' && /^[A-Za-z0-9_./:-]+$/.test(value)) return value;
+  return process.platform === 'win32'
+    ? `'${value.replace(/['‘’]/g, quote => quote + quote)}'`
+    : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function memoryPageCommands(
+  pagination: { previousPage: number | null; nextPage: number | null },
+  command: (page: number) => string,
+) {
+  return {
+    ...(pagination.previousPage !== null && { previousPage: command(pagination.previousPage) }),
+    ...(pagination.nextPage !== null && { nextPage: command(pagination.nextPage) }),
   };
 }
 
@@ -637,6 +658,20 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
   if (command === 'memory' && ['put', 'get', 'sources', 'delete', 'search', 'conversation', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
     const memory = openMemory();
     const page = values.page === undefined ? undefined : Number(values.page);
+    const memoryCommand = (name: string, target: string, flags: CommandFlags = {}) => {
+      const options: CommandFlags = {
+        root, db: values.db === undefined || db === ':memory:' ? values.db : resolve(db),
+        namespace: values.namespace, ...flags,
+      };
+      const tokens = Object.entries(options).flatMap(([key, value]) => {
+        if (value === undefined || value === false) return [];
+        if (value === true) return [`--${key}`];
+        if (String(value).startsWith('-')) return [`--${key}=${value}`];
+        return [`--${key}`, String(value)];
+      });
+      if (target.startsWith('-')) tokens.push('--');
+      return [invocation, 'memory', name, ...tokens, target].map(quoteCommandArgument).join(' ');
+    };
     try {
       switch (action) {
         case 'put': return print(await memory.put({
@@ -649,19 +684,47 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
         case 'sources': return print(memory.sources(requireText(args[0], 'memory ID')));
         case 'delete': return print({ deleted: memory.delete(requireText(args[0], 'id')) });
         case 'search': {
-          const query = args.join(' ');
-          const result = await memory.search(query, { ...memoryOptions, page });
-          if (knowledgeReads) knowledgeReads.recordSearch({
-            source: 'memory', query, filters: { ...memoryOptions, page }, returnedIds: result.results.map(hit => hit.id),
+          const query = requireText(args.join(' '), 'query');
+          const filters = { ...memoryOptions, page: values.json ? page : page ?? 1 };
+          const result = await memory.search(query, filters);
+          const searchId = knowledgeReads?.recordSearch({
+            source: 'memory', query, filters, returnedIds: result.results.map(hit => hit.id),
           });
-          return print(withTrace(result));
+          const { pagination } = result;
+          if (values.json || !pagination) return print(withTrace(result));
+          const reads = traceFile ? resolve(traceFile) : undefined;
+          const navigation = memoryPageCommands(pagination, next => memoryCommand('search', query, {
+            type: filters.type, scene: filters.scene, 'memory-session': filters.session,
+            limit: pagination.limit, page: next, reads, trace: values.trace,
+          }));
+          const results = result.results.map(hit => {
+            const content = hit.content.replace(/^(.{240}).+/su, '$1…');
+            const host = hit.session && (memoryHosts.find(host => hit.sourceMessageIds.some(id => id.startsWith(`${host}:${hit.session}:`)))
+              ?? memoryHosts.find(host => memory.extractionOffset(host, hit.session) > 0));
+            return {
+              ...hit,
+              ...(content !== hit.content && { content, contentTruncated: true }),
+              view: {
+                memory: memoryCommand('get', hit.id, { reads, 'from-search': reads ? searchId : undefined }),
+                ...(hit.sourceMessageScope && { sources: memoryCommand('sources', hit.id) }),
+                ...(host && { conversation: memoryCommand('conversation', hit.id, { host }) }),
+              },
+            };
+          });
+          return print(withTrace({ ...result, results, navigation }));
         }
         case 'conversation': {
           const hosts = values.host === undefined ? [] : parseMemoryHosts(values.host);
           if (hosts.length > 1) throw new InputError('Choose one host for the conversation');
-          return print(await readMemoryConversation(requireText(args[0], 'session or memory ID'), {
+          const target = requireText(args[0], 'session or memory ID');
+          const result = await readMemoryConversation(target, {
             root, memory, host: hosts[0], page, limit: memoryOptions.limit,
+          });
+          if (values.json) return print(result);
+          const navigation = memoryPageCommands(result.pagination, next => memoryCommand('conversation', target, {
+            host: result.host, limit: result.pagination.limit, page: next,
           }));
+          return print({ ...result, navigation });
         }
         case 'extract': {
           const messages: unknown = JSON.parse(readFileSync(requireText(args[0], 'messages file'), 'utf8').replace(/^\uFEFF/, ''));

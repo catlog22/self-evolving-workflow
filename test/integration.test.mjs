@@ -891,6 +891,58 @@ test('memory search pages cover exact, keyword and hybrid hits without overlap',
   await assert.rejects(memory.search('Deployment', { page: 0 }), /page must be a positive integer/);
 });
 
+test('memory search previews keep exact values and return runnable commands in the original scope', async t => {
+  let memory;
+  const root = await temp(t, () => memory?.close());
+  const db = join(root, "team's memory.db");
+  const receipt = join(root, "team's reads.json");
+  const namespace = 'team’s $memory';
+  const scene = '-deploy';
+  const query = '-004312.50';
+  const content = `${'😀'.repeat(240)}\nThe original amount is ${query}.`;
+  const id = '-first';
+  const options = { session: 'original session', scene, type: 'work_fact' };
+  memory = new MemoryStore(db, { namespace });
+  await memory.put({ ...options, id, content });
+  await memory.put({ ...options, id: 'second', content: query });
+  await memory.put({ ...options, id: '-excluded', scene: 'other', content: query });
+
+  // 从另一目录执行原样输出的命令，验证引号、参数边界和读取回执。
+  const runView = async command => {
+    const windows = process.platform === 'win32';
+    const script = windows
+      ? `[Console]::OutputEncoding = [Text.Encoding]::UTF8\nfunction evolve { & $env:TEST_MEMORY_NODE $env:TEST_MEMORY_CLI @args }\n${command}`
+      : `evolve() { "$TEST_MEMORY_NODE" "$TEST_MEMORY_CLI" "$@"; }\n${command}`;
+    const { stdout } = await run(windows ? 'powershell.exe' : '/bin/sh', windows
+      ? ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')] : ['-c', script], {
+      env: { ...process.env, TEST_MEMORY_NODE: process.execPath, TEST_MEMORY_CLI: workflowCli },
+    });
+    return JSON.parse(stdout);
+  };
+
+  const filters = ['--db', db, '--namespace', namespace, '--type', options.type, `--scene=${scene}`,
+    '--session', options.session, '--limit', '1'];
+  const first = await evolveJson(root, 'memory', 'search', ...filters, '--reads', receipt, '--', query);
+  const [hit] = first.results;
+  assert.equal(hit.id, id);
+  assert.equal(hit.content, `${'😀'.repeat(240)}…`);
+  assert.equal(hit.contentTruncated, true);
+  assert.deepEqual(hit.exactValues, [query]);
+  assert.deepEqual(Object.keys(hit.view), ['memory']);
+  assert.equal(first.navigation.previousPage, undefined);
+  const full = await runView(hit.view.memory);
+  assert.equal(full.content, content);
+  assert.equal(full.knowledge_reads.reads[0].from_search_id, first.knowledge_reads.searches[0].search_id);
+  const second = await runView(first.navigation.nextPage);
+  assert.equal(second.results[0].id, 'second');
+  assert.equal(second.pagination.page, 2);
+  assert.equal(second.navigation.nextPage, undefined);
+  assert.equal((await runView(second.navigation.previousPage)).results[0].id, id);
+
+  const raw = await evolveJson(root, 'memory', 'search', ...filters, '--json', '--', query);
+  assert.deepEqual(raw, await memory.search(query, { ...options, limit: 1 }));
+});
+
 test('Agent Memory context envelope keeps discovery and exact-read identities separate', async t => {
   const root = await temp(t);
   const entries = join(root, 'wiki', 'entries');

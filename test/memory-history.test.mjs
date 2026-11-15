@@ -44,6 +44,11 @@ async function assertExactSource(invoke, { host, session, path, content, rawCont
   assert.deepEqual(await search(changedNumber), []);
   assert.ok(record.exactValues.includes(originalId(host)));
   assert.equal(record.sourceMessageScope, scope);
+  assert.ok(record.view.memory.startsWith('agent-memory memory get '));
+  assert.ok(record.view.sources.startsWith('agent-memory memory sources '));
+  assert.ok(record.view.conversation.startsWith('agent-memory memory conversation '));
+  assert.ok(record.view.conversation.endsWith(`--host ${host} ${record.id}`));
+  assert.equal(record.messages, undefined);
   const [source] = await invoke(['memory', 'sources', record.id]);
   assert.equal(source.id, record.sourceMessageIds[0]);
   assert.equal(source.role, 'user');
@@ -137,6 +142,8 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   assert.deepEqual(anchored.anchor, { messageId: first.sourceMessageIds[0], page: 2 });
   assert.deepEqual(anchored.messages.map(item => item.content), [codexFact]);
   assert.deepEqual(anchored.pagination, { page: 2, limit: 1, previousPage: 1, nextPage: 3 });
+  assert.ok(anchored.navigation.previousPage.endsWith(`--host codex --limit 1 --page 1 ${first.id}`));
+  assert.ok(anchored.navigation.nextPage.endsWith(`--host codex --limit 1 --page 3 ${first.id}`));
   const before = await invoke(['memory', 'conversation', 'live', '--page', '1', '--limit', '1']);
   assert.deepEqual(before.messages.map(item => item.content), ['UNFINISHED_COMMENT']);
   const after = await invoke(['memory', 'conversation', first.id, '--page', '3', '--limit', '1']);
@@ -284,6 +291,7 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   assert.deepEqual(claudeChat.anchor, { messageId: claudeMemory.sourceMessageIds[0], page: 3 });
   assert.deepEqual(claudeChat.messages.map(item => item.content), [claudeFact, 'confirmed']);
   assert.equal(claudeChat.pagination.nextPage, null);
+  assert.equal(claudeChat.navigation.nextPage, undefined);
 
   await writeFile(join(agyFolder, 'transcript_full.jsonl'), (await readFile(agyPath, 'utf8')) +
     agy(6, 'USER_INPUT', 'USER_EXPLICIT', 'Follow-up in the full transcript.'));
@@ -291,6 +299,7 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   assert.deepEqual(agyChat.anchor, { messageId: agyMemory.sourceMessageIds[0], page: 2 });
   assert.deepEqual(agyChat.messages.map(item => item.content), ['confirmed', agyFact]);
   assert.equal(agyChat.pagination.nextPage, 3);
+  assert.ok(agyChat.navigation.nextPage.endsWith(`--host agy --limit 2 --page 3 ${agyMemory.id}`));
   const agyEnd = await invoke(['memory', 'conversation', agyMemory.id, '--page', '3', '--limit', '2']);
   assert.deepEqual(agyEnd.messages.map(item => item.content), ['confirmed', 'Follow-up in the full transcript.']);
   assert.equal(agyEnd.pagination.nextPage, null);
