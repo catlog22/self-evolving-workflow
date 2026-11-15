@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
 import { configureMemory, installCodexMemoryHook, memoryModelSettings, parseMemoryHosts } from './memory-config.js';
-import { handleMemoryHook, syncMemoryHost } from './memory-history.js';
+import { handleMemoryHook, readMemoryConversation, syncMemoryHost } from './memory-history.js';
 import { InputError, requireText } from './common.js';
 import { createSearchServer } from './http.js';
 import { MemoryStore, type ConversationMessage } from './memory.js';
@@ -76,7 +76,9 @@ export function knowledgeHelp(invocation: 'agent-memory' | 'evolve') {
   memory codex-sync                        Extract saved Codex chats for this project (--session to select one)
   memory get|delete <id>                   Read or delete a memory
   memory sources <id>                      Read a memory's original messages and transcript locations
-  memory search <query>                    Search memory (--type, --scene, --session)
+  memory search <query>                    Search memory (--type, --scene, --session, --page, --limit)
+  memory conversation <session-or-memory-id>  View a conversation page (--host, --page, --limit)
+                                              A memory ID opens the page containing its source by default
   search <query>                           Search available indexes (--scope all|code|wiki|memory)
   context <query>                          Build Agent Memory context envelope (--scope all|code|wiki|memory, --include-memory)
   serve                                    Serve GET /search on 127.0.0.1 (--port 4310)
@@ -110,6 +112,7 @@ export const knowledgeOptions = {
   namespace: { type: 'string' },
   scope: { type: 'string' },
   limit: { type: 'string' },
+  page: { type: 'string' },
   depth: { type: 'string' },
   hop: { type: 'string' },
   type: { type: 'string' },
@@ -631,8 +634,9 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
     host: values.host, baseUrl: values['base-url'], model: values.model, yes: values.yes,
   }));
   if (command === 'memory' && action === 'codex-install') return print(installCodexMemoryHook(root));
-  if (command === 'memory' && ['put', 'get', 'sources', 'delete', 'search', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
+  if (command === 'memory' && ['put', 'get', 'sources', 'delete', 'search', 'conversation', 'extract', 'codex-hook', 'host-hook', 'codex-sync', 'sync'].includes(action)) {
     const memory = openMemory();
+    const page = values.page === undefined ? undefined : Number(values.page);
     try {
       switch (action) {
         case 'put': return print(await memory.put({
@@ -646,11 +650,18 @@ export async function runKnowledgeCli(argv: string[], invocation: 'agent-memory'
         case 'delete': return print({ deleted: memory.delete(requireText(args[0], 'id')) });
         case 'search': {
           const query = args.join(' ');
-          const result = await memory.search(query, memoryOptions);
+          const result = await memory.search(query, { ...memoryOptions, page });
           if (knowledgeReads) knowledgeReads.recordSearch({
-            source: 'memory', query, filters: memoryOptions, returnedIds: result.results.map(hit => hit.id),
+            source: 'memory', query, filters: { ...memoryOptions, page }, returnedIds: result.results.map(hit => hit.id),
           });
           return print(withTrace(result));
+        }
+        case 'conversation': {
+          const hosts = values.host === undefined ? [] : parseMemoryHosts(values.host);
+          if (hosts.length > 1) throw new InputError('Choose one host for the conversation');
+          return print(await readMemoryConversation(requireText(args[0], 'session or memory ID'), {
+            root, memory, host: hosts[0], page, limit: memoryOptions.limit,
+          }));
         }
         case 'extract': {
           const messages: unknown = JSON.parse(readFileSync(requireText(args[0], 'messages file'), 'utf8').replace(/^\uFEFF/, ''));

@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { AgentMemoryPrompt } from './agent-memory-prompts.js';
-import { InputError, openDb, requireText, searchLimit, transaction } from './common.js';
+import { InputError, openDb, pageOffset, pagination, requireText, searchLimit, transaction } from './common.js';
 import { exactMemoryValues, extractedMemoryId, groundMemories, type GroundedMemory, type MemorySource } from './memory-evidence.js';
 import { formatExtractionPrompt, getExtractMemoriesAgentPrompt } from './upstream/l1-extraction.js';
 import type { LlmClient } from './upstream/llm.js';
@@ -49,6 +49,7 @@ export interface MemoryRecord {
 
 export interface MemorySearchOptions {
   limit?: number;
+  page?: number;
   type?: string;
   scene?: string;
   session?: string;
@@ -266,6 +267,13 @@ export class MemoryStore {
   async search(query: string, options: MemorySearchOptions = {}) {
     const text = requireText(query, 'query');
     const limit = searchLimit(options.limit);
+    const page = options.page ?? 1;
+    const offset = pageOffset(page, limit);
+    const take = options.page === undefined ? limit : limit + 1;
+    const result = (strategy: 'exact' | 'fts' | 'embedding' | 'hybrid', hits: Hit[]) => ({
+      strategy, results: hits.slice(0, limit),
+      ...(options.page !== undefined && { pagination: pagination(page, limit, hits.length > limit) }),
+    });
     const clauses = ['m.namespace = ?'];
     const args: SQLInputValue[] = [this.namespace];
     for (const field of ['type', 'scene', 'session'] as const) {
@@ -276,32 +284,38 @@ export class MemoryStore {
     }
     const where = clauses.join(' AND ');
     if (exactMemoryValues(text).includes(text)) {
-      const rows = this.db.prepare(`SELECT ${recordFields} FROM memory_literals l
-        JOIN memory_records m ON m.key = l.memory_key WHERE l.value = ? AND ${where} ORDER BY m.id LIMIT ?`)
-        .all(text, ...args, limit) as Row[];
+      const indexed = `FROM memory_literals l JOIN memory_records m ON m.key = l.memory_key WHERE l.value = ? AND ${where}`;
+      const rows = this.db.prepare(`SELECT ${recordFields} ${indexed} ORDER BY m.id LIMIT ? OFFSET ?`)
+        .all(text, ...args, take, offset) as Row[];
       const results = rows.map(row => ({ ...record(row), score: 1 }));
-      const indexed = new Set(results.map(result => result.id));
       // 旧条目仍可按其实际存储内容精确检索。
-      if (results.length < limit) {
+      if (results.length < take) {
+        const indexedCount = offset && !rows.length
+          ? Number(this.db.prepare(`SELECT count(*) AS count ${indexed}`).get(text, ...args)?.count) : offset;
+        let skip = Math.max(0, offset - indexedCount);
         const legacy = this.db.prepare(`SELECT ${recordFields} FROM memory_records m
           WHERE ${where} AND instr(m.content, ?) > 0 AND NOT EXISTS
-          (SELECT 1 FROM memory_sources WHERE memory_key = m.key) ORDER BY m.id`).iterate(...args, text) as Iterable<Row>;
+          (SELECT 1 FROM memory_sources WHERE memory_key = m.key) AND NOT EXISTS
+          (SELECT 1 FROM memory_literals WHERE memory_key = m.key AND value = ?) ORDER BY m.id`).iterate(...args, text, text) as Iterable<Row>;
         for (const row of legacy) {
-          if (!indexed.has(row.id) && exactMemoryValues(row.content).includes(text)) results.push({ ...record(row), score: 1 });
-          if (results.length === limit) break;
+          if (!exactMemoryValues(row.content).includes(text)) continue;
+          if (skip) { skip--; continue; }
+          results.push({ ...record(row), score: 1 });
+          if (results.length === take) break;
         }
       }
-      return { strategy: 'exact' as const, results };
+      return result('exact', results);
     }
     const embedding = options.embedding ?? await this.embed?.(text);
     const vector = embedding === undefined ? undefined : normalized(embedding);
     const expression = buildFtsQuery(text);
-    const candidates = vector ? limit * 3 : limit;
+    // 分页时用完整候选集融合排名，页码改变时保持相同顺序。
+    const candidates = vector ? options.page === undefined ? limit * 3 : -1 : take;
     const keyword: Hit[] = expression ? (this.db.prepare(`
       SELECT ${recordFields}, bm25(memory_fts) AS rank FROM memory_fts
       JOIN memory_records m ON m.key = memory_fts.rowid
-      WHERE memory_fts MATCH ? AND ${where} ORDER BY rank, m.id LIMIT ?
-    `).all(expression, ...args, candidates) as (Row & { rank: number })[]).map(({ rank, ...row }) => ({
+      WHERE memory_fts MATCH ? AND ${where} ORDER BY rank, m.id LIMIT ? OFFSET ?
+    `).all(expression, ...args, candidates, vector ? 0 : offset) as (Row & { rank: number })[]).map(({ rank, ...row }) => ({
       ...record(row), score: bm25RankToScore(rank),
     })) : [];
     const semantic: Hit[] = [];
@@ -315,15 +329,14 @@ export class MemoryStore {
         if (score > 0) semantic.push({ ...record(row), score });
       }
       semantic.sort((a, b) => b.score - a.score);
-      semantic.length = Math.min(candidates, semantic.length);
+      if (candidates >= 0) semantic.length = Math.min(candidates, semantic.length);
     }
     if (keyword.length && semantic.length) {
-      const results = rrfMerge([keyword, semantic], item => item.id)
-        .slice(0, limit).map(({ rrfScore, ...item }) => ({ ...item, score: rrfScore }));
-      return { strategy: 'hybrid' as const, results };
+      return result('hybrid', rrfMerge([keyword, semantic], item => item.id)
+        .slice(offset, offset + take).map(({ rrfScore, ...item }) => ({ ...item, score: rrfScore })));
     }
-    if (semantic.length) return { strategy: 'embedding' as const, results: semantic.slice(0, limit) };
-    return { strategy: 'fts' as const, results: keyword.slice(0, limit) };
+    if (semantic.length) return result('embedding', semantic.slice(offset, offset + take));
+    return result('fts', vector ? keyword.slice(offset, offset + take) : keyword);
   }
 
   async extract(messages: ConversationMessage[], options: ExtractionOptions): Promise<MemoryRecord[]> {

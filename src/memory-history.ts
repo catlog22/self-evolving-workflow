@@ -2,8 +2,8 @@ import { createReadStream, existsSync, readdirSync, realpathSync, statSync } fro
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InputError, openDb } from './common.js';
-import type { MemoryHost } from './memory-config.js';
+import { InputError, NotFoundError, openDb, pageOffset, pagination, searchLimit } from './common.js';
+import { memoryHosts, type MemoryHost } from './memory-config.js';
 import type { ConversationMessage, MemoryStore } from './memory.js';
 import type { LlmClient } from './upstream/llm.js';
 
@@ -17,7 +17,9 @@ function projectContains(root: string, cwd: unknown): boolean {
   return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 
-async function* transcriptRows(path: string, from: number, size: number) {
+interface TranscriptRow { row: Record<string, unknown> | undefined; start: number; end: number }
+
+async function* transcriptRows(path: string, from: number, size: number): AsyncGenerator<TranscriptRow> {
   if (from >= size) return;
   let offset = from;
   let parts: Buffer[] = [];
@@ -80,33 +82,36 @@ async function codexSession({ path, session }: Transcript, root: string, size: n
   }
 }
 
+function codexMessage({ row, start }: TranscriptRow, session: string, path: string): ConversationMessage | undefined {
+  const payload = object(row?.payload);
+  if (row?.type !== 'response_item' || payload?.type !== 'message' || !readableText(row.timestamp)) return;
+  const role = payload.role;
+  if (role !== 'user' && role !== 'assistant') return;
+  const content = messageText(payload.content, role === 'user' ? 'input_text' : 'output_text');
+  if (content) return { id: `codex:${session}:${start}`, role, timestamp: row.timestamp, content, location: { path, byteOffset: start } };
+}
+
+function codexCompletedMessage({ row, start }: TranscriptRow, session: string, path: string): ConversationMessage | undefined {
+  const payload = object(row?.payload);
+  if (row?.type === 'event_msg' && payload?.type === 'task_complete' && !payload.error &&
+      readableText(payload.last_agent_message) && readableText(row.timestamp)) {
+    return { id: `codex:${session}:${start}`, role: 'assistant', timestamp: row.timestamp,
+      content: payload.last_agent_message, location: { path, byteOffset: start } };
+  }
+}
+
 async function* codexTurns({ path, lastAssistant }: Transcript, session: string, offset: number, size: number) {
   let messages: ConversationMessage[] = [];
-  for await (const { row, start, end } of transcriptRows(path, offset, size)) {
-    const payload = object(row?.payload);
-    if (!payload || !row) continue;
-    let final = '';
-    if (row.type === 'event_msg') {
-      if (payload.type === 'task_started' || payload.type === 'turn_aborted') messages = [];
-      if (payload.type === 'task_complete' && !payload.error && readableText(payload.last_agent_message)) {
-        final = payload.last_agent_message;
-      }
-    } else if (row.type === 'response_item' && payload.type === 'message') {
-      if (payload.role === 'user') {
-        const content = messageText(payload.content, 'input_text');
-        if (content && readableText(row.timestamp)) {
-          messages.push({ id: `codex:${session}:${start}`, role: 'user', timestamp: row.timestamp, content,
-            location: { path, byteOffset: start } });
-        }
-      } else if (payload.role === 'assistant' && payload.phase !== 'commentary') {
-        const content = messageText(payload.content, 'output_text');
-        if (payload.phase === 'final_answer' || content === lastAssistant) final = content;
-      }
-    }
-    if (!final || !messages.length || !readableText(row.timestamp)) continue;
-    messages.push({ id: `codex:${session}:${start}`, role: 'assistant', timestamp: row.timestamp, content: final,
-      location: { path, byteOffset: start } });
-    yield { end, messages };
+  for await (const entry of transcriptRows(path, offset, size)) {
+    const payload = object(entry.row?.payload);
+    if (entry.row?.type === 'event_msg' && (payload?.type === 'task_started' || payload?.type === 'turn_aborted')) messages = [];
+    const item = codexMessage(entry, session, path);
+    if (item?.role === 'user') { messages.push(item); continue; }
+    const final = item && payload?.phase !== 'commentary' && (payload?.phase === 'final_answer' || item.content === lastAssistant)
+      ? item : codexCompletedMessage(entry, session, path);
+    if (!final || !messages.length) continue;
+    messages.push(final);
+    yield { end: entry.end, messages };
     messages = [];
   }
 }
@@ -126,58 +131,76 @@ async function claudeSession({ path, session }: Transcript, root: string, size: 
   }
 }
 
+function claudeMessage({ row, start }: TranscriptRow, session: string, path: string) {
+  const chat = row?.sessionId === session ? claudeChat(row) : undefined;
+  if (!chat || !readableText(row?.timestamp)) return;
+  const parts = chat.message.content;
+  const content = typeof parts === 'string' ? parts : messageText(parts, 'text');
+  const hasToolData = Array.isArray(parts) && parts.some(part => ['tool_result', 'tool_use', 'server_tool_use'].includes(part?.type));
+  if (chat.role === 'user' && (hasToolData || !content.trim())) return;
+  const id = `claude:${session}:${readableText(row.uuid) ? row.uuid : start}`;
+  return { item: { id, role: chat.role, timestamp: row.timestamp, content, location: { path, byteOffset: start } },
+    key: chat.message.id, stopReason: chat.message.stop_reason, hasToolData };
+}
+
 async function* claudeTurns({ path, lastAssistant }: Transcript, session: string, offset: number, size: number) {
   let users: ConversationMessage[] = [];
   let reply: { key: unknown; messages: ConversationMessage[]; end: number; complete: boolean } | undefined;
   const ready = () => reply?.complete || (reply && reply.messages.map(message => message.content).join('\n') === lastAssistant);
-  for await (const { row, start, end } of transcriptRows(path, offset, size)) {
-    const chat = row?.sessionId === session ? claudeChat(row) : undefined;
-    if (!chat || !readableText(row?.timestamp)) continue;
-    const parts = chat.message.content;
-    const content = typeof parts === 'string' ? parts : messageText(parts, 'text');
-    const hasToolData = Array.isArray(parts) && parts.some(part => ['tool_result', 'tool_use', 'server_tool_use'].includes(part?.type));
-    if (chat.role === 'user' && (hasToolData || !content.trim())) continue;
-    if (chat.role === 'user' || (reply && reply.key !== chat.message.id)) {
+  for await (const entry of transcriptRows(path, offset, size)) {
+    const chat = claudeMessage(entry, session, path);
+    if (!chat) continue;
+    const { item, key, stopReason, hasToolData } = chat;
+    if (item.role === 'user' || (reply && reply.key !== key)) {
       if (reply && users.length && ready()) {
         yield { end: reply.end, messages: [...users, ...reply.messages] };
         users = [];
       }
       reply = undefined;
     }
-    const id = `claude:${session}:${readableText(row.uuid) ? row.uuid : start}`;
-    const item = { id, role: chat.role, timestamp: row.timestamp, content, location: { path, byteOffset: start } };
-    if (chat.role === 'user') {
+    if (item.role === 'user') {
       users.push(item);
       continue;
     }
-    if (hasToolData || chat.message.stop_reason === 'tool_use') {
+    if (hasToolData || stopReason === 'tool_use') {
       reply = undefined;
       continue;
     }
-    if (!content.trim() || !users.length) continue;
-    reply ??= { key: chat.message.id, messages: [], end, complete: false };
+    if (!item.content.trim() || !users.length) continue;
+    reply ??= { key, messages: [], end: entry.end, complete: false };
     reply.messages.push(item);
-    reply.end = end;
-    reply.complete ||= ['end_turn', 'stop_sequence'].includes(String(chat.message.stop_reason));
+    reply.end = entry.end;
+    reply.complete ||= ['end_turn', 'stop_sequence'].includes(String(stopReason));
   }
   if (reply && users.length && ready()) yield { end: reply.end, messages: [...users, ...reply.messages] };
 }
 
+function agyMessage({ row, start }: TranscriptRow, session: string, path: string) {
+  if (!row || typeof row.step_index !== 'number' || !Number.isSafeInteger(row.step_index) ||
+      row.status !== 'DONE' || !readableText(row.created_at) || !readableText(row.content)) return;
+  const id = `agy:${session}:${row.step_index}`;
+  const location = { path, byteOffset: start };
+  if (row.type === 'USER_INPUT' && row.source === 'USER_EXPLICIT') {
+    // Antigravity 的完整日志会把宿主附加说明拼在用户正文之外。
+    const wrapped = /^<USER_REQUEST>\r?\n([\s\S]*?)\r?\n<\/USER_REQUEST>(?=\s*(?:<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>|$))/.exec(row.content);
+    const content = wrapped?.[1] ?? row.content;
+    if (readableText(content)) return { step: row.step_index, hasToolData: false,
+      item: { id, role: 'user' as const, timestamp: row.created_at, content, location } };
+  } else if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL') {
+    return { step: row.step_index, hasToolData: Array.isArray(row.tool_calls) && row.tool_calls.length > 0,
+      item: { id, role: 'assistant' as const, timestamp: row.created_at, content: row.content, location } };
+  }
+}
+
 async function* agyTurns({ path }: Transcript, session: string, offset: number, size: number) {
   let messages: ConversationMessage[] = [];
-  for await (const { row, start } of transcriptRows(path, 0, size)) {
-    if (!row || typeof row.step_index !== 'number' || !Number.isSafeInteger(row.step_index) ||
-        row.step_index < offset || row.status !== 'DONE' || !readableText(row.created_at) || !readableText(row.content)) continue;
-    const id = `agy:${session}:${row.step_index}`;
-    if (row.type === 'USER_INPUT' && row.source === 'USER_EXPLICIT') {
-      // Antigravity 的完整日志会把宿主附加说明拼在用户正文之外。
-      const wrapped = /^<USER_REQUEST>\r?\n([\s\S]*?)\r?\n<\/USER_REQUEST>(?=\s*(?:<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>|$))/.exec(row.content);
-      const content = wrapped?.[1] ?? row.content;
-      if (readableText(content)) messages.push({ id, role: 'user', timestamp: row.created_at, content, location: { path, byteOffset: start } });
-    } else if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL' && messages.length &&
-        !(Array.isArray(row.tool_calls) && row.tool_calls.length)) {
-      messages.push({ id, role: 'assistant', timestamp: row.created_at, content: row.content, location: { path, byteOffset: start } });
-      yield { end: row.step_index + 1, messages };
+  for await (const entry of transcriptRows(path, 0, size)) {
+    const chat = agyMessage(entry, session, path);
+    if (!chat || chat.step < offset) continue;
+    if (chat.item.role === 'user') messages.push(chat.item);
+    else if (messages.length && !chat.hasToolData) {
+      messages.push(chat.item);
+      yield { end: chat.step + 1, messages };
       messages = [];
     }
   }
@@ -239,7 +262,7 @@ function workspacePath(uri: string): string | undefined {
   }
 }
 
-function* agyTranscripts(root: string, session: string | undefined): Generator<Transcript> {
+function* agyTranscripts(root: string, session: string | undefined, full: boolean): Generator<Transcript> {
   const home = join(homedir(), '.gemini', 'antigravity-cli');
   const index = join(home, 'conversation_summaries.db');
   if (!existsSync(index)) return;
@@ -252,16 +275,18 @@ function* agyTranscripts(root: string, session: string | undefined): Generator<T
       if (typeof id !== 'string' || !/^[\w-]+$/.test(id) || !readableText(raw)) continue;
       const uris: unknown = JSON.parse(raw);
       if (!Array.isArray(uris) || typeof uris[0] !== 'string' || !projectContains(root, workspacePath(uris[0]))) continue;
-      const path = join(home, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
-      if (existsSync(path)) yield { path, session: id };
+      const directory = join(home, 'brain', id, '.system_generated', 'logs');
+      const names = full ? ['transcript_full.jsonl', 'transcript.jsonl'] : ['transcript.jsonl'];
+      const path = names.map(name => join(directory, name)).find(existsSync);
+      if (path) yield { path, session: id };
     }
   } finally {
     db.close();
   }
 }
 
-function* savedTranscripts(host: MemoryHost, root: string, session?: string): Generator<Transcript> {
-  if (host === 'agy') return yield* agyTranscripts(root, session);
+function* savedTranscripts(host: MemoryHost, root: string, session?: string, full = false): Generator<Transcript> {
+  if (host === 'agy') return yield* agyTranscripts(root, session, full);
   if (host === 'claude') {
     const projects = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
     if (!existsSync(projects)) return;
@@ -286,6 +311,75 @@ function* savedTranscripts(host: MemoryHost, root: string, session?: string): Ge
       }
     }
   }
+}
+
+interface ConversationOptions {
+  root: string;
+  memory: MemoryStore;
+  host?: MemoryHost;
+  page?: number;
+  limit?: number;
+}
+
+async function locateConversation(root: string, session: string, hosts: readonly MemoryHost[]) {
+  const matches: { host: MemoryHost; path: string; size: number }[] = [];
+  for (const host of hosts) {
+    for (const transcript of savedTranscripts(host, root, session, true)) {
+      const info = statSync(transcript.path, { throwIfNoEntry: false });
+      if (!info?.isFile()) continue;
+      const id = host === 'codex' ? await codexSession(transcript, root, info.size)
+        : host === 'claude' ? await claudeSession(transcript, root, info.size) : transcript.session;
+      if (id !== session) continue;
+      matches.push({ host, path: transcript.path, size: info.size });
+      break;
+    }
+  }
+  if (!matches.length) throw new NotFoundError(`Conversation is unavailable in this project: ${session}`);
+  if (matches.length > 1) throw new InputError('Conversation exists in more than one host; specify --host');
+  return matches[0];
+}
+
+export async function readMemoryConversation(target: string, options: ConversationOptions) {
+  const limit = searchLimit(options.limit);
+  if (options.page !== undefined) pageOffset(options.page, limit);
+  const memory = options.memory.get(target);
+  const session = memory?.session ?? target;
+  if (!session) throw new NotFoundError('Memory has no conversation session');
+  const sources = memory ? options.memory.sources(memory.id) : [];
+  const anchor = sources.find(source => source.role === 'user')?.id ?? sources[0]?.id ?? memory?.sourceMessageIds[0];
+  const hint = memoryHosts.find(host => anchor?.startsWith(`${host}:`));
+  const selected = options.host ?? hint;
+  const { host, path, size } = await locateConversation(realpathSync(options.root), session, selected ? [selected] : memoryHosts);
+
+  let page = options.page ?? (anchor ? undefined : 1);
+  let anchorPage: number | undefined;
+  let previous: ConversationMessage | undefined;
+  let messages: ConversationMessage[] = [];
+  const firstPage: ConversationMessage[] = [];
+  let count = 0;
+  let hasNext = false;
+  for await (const entry of transcriptRows(path, 0, size)) {
+    const completed = host === 'codex' ? codexCompletedMessage(entry, session, path) : undefined;
+    const item = host === 'codex' ? completed ?? codexMessage(entry, session, path)
+      : host === 'claude' ? claudeMessage(entry, session, path)?.item : agyMessage(entry, session, path)?.item;
+    if (!item?.content.trim()) continue;
+
+    // Codex 的回合完成事件有时复述上一条回复。该事件的来源 ID 仍能定位到同一页。
+    const repeated = completed && previous?.role === 'assistant' && previous.content === completed.content;
+    const position = repeated ? count - 1 : count;
+    const currentPage = Math.floor(position / limit) + 1;
+    if (!repeated && page === undefined && position % limit === 0) messages = [];
+    if (item.id === anchor) { anchorPage = currentPage; page ??= currentPage; }
+    if (repeated) continue;
+    if (page !== undefined && currentPage > page) { hasNext = true; break; }
+    previous = item;
+    count++;
+    if (count <= limit) firstPage.push(item);
+    if (page === undefined || currentPage === page) messages.push(item);
+  }
+  if (page === undefined) { page = 1; messages = firstPage; hasNext = count > limit; }
+  return { host, session, ...(memory && { memoryId: memory.id }), ...(anchor && { anchor: { messageId: anchor, page: anchorPage ?? null } }),
+    pagination: pagination(page, limit, hasNext), messages };
 }
 
 export async function syncMemoryHost(host: MemoryHost, options: ImportOptions, session?: string) {

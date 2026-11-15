@@ -861,6 +861,36 @@ test('Memory persists scoped records and fuses keyword and vector rankings', asy
   assert.equal(b.get('x').content, '水力计算');
 });
 
+test('memory search pages cover exact, keyword and hybrid hits without overlap', async t => {
+  let memory;
+  const root = await temp(t, () => memory?.close());
+  const db = join(root, 'memory.db');
+  memory = new MemoryStore(db);
+  for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) {
+    await memory.put({ id, content: 'Deployment port 4312', session: id, embedding: [1, 0] });
+  }
+  // 模拟没有新索引的旧条目。
+  const sqlite = new DatabaseSync(db);
+  sqlite.exec("DELETE FROM memory_literals WHERE memory_key IN (SELECT key FROM memory_records WHERE id IN ('b', 'd', 'f'))");
+  sqlite.close();
+  const invoke = (query, page) => cliJson(root, 'memory', 'search', query, '--page', String(page), '--limit', '2', '--db', db);
+  const first = await invoke('4312', 1);
+  const middle = await invoke('4312', 2);
+  const last = await invoke('4312', 3);
+  assert.deepEqual(first.pagination, { page: 1, limit: 2, previousPage: null, nextPage: 2 });
+  assert.deepEqual(last.pagination, { page: 3, limit: 2, previousPage: 2, nextPage: null });
+  assert.deepEqual([first, middle, last].flatMap(result => result.results.map(hit => hit.id)), ['a', 'c', 'e', 'b', 'd', 'f']);
+  const traced = await cliJson(root, 'memory', 'search', '4312', '--page', '2', '--limit', '2', '--trace', '--db', db);
+  assert.equal(traced.knowledge_reads.searches[0].filters.page, 2);
+  const keywords = await Promise.all([1, 2, 3].map(page => invoke('Deployment', page)));
+  assert.deepEqual(keywords.flatMap(result => result.results.map(hit => hit.id)), ['a', 'b', 'c', 'd', 'e', 'f']);
+  const hybrid = await Promise.all([1, 2, 3].map(page => memory.search('Deployment', { embedding: [1, 0], page, limit: 2 })));
+  assert.ok(hybrid.every(result => result.strategy === 'hybrid'));
+  assert.equal(new Set(hybrid.flatMap(result => result.results.map(hit => hit.id))).size, 6);
+  assert.deepEqual((await invoke('4312', 4)).results, []);
+  await assert.rejects(memory.search('Deployment', { page: 0 }), /page must be a positive integer/);
+});
+
 test('Agent Memory context envelope keeps discovery and exact-read identities separate', async t => {
   const root = await temp(t);
   const entries = join(root, 'wiki', 'entries');

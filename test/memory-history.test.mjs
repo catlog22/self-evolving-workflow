@@ -132,6 +132,17 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   const first = await assertExactSource(invoke, { host: 'codex', session: 'live', path: transcript, content: codexFact, scope: 'turn' });
   assert.equal(first.content, codexFact);
   assert.match(first.sourceMessageIds[0], /^codex:live:\d+$/);
+  const anchored = await invoke(['memory', 'conversation', first.id, '--limit', '1']);
+  assert.equal(anchored.session, 'live');
+  assert.deepEqual(anchored.anchor, { messageId: first.sourceMessageIds[0], page: 2 });
+  assert.deepEqual(anchored.messages.map(item => item.content), [codexFact]);
+  assert.deepEqual(anchored.pagination, { page: 2, limit: 1, previousPage: 1, nextPage: 3 });
+  const before = await invoke(['memory', 'conversation', 'live', '--page', '1', '--limit', '1']);
+  assert.deepEqual(before.messages.map(item => item.content), ['UNFINISHED_COMMENT']);
+  const after = await invoke(['memory', 'conversation', first.id, '--page', '3', '--limit', '1']);
+  assert.deepEqual(after.messages.map(item => item.content), ['保存了。']);
+  assert.equal(after.pagination.nextPage, null);
+  assert.equal(requests.length, 1);
 
   await appendFile(transcript, turn('remember retryable', 'Saved.'));
   fail = true;
@@ -157,6 +168,13 @@ test('Codex Stop extracts project chat incrementally and historical sync shares 
   assert.deepEqual(await invoke(['memory', 'codex-sync']), { sessions: 2, processed: 0, remembered: 0, failures: [] });
   assert.equal((await search('archived', 'history')).length, 1);
   assert.deepEqual(await search('unrelated', 'unrelated'), []);
+  const archive = await invoke(['memory', 'conversation', 'history', '--page', '1', '--limit', '2']);
+  assert.deepEqual(archive.messages.map(item => item.content), ['remember archived', 'Legacy reply']);
+  assert.equal(archive.pagination.nextPage, null);
+  assert.match(await invoke(['memory', 'conversation', 'unrelated'], undefined, 1), /unavailable in this project/);
+  await appendFile(transcript, event('task_started') + message('user', 'Interrupted question.') + event('turn_aborted'));
+  const interrupted = await invoke(['memory', 'conversation', 'live', '--page', '4', '--limit', '2']);
+  assert.deepEqual(interrupted.messages.map(item => item.content), ['No preference.', 'Interrupted question.']);
   assert.deepEqual(await invoke(['memory', 'delete', first.id]), { deleted: true });
   assert.deepEqual(await search(originalId('codex'), 'live'), []);
   assert.deepEqual(await invoke(['memory', 'sources', first.id]), []);
@@ -262,6 +280,21 @@ test('Memory configuration enables all project hosts and shared sync imports Cla
   const claudeMemory = await assertExactSource(invoke, { host: 'claude', session: 'claude-session', path: claudePath, content: claudeFact, scope: 'messages' });
   assert.equal(claudeMemory.content, 'claudenew preference');
   assert.deepEqual(claudeMemory.sourceMessageIds, ['claude:claude-session:u2']);
+  const claudeChat = await invoke(['memory', 'conversation', claudeMemory.id, '--limit', '2']);
+  assert.deepEqual(claudeChat.anchor, { messageId: claudeMemory.sourceMessageIds[0], page: 3 });
+  assert.deepEqual(claudeChat.messages.map(item => item.content), [claudeFact, 'confirmed']);
+  assert.equal(claudeChat.pagination.nextPage, null);
+
+  await writeFile(join(agyFolder, 'transcript_full.jsonl'), (await readFile(agyPath, 'utf8')) +
+    agy(6, 'USER_INPUT', 'USER_EXPLICIT', 'Follow-up in the full transcript.'));
+  const agyChat = await invoke(['memory', 'conversation', agyMemory.id, '--limit', '2']);
+  assert.deepEqual(agyChat.anchor, { messageId: agyMemory.sourceMessageIds[0], page: 2 });
+  assert.deepEqual(agyChat.messages.map(item => item.content), ['confirmed', agyFact]);
+  assert.equal(agyChat.pagination.nextPage, 3);
+  const agyEnd = await invoke(['memory', 'conversation', agyMemory.id, '--page', '3', '--limit', '2']);
+  assert.deepEqual(agyEnd.messages.map(item => item.content), ['confirmed', 'Follow-up in the full transcript.']);
+  assert.equal(agyEnd.pagination.nextPage, null);
+  assert.equal(requests.length, 4);
 
   const off = await invoke(['memory', 'config', '--yes', '--host', 'off']);
   assert.ok(off.hosts.every(item => !item.configured));

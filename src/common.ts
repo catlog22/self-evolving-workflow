@@ -17,6 +17,18 @@ export function searchLimit(limit = 10): number {
   return limit;
 }
 
+export function pageOffset(page: number, limit: number): number {
+  const offset = (page - 1) * limit;
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(offset + limit)) {
+    throw new InputError('page must be a positive integer with a supported offset');
+  }
+  return offset;
+}
+
+export function pagination(page: number, limit: number, hasNext: boolean) {
+  return { page, limit, previousPage: page > 1 ? page - 1 : null, nextPage: hasNext ? page + 1 : null };
+}
+
 export function openDb(path: string, readOnly = false): DatabaseSync {
   const db = new DatabaseSync(path, { readOnly });
   try {
