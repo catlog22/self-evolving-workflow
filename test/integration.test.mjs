@@ -266,6 +266,32 @@ test('legacy Wiki migration is previewable, idempotent, and preserves constraint
   assert.ok((await cliJson(root, ...args, '--apply')).every(row => row.existing));
 });
 
+test('legacy Knowhow migration resolves Maestro lifecycle IDs and multiple predecessors', async t => {
+  const legacy = await temp(t);
+  const root = await temp(t);
+  const knowhow = join(legacy, '.workflow', 'knowhow');
+  await mkdir(knowhow, { recursive: true });
+  for (const [id, lifecycle] of [
+    ['TIP-1', 'status: deprecated\nsupersededBy: knowhow-tip-3'],
+    ['TIP-2', 'status: deprecated\nsupersededBy: knowhow-tip-3'],
+    ['TIP-3', 'status: active\nsupersedes: [knowhow-tip-1, TIP-1, knowhow-tip-2]'],
+    ['TIP-4', 'status: active\nsupersedes: [knowhow-tip-1, knowhow-missing]'],
+  ]) {
+    await writeFile(join(knowhow, id + '.md'), `---\nid: ${id}\ntitle: ${id}\n${lifecycle}\n---\n\nKnowledge body.\n`);
+  }
+  const args = ['wiki', 'migrate', legacy, '--project', 'legacy-project', '--knowhow-only'];
+  const preview = await cliJson(root, ...args);
+  const [first, second, current, partial] = preview;
+  assert.deepEqual(preview.map(row => row.status), ['deprecated', 'deprecated', 'active', 'needs_review']);
+  assert.deepEqual(partial.issues, ['Unresolved earlier entry']);
+  assert.deepEqual(await cliJson(root, ...args, '--apply'), preview);
+  const wiki = new Wiki(root);
+  assert.equal(wiki.getEntry(current.id).body.trim(),
+    `Knowledge body.\n\n[[entries/${first.id}|Earlier entry]]\n[[entries/${second.id}|Earlier entry]]`);
+  assert.ok(wiki.getEntry(first.id).body.includes(`[[entries/${current.id}|Superseding entry]]`));
+  assert.ok(wiki.getEntry(partial.id).body.includes(`[[entries/${first.id}|Earlier entry]]`));
+});
+
 test('Evolve imports legacy knowledge into the source project or an explicit global destination', async t => {
   const project = await temp(t);
   const globalSource = await temp(t);

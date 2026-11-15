@@ -198,9 +198,17 @@ export function migrateLegacyWiki(wiki: Wiki, sourceRoot: string, project: strin
       [entry.metadata.supersedes, 'Earlier entry'],
     ] as const) {
       if (field === undefined) continue;
-      const target = typeof field === 'string' ? oldIds.get(`${kind}:${field.toLowerCase()}`) : undefined;
-      if (target && target !== id) relations.push(`[[entries/${target}|${label}]]`);
-      else issues.push(`Unresolved ${label.toLowerCase()}`);
+      const targets = new Set<string>();
+      let unresolved = false;
+      for (const reference of Array.isArray(field) ? field : [field]) {
+        const key = typeof reference === 'string' ? reference.trim().toLowerCase() : '';
+        const target = oldIds.get(`${kind}:${key}`) ??
+          (kind === 'knowhow' ? oldIds.get(`${kind}:${key.replace(/^knowhow-/, '')}`) : undefined);
+        if (target && target !== id) targets.add(target);
+        else unresolved = true;
+      }
+      for (const target of targets) relations.push(`[[entries/${target}|${label}]]`);
+      if (unresolved) issues.push(`Unresolved ${label.toLowerCase()}`);
     }
     const ref = entry.metadata.ref;
     if (kind === 'spec' && ref !== undefined) {
