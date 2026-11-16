@@ -54,7 +54,7 @@ evolve --help
 | **当前项目（推荐）** | `evolve install --scope project --yes` | `skills/`、`AGENTS.md` |
 | **Codex CLI（用户级）** | `evolve install --scope user --host codex --yes` | `~/.codex/skills/`、`~/.codex/AGENTS.md` |
 | **Claude Code（用户级）** | `evolve install --scope user --host claude --yes` | `~/.claude/skills/`、`~/.claude/CLAUDE.md` |
-| **Antigravity（用户级）** | `evolve install --scope user --host agy --yes` | `~/.agents/skills/`、`~/.agents/AGENTS.md` |
+| **Antigravity（用户级）** | `evolve install --scope user --host agy --yes` | `~/.gemini/config/skills/`、`~/.gemini/AGENTS.md` |
 
 按项目安装后请将 `skills/` 与 `AGENTS.md` 提交到 Git，Evolve 会把每个 Run 绑定到对应的提交版本；如只需特定工作流包，可追加 `--skill <名称>`。
 

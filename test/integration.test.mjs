@@ -420,6 +420,18 @@ test('Evolve installs selected Skills and their workflow files without replacing
   await assert.rejects(evolve('workflows', 'show', '../AGENTS.md'), /Unknown workflow/);
   await mkdir(join(root, 'skills', 'team-swarm'));
   await assert.rejects(evolve('install', '--skill', 'team-swarm', '--yes'), /no SKILL.md/);
+
+  const home = await temp(t);
+  const agyInstalled = JSON.parse((await run(
+    process.execPath,
+    [workflowCli, 'install', '--scope', 'user', '--host', 'agy', '--skill', 'ew-knowledge', '--yes'],
+    { cwd: root, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } },
+  )).stdout);
+  assert.equal(agyInstalled.root, join(home, '.gemini', 'config'));
+  assert.equal(agyInstalled.instructions, join(home, '.gemini', 'AGENTS.md'));
+  assert.deepEqual(agyInstalled.installed, ['ew-knowledge']);
+  await access(join(home, '.gemini', 'config', 'skills', 'ew-knowledge', 'SKILL.md'));
+  assert.match(await readFile(join(home, '.gemini', 'AGENTS.md'), 'utf8'), /evolve context/);
 });
 
 test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {

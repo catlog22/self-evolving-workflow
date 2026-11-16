@@ -8,7 +8,11 @@ import { workflowName } from './workflow-names.js';
 
 const bundle = fileURLToPath(new URL('../', import.meta.url));
 const source = join(bundle, 'skills');
-const hosts = { codex: ['.codex', 'AGENTS.md'], claude: ['.claude', 'CLAUDE.md'], agy: ['.agents', 'AGENTS.md'] } as const;
+const hosts = {
+  codex: { path: ['.codex'], instructions: ['.codex', 'AGENTS.md'] },
+  claude: { path: ['.claude'], instructions: ['.claude', 'CLAUDE.md'] },
+  agy: { path: ['.gemini', 'config'], instructions: ['.gemini', 'AGENTS.md'] },
+} as const;
 const workflowTitle = 'Self-Evolving Workflow';
 
 type InstallScope = 'project' | 'user';
@@ -94,15 +98,18 @@ function provisionInstructions(path: string) {
     'Use `evolve knowledge import` to preview legacy Spec and Knowhow in the source project. Add `--apply` to import them.',
     '',
   ].join(newline);
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, current ? current + newline + newline + guide : guide, 'utf8');
 }
 
 function scopeAndHost(root: string, scope: InstallScope, host?: InstallHost) {
   if (host && scope === 'project') throw new InputError('--host applies to user installations');
   if (scope === 'project') return { target: root, instructions: join(root, 'AGENTS.md') };
-  const [directory, file] = hosts[host ?? 'codex'];
-  const target = join(homedir(), directory);
-  return { target, instructions: join(target, file) };
+  const config = hosts[host ?? 'codex'];
+  return {
+    target: join(homedir(), ...config.path),
+    instructions: join(homedir(), ...config.instructions),
+  };
 }
 
 export async function installWorkflow(root: string, options: InstallOptions) {
