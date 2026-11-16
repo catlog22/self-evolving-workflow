@@ -32,6 +32,7 @@ const HOOK_MANIFESTS_BY_PROVIDER = Object.freeze({
 
 const HOOK_SCRIPT_MARKERS = [
   'skills/ew-impeccable/scripts/hook.mjs',
+  'skills/ew-impeccable/scripts/hook-before-edit.mjs',
   'skills/impeccable/scripts/hook.mjs',
   'skills/impeccable/scripts/hook-before-edit.mjs',
   'workflows/impeccable/scripts/hook.mjs',

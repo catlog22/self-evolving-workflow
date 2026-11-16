@@ -1,12 +1,6 @@
----
-name: ew-odyssey-defensive
-prepare: odyssey-defensive
-session-mode: inherited
----
-
 # Workflow: Odyssey Defensive
 
-Read-only defensive-programming risk audit — business-anchor driven + local slicing + bidirectional propagation. Identify critical business sinks → backward-slice to defensive nodes → scan 8 defensive patterns → identify failure→value transformations → forward-propagate to sinks → classify exception semantics → score `R = S × P × B × H` → severity matrix report with full propagation chains → generalize defensive patterns.
+Read-only defensive-programming risk audit — business-anchor driven + local slicing + bidirectional propagation. Identify critical business sinks → backward-slice to defensive nodes → scan 8 defensive patterns → identify failure→value transformations → forward-propagate to sinks → classify exception semantics → score `R = S × P × B × H` → severity matrix report with full propagation chains → generalize defensive patterns. Follow [shared phases](odyssey-base.md) and [runtime adapters](runtime-adapters.md).
 
 Core judgment (§19):
 
@@ -39,7 +33,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared phase
 |-------|-----------|
 | File/dir path | Audit those files |
 | `HEAD` / `staged` | `git diff HEAD` / `git diff --staged` — defensive patterns introduced/modified in diff |
-| Phase number | state.json → changed files for that phase |
+| Session/Run ID or commit range | Evolve Run artifacts / `git diff <base>..<head>` |
 | PR number | `git diff main...HEAD` |
 
 ---
@@ -99,7 +93,7 @@ Phase-specific extension fields:
 8. Risk Matrix & Exception Classification (R=S×P×B×H scores + A/B/C/D + §14 standard report entries)
 9. Generalization & Discoveries & Learnings
 
-Specs: `agent-memory wiki constraints --category coding` (defensive-programming patterns).
+Specs: `evolve wiki constraints --category coding` (defensive-programming patterns).
 
 ---
 
@@ -148,7 +142,7 @@ Commit: `"odyssey-defensive({slug}): ANCHOR — {N} anchors, {M} level-1 sinks"`
 2. **Backward slice** from each critical_var, answering the 7 questions: (1) where does it originate? (2) does it pass a default value? (3) any type conversion? (4) any exception handling? (5) any auto-correction? (6) multiple possible sources? (7) intermediate-state substitution?
 3. Write evidence phase=slice (one source_chain per anchor) + §3 three-layer map. Mark G2.
 
-**GATE: slice-complete** — every critical_var has a source_chain; §3 three-layer map written. Slice failure logged as W (tool unavailable) does NOT BLOCK — SCAN results may back-fill the chain.
+**GATE: slice-complete** — every critical_var has a source_chain; §3 three-layer map written. Slice tool unavailability is logged as W001, and SCAN results back-fill the chain.
 
 Commit: `"odyssey-defensive({slug}): SLICE — {N} chains traced"`
 
@@ -167,7 +161,7 @@ Commit: `"odyssey-defensive({slug}): SLICE — {N} chains traced"`
 | P7 | dup_constraint | cross-module same variable, divergent constraints (`< 10`, `<= 12`, `>= 15`) | 6.7 |
 | P8 | dup_default | cross-module same config, divergent defaults (`temperature = 25 / 20 / 293.15`) | 6.8 |
 
-Spawn N parallel agents, one per pattern. Each scans the target files using the signals above (AST preferred; Grep fallback per W001). Each returns `[{pattern, file, line, original_failure_type, snippet, surrounding_context}]`.
+Run N parallel subagents (one per pattern; join all before advancing — see [runtime adapters](runtime-adapters.md)). Each scans the target files using AST analysis when available or Grep pattern scanning with the signals above (log W001 if AST is unavailable). Each returns `[{pattern, file, line, original_failure_type, snippet, surrounding_context}]`.
 
 P7/P8 require **cross-module aggregation**: full-repo grep for the same variable name → compare constraints/defaults across modules → flag unit / business-meaning / duplication / conflict inconsistencies (§10).
 
@@ -265,14 +259,14 @@ Critical/High findings that propagate to a level-1 sink + cross-module duplicate
 
 ## Knowledge Persistence (§9)
 
-Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
+Include verified reusable findings in the Run summary and harvest the completed Session through `evolve workflows show knowledge` (`evolve closeout session` → `evolve wiki propose`).
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Failure→Value transformation pattern | transformation signature + trigger + detection pattern + fix template | `stage spec → coding` |
-| 异常语义坍缩 (exception semantic collapse) | multi-exception → single-state signature + business consequence + detection | `stage spec → coding` |
-| Constraint/default inconsistency | variable + per-location values + unit/meaning conflict + resolution | `stage spec → arch` |
-| Critical propagation chain | sink + chain + hiding mechanism + remediation strategy | `stage spec → debug` |
+| Failure→Value transformation pattern | transformation signature + trigger + detection pattern + fix template | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
+| 异常语义坍缩 (exception semantic collapse) | multi-exception → single-state signature + business consequence + detection | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
+| Constraint/default inconsistency | variable + per-location values + unit/meaning conflict + resolution | `evolve closeout session` → `evolve wiki propose` (`category: arch`) |
+| Critical propagation chain | sink + chain + hiding mechanism + remediation strategy | `evolve closeout session` → `evolve wiki propose` (`category: debug`) |
 
 ---
 
@@ -306,12 +300,12 @@ Goals:       {done}/{total} ({skipped} skipped)
 
 | Decision Point | Normal | `-y` |
 |---------------|--------|------|
-| A_ANCHOR critical-variable importance | request_user_input | auto-classify by semantic layer |
-| A_SCAN false-positive dismissal | request_user_input | Dismiss only with recorded counter-evidence. Keep unresolved candidates as deferred. |
-| A_PROPAGATE sink-hit ambiguity | request_user_input | auto-mark worst-case High |
-| A_REPORT risk-level downgrade | request_user_input | Downgrade only with documented counter-evidence. Keep the current severity or risk level when the decision is deferred. |
-| A_DISCOVER routing | request_user_input | Record a deferred discovery with evidence. Route issue creation and improve work through an explicit follow-up. |
-| Ambiguous items | request_user_input | all `deferred` |
+| A_ANCHOR critical-variable importance | structured prompt | auto-classify by semantic layer |
+| A_SCAN false-positive dismissal | structured prompt | Dismiss only with recorded counter-evidence. Keep unresolved candidates as deferred. |
+| A_PROPAGATE sink-hit ambiguity | structured prompt | auto-mark worst-case High |
+| A_REPORT risk-level downgrade | structured prompt | Downgrade only with documented counter-evidence. Keep the current severity or risk level when the decision is deferred. |
+| A_DISCOVER routing | structured prompt | Record a deferred discovery with evidence. Route issue creation and improve work through an explicit follow-up. |
+| Ambiguous items | structured prompt | all `deferred` |
 
 ---
 
@@ -330,7 +324,7 @@ Goals:       {done}/{total} ({skipped} skipped)
 |------|----------|-----------|----------|
 | E001 | error | No target / scope provided | Provide target or -c |
 | E002 | error | No critical vars / no level-1 sink found | Verify target has business-critical output |
-| W001 | warning | AST tool unavailable | Fall back to Grep, note coverage gap |
+| W001 | warning | AST tool unavailable | Scan via Grep, note coverage gap |
 | W002 | warning | Cross-module aggregation failed (no symbol table) | Local-only constraint/default check, note limitation |
 | W003 | warning | Candidate undecidable for sink/score | Per-item `needs_review`, do not BLOCK |
 | W004 | warning | Generalization 0 hits after full 3-layer scan | Advance to S_RECORD |
@@ -354,16 +348,4 @@ Goals:       {done}/{total} ({skipped} skipped)
 
 ---
 
-## Next Step Routing (defensive-specific)
-
-| Condition | Next |
-|-----------|------|
-| Critical/High findings need fix | `/ew-odyssey <finding> --mode improve` |
-| Root-cause debug needed | `/ew-odyssey <finding> --mode debug` |
-| Deeper audit tier needed | `/ew-odyssey <target> --mode defensive --tier deep` |
-| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
-| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
-| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
-| Related question | `Use an Evolve analyze step for the question` |
-| Defensive pattern to persist | `stage spec → coding` |
-| Pending decisions | Filter evidence phase=decision status=pending |
+See [shared base](odyssey-base.md) for generic follow-up routing (`Next Step Routing`). Related transitions: `/ew-odyssey <finding> --mode improve` (fix defensive defects), `/ew-odyssey <finding> --mode debug` (root cause), `/ew-odyssey <target> --mode defensive --tier deep` (deep tier).

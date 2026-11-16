@@ -24,9 +24,19 @@ if (!Array.isArray(required) || required.some(link => typeof link !== 'string' |
   throw new Error('Skill required_links must contain Markdown destinations');
 }
 
+function resolveWindowsCodex() {
+  for (const dir of (process.env.PATH || '').split(';').filter(Boolean)) {
+    for (const ext of ['.exe', '.cmd', '.bat']) {
+      const candidate = join(dir, 'codex' + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return 'codex.exe';
+}
+
 const defaultCli = fileURLToPath(new URL('../../../dist/cli.js', import.meta.url));
 const memoryCli = realpathSync(process.env.AGENT_MEMORY_CLI || defaultCli);
-const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? 'codex.exe' : 'codex');
+const codex = process.env.CODEX_REPLAY_EXECUTABLE || (process.platform === 'win32' ? resolveWindowsCodex() : 'codex');
 const codexEntry = /\.[cm]?js$/i.test(codex) ? [resolve(codex)] : [];
 const server = fileURLToPath(new URL('./memory-codex-mcp.mjs', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), 'evolve-codex-task-'));

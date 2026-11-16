@@ -8,7 +8,7 @@ import { workflowName } from './workflow-names.js';
 
 const bundle = fileURLToPath(new URL('../', import.meta.url));
 const source = join(bundle, 'skills');
-const hosts = { codex: ['.codex', 'AGENTS.md'], claude: ['.claude', 'CLAUDE.md'] } as const;
+const hosts = { codex: ['.codex', 'AGENTS.md'], claude: ['.claude', 'CLAUDE.md'], agy: ['.agents', 'AGENTS.md'] } as const;
 const workflowTitle = 'Self-Evolving Workflow';
 
 type InstallScope = 'project' | 'user';
@@ -123,9 +123,9 @@ export async function installWorkflow(root: string, options: InstallOptions) {
         scope = answer === '2' ? 'user' : 'project';
       }
       if (scope === 'user' && !host) {
-        const answer = (await ui.question('Host [1] Codex or [2] Claude [1]? ')).trim();
-        if (answer && answer !== '1' && answer !== '2') throw new InputError('Choose Codex (1) or Claude (2)');
-        host = answer === '2' ? 'claude' : 'codex';
+        const answer = (await ui.question('Host [1] Codex, [2] Claude or [3] Agy [1]? ')).trim();
+        if (answer && answer !== '1' && answer !== '2' && answer !== '3') throw new InputError('Choose Codex (1), Claude (2) or Agy (3)');
+        host = answer === '2' ? 'claude' : answer === '3' ? 'agy' : 'codex';
       }
       const { target } = scopeAndHost(root, scope, host);
       if (!requested.length) {

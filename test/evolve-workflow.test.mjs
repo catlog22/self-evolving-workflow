@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -33,6 +34,10 @@ test('Evolve pins each attempt, fences retries and publishes bytes with the requ
     readBound(f, session, attempt);
     const fixed = f.evolve('run', 'skill-read', attempt.run_id, 'references/workflow.md', '--from', 'SKILL.md', '--session', session);
     assert.notEqual(fixed.markdown, '# Changed after the first dispatch\n');
+    assert.deepEqual(
+      f.evolve('run', 'skill-read', '--run', attempt.run_id, 'references/workflow.md', '--from', 'SKILL.md', '--session', session),
+      fixed,
+    );
     const failure = f.evolve('run', 'transition', attempt.run_id, 'failed', ...f.fence(session),
       '--expected-run-revision', String(attempt.revision), '--reason', 'Reproducer found a failure');
     const run = f.next(session, failure.orchestration_revision);
@@ -59,6 +64,10 @@ test('Evolve pins each attempt, fences retries and publishes bytes with the requ
       const plan = f.next(session);
       const bound = f.evolve('run', 'artifact-read', plan.run_id, 'current-analysis', '--session', session);
       assert.equal(JSON.parse(bound.content).verified, 'original calculation reproduced');
+      assert.deepEqual(
+        f.evolve('run', 'artifact-read', '--run', plan.run_id, 'current-analysis', '--session', session),
+        bound,
+      );
       readBound(f, session, plan);
       f.saveArtifact(plan, 'plan.json', { description: 'Fix the reproduced defect' });
       f.finish(session, plan, 'Verified and approved the plan', plan.gates.exit.flatMap(gate => ['--gate', gate]));
@@ -231,6 +240,63 @@ test('Wiki MCP pins observed bodies, checks lookup scope and seals or rejects re
     const completed = f.finish(session, plan, 'Record verified prior reuse', planGates, plan.orchestration_revision);
     assert.deepEqual(completed.knowledge_reads, { ...trace, priors_reuse: reuse });
     assert.equal(f.sealSession(session).status, 'completed');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Evolve delegate resolves JS stubs and Windows shims, binds Run MCP for Codex, and rejects invalid flags', () => {
+  const f = fixture('evolve-delegate-');
+  try {
+    const stub = join(f.root, 'fake-delegate.mjs');
+    writeFileSync(stub, [
+      "import { readFileSync } from 'node:fs';",
+      "const stdin = process.argv.includes('-') ? readFileSync(0, 'utf8') : '';",
+      "console.log(JSON.stringify({ argv: process.argv.slice(2), stdin, cwd: process.cwd() }));",
+    ].join('\n'));
+    f.write('prompt.txt', 'Inspect auth boundary');
+    const opened = f.open('delegate-check', 'ew-analyze');
+    const run = f.next('delegate-check', opened.orchestration_revision);
+
+    const execWithEnv = (args, extraEnv = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], {
+      cwd: f.root, env: { ...f.env, ...extraEnv }, encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim());
+
+    const codexResult = execWithEnv([
+      'delegate', '--prompt-file', 'prompt.txt', '--to', 'codex', '--mode', 'analysis',
+      '--session', 'delegate-check', '--run', run.run_id,
+    ], { CODEX_REPLAY_EXECUTABLE: stub });
+    assert.equal(codexResult.executor, 'codex');
+    const codexPayload = JSON.parse(codexResult.output);
+    assert.equal(codexPayload.stdin, 'Inspect auth boundary');
+    assert.ok(codexPayload.argv.includes('read-only'));
+    assert.ok(codexPayload.argv.some(arg => arg.startsWith('mcp_servers.evolve_run.command=')));
+
+    if (process.platform === 'win32') {
+      const shim = join(f.root, 'codex.cmd');
+      writeFileSync(shim, '@echo off\r\n"%~dp0\\node.exe" "%~dp0\\fake-delegate.mjs" %*\r\n');
+      const cmdResult = execWithEnv([
+        'delegate', 'Shim prompt', '--to', 'codex', '--session', 'delegate-check', '--run', run.run_id,
+      ], { CODEX_REPLAY_EXECUTABLE: shim });
+      const cmdPayload = JSON.parse(cmdResult.output);
+      assert.equal(cmdPayload.stdin, 'Shim prompt');
+      assert.ok(cmdPayload.argv.some(arg => arg.startsWith('mcp_servers.evolve_run.args=["')));
+    }
+
+    const agyResult = execWithEnv([
+      'delegate', 'Second opinion prompt', '--to', 'agy', '--mode', 'write', '--model', 'fast-model',
+    ], { AGY_EXECUTABLE: stub });
+    assert.equal(agyResult.executor, 'agy');
+    const agyPayload = JSON.parse(agyResult.output);
+    assert.ok(agyPayload.argv.includes('accept-edits'));
+    assert.ok(agyPayload.argv.includes('--model'));
+    assert.ok(agyPayload.argv.includes('fast-model'));
+    assert.ok(agyPayload.argv.includes('--print=Second opinion prompt'));
+
+    assert.throws(() => execWithEnv([
+      'delegate', 'Bound agy should fail', '--to', 'agy', '--session', 'delegate-check', '--run', run.run_id,
+    ], { AGY_EXECUTABLE: stub }), /Use Codex for a bound Evolve worker/);
+    assert.throws(() => execWithEnv(['delegate', 'Bad flag', '--resume', 'abc']), /Unknown option '--resume'/);
   } finally {
     f.cleanup();
   }

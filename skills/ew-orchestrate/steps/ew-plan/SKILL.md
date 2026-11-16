@@ -98,5 +98,5 @@ session-mode: run
 
 Read [preparation](references/prepare.md), then follow the [workflow](references/workflow.md).
 
-- Read [boundary review](references/boundary-grill.md) when task boundaries or file writes conflict.
+- Read [boundary review](../../references/boundary-grill.md) when task boundaries or file writes conflict.
 - Read [test-first planning](references/tdd.md) when invoked with `--tdd`.

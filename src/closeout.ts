@@ -11,7 +11,7 @@ import { parseFrontmatter, readSources } from './upstream/frontmatter.js';
 import { unionSources } from './upstream/merge.js';
 import { readCompletionTranscriptRefs, readTranscriptSnapshots } from './transcript-evidence.js';
 import { applyWikiChange, proposeWikiChange } from './wiki-change.js';
-import { validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
+import { formatKnowledgeReadsMessage, validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
 
 export interface Completion {
   id: string;
@@ -94,15 +94,6 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function knowledgeReadsMessage(receipt: KnowledgeReadsReceipt): string {
-  const searches = receipt.searches.map(search =>
-    `${search.search_id} ${search.source} "${search.query}" (${search.total_hits} hits: ${search.returned_ids.join(', ') || 'none'})`).join('; ');
-  const reads = receipt.reads.map(read =>
-    `${read.kind}:${read.id}${read.from_search_id ? ` from ${read.from_search_id}` : ''}`).join(', ') || 'none';
-  const constraints = receipt.constraints_bound.map(item => item.knowledge_id).join(', ') || 'none';
-  return `Knowledge searches: ${searches || 'none'}. Knowledge reads: ${reads}. Bound constraints: ${constraints}.`;
-}
-
 function appendRunEvidence(completion: Completion, directory: string): void {
   const known = new Set(completion.messages.map(message => message.id));
   for (const { receipt, result } of readSessionTransitions(directory)) {
@@ -126,7 +117,7 @@ function appendRunEvidence(completion: Completion, directory: string): void {
       const knowledgeReads = validateKnowledgeReads(result.knowledge_reads);
       const id = `run:${run}:knowledge-reads`;
       if (!known.has(id)) {
-        completion.messages.push({ id, role: 'tool', timestamp, content: knowledgeReadsMessage(knowledgeReads) });
+        completion.messages.push({ id, role: 'tool', timestamp, content: formatKnowledgeReadsMessage(knowledgeReads) });
         known.add(id);
       }
     }

@@ -163,8 +163,8 @@ async function odyssey(f) {
   const review = await codex(f, session, resumed,
     'Perform an audit-only review. Return { current_state:"END", dimensions:[string], findings:[] } when the supplied change satisfies correctness, security, performance and architecture.',
     { diff: '-export const limit = 2;\n+export const limit = 3;\n', target: file },
-    { extraLinks: [{ from: 'SKILL.md', destination: 'references/odyssey-review.codex.md' },
-      { from: 'references/odyssey-review.codex.md', destination: 'odyssey-base-codex.md' }] });
+    { extraLinks: [{ from: 'SKILL.md', destination: 'references/odyssey-review.md' },
+      { from: 'references/odyssey-review.md', destination: 'odyssey-base.md' }] });
   assert.equal(review.current_state, 'END');
   assert.equal(review.dimensions.length, 4);
   assert.deepEqual(review.findings, []);

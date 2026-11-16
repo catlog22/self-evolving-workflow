@@ -1,283 +1,116 @@
-<!-- session-mode: inherited -->
+# Workflow: ew-review
 
-# Workflow: Odyssey Review (Codex)
+Multi-dimensional code and artifact review inside an Evolve Run. Consumes `current-execution` and `session-priors`, verifies implementation quality across four dimensions, runs a zero-residual check, and writes `outputs/review.json` (`review-findings/1.0`) and `report.md`.
 
-Codex-adapted: uses `spawn_agents_on_csv`, `request_user_input`, `update_plan`.
+## Pipeline
 
-## State Chain
-
-```
-S_INTAKE → S_ARCHAEOLOGY → S_EXPLORE → S_REVIEW → S_FIX → S_CONFIRM → [back-half]
-```
-
-Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared Codex phases](odyssey-base-codex.md)).
+1. **Resolve Target & Load Context**
+2. **4-Dimension Audit** (standard) or **Focused Diff Audit** (`--tier quick`)
+3. **Zero-Residual & Evidence Verification**
+4. **Write `outputs/review.json` and `report.md`**
+5. **Seal Run & Route Knowledge**
 
 ---
 
-## Boundary
+## Step 1: Resolve Target & Load Context
 
-**In scope:** Multi-dimensional deep review of target code → exhaustive fix ALL findings by severity → generalize patterns project-wide.
-**Out of scope:** Root cause debug → `--mode debug` | Feature implementation → `--mode planex` | UI visual optimization → `--mode ui`. Zero-residual applies (fix ALL findings within fix_threshold, default all).
-
----
-
-## Target Resolution
-
-| Input | Resolution |
-|-------|-----------|
-| File/dir path | Review those files |
-| `HEAD` / `staged` | `git diff HEAD` / `git diff --staged` |
-| Phase number | state.json → changed files |
-| PR number | `git diff main...HEAD` |
+1. Read bound inputs via Run MCP (`read_artifact`) or `evolve run artifact-read <run> <alias> --session <session>`:
+   - `current-execution`: extract changed files, task results, and self-check evidence.
+   - `session-priors`: reuse applicable `review` and `coding` Wiki rules for the matching scope.
+2. When the target adds paths or categories outside `session-priors`, query `wiki_context` / `memory_search` and open selected entries with `wiki_reference` / `memory_get` (in CLI-only runs, use `evolve context "<query>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"`, then `evolve wiki get <id> --resolved` / `evolve memory get <id>` with `--reads` and `--from-search <search-id>`).
+3. Resolve the target file set:
+   - Explicit file/dir path -> inspect those files.
+   - `HEAD` / `staged` -> `git diff HEAD` / `git diff --staged`.
+   - Bound `current-execution` -> `change-manifest` / changed files and diff against base commit.
 
 ---
 
-## Session Fields
+## Step 2: 4-Dimension Review Audit
+
+Audit every target file across all four dimensions (under `--tier quick`, focus on `correctness` and `security` across the changed hunks):
+
+| Dimension | Focus |
+| --- | --- |
+| `correctness` | Logic errors, edge/boundary cases, null/undefined handling, race conditions, type mismatches, missing error propagation, broken invariants |
+| `security` | Injection, XSS/CSRF, auth/permission bypass, secret leakage, path traversal, unsafe deserialization, untrusted input handling |
+| `performance` | Hot-path regressions, N+1 queries, memory/handle leaks, unbounded loops/allocations, blocking I/O |
+| `architecture` | Layer/boundary violations, circular dependencies, contract drift, duplicated logic, abstraction leaks |
+
+Parallel execution options:
+- Launch one read-only subagent per dimension (`invoke_subagent` in Antigravity, or `spawn_agent` / `spawn_agents_on_csv` in Codex; join/cancel every spawned subagent before advancing) returning structured findings.
+- For an independent cross-model check, run:
+  `evolve delegate "<review prompt with target files and scope>" --to codex --mode analysis --session <session> --run <run>`
+  (or `--to agy --mode analysis` without `--session`/`--run` for an unbound second opinion).
+
+---
+
+## Step 3: Zero-Residual & Evidence Verification
+
+Cross-check implementation completeness against disk state:
+
+1. Verify every claimed file change and convergence criterion in `current-execution` matches actual repository files.
+2. Check for residual `TODO`/`FIXME`/debug statements, dead imports, broken relative Markdown links, or skipped/weakened assertions in tests.
+3. Run the narrowest relevant verification command(s) if not already evidenced in `current-execution` and record the exact exit status and output summary.
+4. Deduplicate findings by `(file, line, root_cause)` and classify each by severity (`critical`, `high`, `medium`, `low`).
+
+---
+
+## Step 4: Write Outputs & `report.md`
+
+Write `{run_dir}/outputs/review.json` matching `review-findings/1.0`:
 
 ```json
-{ "target": "", "dimensions": [], "review_result": {"remaining_actionable": 0},
-  "patterns": [], "confirmation": null, "generalization_stats": null }
+{
+  "_meta": {
+    "kind": "review-findings",
+    "schema": "review-findings/1.0",
+    "role": "primary"
+  },
+  "target": "<resolved target>",
+  "tier": "standard",
+  "dimensions_reviewed": ["correctness", "security", "performance", "architecture"],
+  "summary": {
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "total": 0,
+    "remaining_actionable": 0
+  },
+  "zero_residual_check": {
+    "status": "passed",
+    "checks": []
+  },
+  "findings": [
+    {
+      "id": "REV-001",
+      "dimension": "correctness",
+      "severity": "high",
+      "file": "path/to/file.ts",
+      "line": 42,
+      "title": "Short title",
+      "description": "What is wrong and why",
+      "evidence": "Observed code/diff or command output at file:line",
+      "suggestion": "Concrete remediation",
+      "status": "open"
+    }
+  ]
+}
 ```
 
----
-
-## evidence.ndjson Phases
-
-`archaeology|explore|review|fix|discovery|decision|self-iteration`
-
----
-
-## phase_goals[]
-
-| ID | Goal | done_when | phase | skip_when |
-|----|------|-----------|-------|-----------|
-| G1 | Review completed | all dimensions reviewed | S_REVIEW | — |
-| G2 | Explore context | explore.json populated | S_EXPLORE | — |
-| G3 | Zero remaining | `remaining_actionable == 0` | S_CONFIRM | skip_fix |
-| G4 | Pattern generalized | patterns[] ≥1 | S_GENERALIZE | skip_generalize |
-| G5 | Discoveries triaged | all hits classified | S_DISCOVER | skip_generalize |
-| G6 | Learnings persisted | spec entries or no actionable | S_RECORD | — |
-
-`update_plan({ plan: [{ step: "G1: review", status: "pending" }, ..., { step: "G6: record", status: "pending" }] })`（按上方 gate 表初始化 G1-G6 步骤清单）
+Write `{run_dir}/report.md` with frontmatter (`verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`) and fixed sections (`Summary`, `Conclusion/Verdict`, `Discussion/Retrospective`, `Artifacts`, `Handoff/Next`):
+- Set `verdict: ready` when `critical == 0` and `high == 0` and zero-residual check passes.
+- Set `verdict: ready_with_concerns` when non-blocking findings or unverified limits remain; route `next` to `ew-plan` or `ew-execute` when fixes are needed.
+- Set `verdict: blocked` when `critical > 0` or a hard verification failure prevents acceptance.
 
 ---
 
-## understanding.md — 8 Sections
+## Step 5: Seal Run & Knowledge Hooks
 
-1. Target & Scope
-2. Archaeology
-3. Exploration
-4. Review Results
-5. Fix & Confirmation
-6. Generalization
-7. Discoveries
-8. Learnings
+Seal the Run via:
 
-Specs: use matching `session-priors` and look up any additional review scope through `wiki_context`.
-
----
-
-## State Machine — Transitions
-
-```
-S_ARCHAEOLOGY → S_EXPLORE  : complete
-S_EXPLORE     → S_REVIEW   : complete
-S_REVIEW  → S_FIX          : !skip_fix AND findings
-S_REVIEW  → S_GENERALIZE   : skip_fix OR no findings, !skip_generalize
-S_REVIEW  → S_RECORD       : both skip
-S_FIX     → S_CONFIRM      : tier complete
-S_CONFIRM → S_GENERALIZE   : confirmed, !skip_generalize
-S_CONFIRM → S_RECORD       : confirmed, skip_generalize
-S_CONFIRM → S_FIX          : needs_rework
+```text
+evolve run complete <run_id> --session <session_id> --actor <actor_id> --expected-orchestration-revision <orchestration_revision> --expected-run-revision <run_revision> --summary "<observed review summary>" --verdict done|done_with_concerns
 ```
 
-Discover routes: fixable sibling → S_FIX; new target needing review → S_REVIEW (loops < max_loops).
-
----
-
-## Actions
-
-### A_ARCHAEOLOGY
-
-Generate `archaeology.csv` with 2 rows for parallel agents:
-
-```csv
-id,title,description,target,deps,status,findings,error
-"1","Timeline","Run git log --oneline -20 -- {files} for target files. Identify recent changes, authors, and change frequency. Return JSON: [{commit_sha, date, author, message, files_changed}]","{target}","","","",""
-"2","Blame","Run git blame -L {region} on top 3 files by change frequency. Identify ownership patterns and recent modifications. Return JSON: [{file, line_range, author, commit_sha, date, content_summary}]","{target}","","","",""
-```
-
-```javascript
-spawn_agents_on_csv({
-  csv_path: `${sessionFolder}/archaeology.csv`,
-  id_column: "id",
-  instruction: "You are performing git archaeology on target code. Read 'description' for your specific task and 'target' for the files to analyze. Use git commands to gather evidence. Write findings as a concise summary.",
-  max_concurrency: 2,
-  max_runtime_seconds: 3600,
-  output_csv_path: `${sessionFolder}/archaeology-results.csv`,
-  output_schema: { id, status: ["completed"|"failed"], findings, error }
-})
-```
-
-Evidence phase=archaeology.
-
-`evolve delegate --role analyze --mode analysis` (`run_in_background: true`):
-- PURPOSE: review recent modifications related to {target}
-- EXPECTED: JSON `[{commit_sha, risk_level, analysis, could_cause_issue, explanation}]`
-
-Update §2 (Archaeology).
-
-If an archaeology agent fails, log W003 and proceed with available results.
-
-### A_EXPLORE
-
-Skip if no CLI tools (W006).
-
-`evolve delegate --role explore --mode analysis` (`run_in_background: true`):
-- PURPOSE: call chains, recent changes, error gaps, similar patterns
-- EXPECTED: JSON `{call_chains, recent_changes, error_gaps, similar_patterns}`
-
-Write `explore.json` + evidence phase=explore. Update §3 (Exploration). Mark G2. `update_plan`（G2 → completed）
-
-**GATE: discovery-complete** — archaeology/explore evidence logged, understanding.md §2-§3 updated, G2 marked (W003 partial / W006 skip acceptable).
-
-### A_REVIEW
-
-Generate `review-dimensions.csv` with 4 dimension rows:
-
-```csv
-id,dimension,focus,target,deps,status,findings_json,error
-"1","Correctness","Logic errors, boundary conditions, null/undefined handling, race conditions, type mismatches, off-by-one errors, missing error handling","{target}","","","",""
-"2","Security","Injection vulnerabilities, XSS, CSRF, data exposure, auth bypass, insecure defaults, secret leakage, path traversal","{target}","","","",""
-"3","Performance","Hot paths, N+1 queries, memory leaks, unnecessary recomputation, missing caching, blocking operations, large allocations","{target}","","","",""
-"4","Architecture","Layer violations, circular dependencies, interface contract breaks, separation of concerns, abstraction leaks, coupling issues","{target}","","","",""
-```
-
-```javascript
-spawn_agents_on_csv({
-  csv_path: `${sessionFolder}/review-dimensions.csv`,
-  id_column: "id",
-  instruction: "You are reviewing code for a specific dimension. Read 'dimension' and 'focus' columns for your review scope. Read 'target' for the files to review. Scan target files thoroughly, identify issues matching your dimension. Return findings_json as a JSON array: [{title, severity, file, line, description, suggestion, cwe}]. Severity levels: critical, high, medium, low.",
-  max_concurrency: 4,
-  max_runtime_seconds: 3600,
-  output_csv_path: `${sessionFolder}/review-results.csv`,
-  output_schema: { id, status: ["completed"|"failed"], findings_json, error }
-})
-```
-
-Merge all dimension findings → evidence phase=review. Write `review_result` + §4 severity matrix. Mark G1. `update_plan`（G1 → completed）
-
-**GATE: all-dimensions-reviewed** — all 4 dimension agents (correctness, security, performance, architecture) completed, findings merged into review_result with severity classification, evidence phase=review logged, §4 severity matrix written, G1 marked. Zero dimensions reviewed is BLOCKED (W002 partial with ≥1 dimension allowed).
-
-### A_FIX
-
-Exhaustive iterative fix — descend by severity until `remaining_actionable == 0`:
-```
-for tier in [critical, high, medium, low].filter(>= threshold):
-  for each unfixed candidate: read ±20 lines → fix → evidence phase=fix
-  re-review modified area (new findings → append, continue; max 2 per tier)
-  tier done → auto-commit
-```
-Normal: `request_user_input` per tier | `-y`: auto-fix all. Remaining > 0 → retry (**MANDATORY hard limit: max_fix_rounds = 5**). Unchanged 2 rounds → classify each individually. After 5 rounds remaining > 0 → escalate: Normal: `request_user_input` (continue/accept/reclassify) | `-y`: classify remaining as `deferred`, proceed. **No partial-tier advancement** — a tier is complete only when every finding is fixed or individually classified. Blanket "pre-existing" forbidden. Commit per tier: `"odyssey-review({slug}): FIX-{tier} — {N} items fixed"`.
-
-### A_CONFIRM
-
-Run tests + `evolve delegate --role review --mode analysis` (`run_in_background: true`) zero-residual review. `remaining == 0 AND new == 0` → confirmed, mark G3 `update_plan`（G3 → completed）; otherwise → needs_rework → S_FIX. Update `confirmation` + `remaining_actionable` + §5.
-
-**GATE: zero-remaining** — exhaustive fix applied tier-by-tier, `remaining_actionable == 0` (or all remaining individually classified as deferred after 5-round escalation), tests pass, CLI re-review confirms no new findings, confirmation + §5 written, G3 marked. `needs_rework` routes back to FIX; skippable only when `skip_fix == true`.
-
----
-
-## Generalize Source
-
-Review findings with severity >= medium.
-
-**Discover routing:** fixable sibling → S_FIX; new target → S_REVIEW.
-
----
-
-## Knowledge Persistence (§8)
-
-Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
-
-
-| Category | Content | Follow-up |
-|----------|---------|-----------|
-| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `stage spec → review` |
-| Security finding | Vulnerability type + triggers + fix approach | `stage spec → debug` |
-| Architecture violation pattern | Violation + correct boundary + verification | `stage spec → arch` |
-| Reusable generalization pattern | Signature + risk + fix template + scope | `stage spec → coding` |
-
----
-
-## Completion Summary
-
-```
---- REVIEW-TEST-FIX ODYSSEY COMPLETE ---
-Target:     {target}          Dimensions: {dims}
-Findings:   {C}C {H}H {M}M {L}L    Fix: {fixed}, confirmed={yes|skip}
-Patterns:   {N} ({by_layer})        Scan hits: {total} ({cross} cross-layer)
-Issues:     {N} created
-Decisions:  {N} resolved, {M} pending, {K} deferred
-Learnings:  {N} persisted
-Self-iter:  {N} rounds across {M} stages
-Goals:      {done}/{total} ({skipped} skipped)
----
-```
-
----
-
-## `-y` Decision Points
-
-| Decision Point | Normal | `-y` |
-|---------------|--------|------|
-| S_FIX tier candidates | `request_user_input` | auto-fix `deferred` |
-| S_FIX re-review new findings | `request_user_input` | auto-append |
-| S_CONFIRM needs_rework | `request_user_input` | auto proceed |
-| A_DISCOVER routing | `request_user_input` | auto-fix w/ template, issue for rest |
-
----
-
-## Mode-Specific Phase Gates
-
-- **Discovery gate** (ARCHAEOLOGY/EXPLORE): evidence logged, understanding.md updated. Archaeology partial via W003 acceptable; explore W006 skip acceptable.
-- **Audit gate** (REVIEW): all dimension agents completed, findings merged. Zero dimensions reviewed is BLOCKED (W002 partial allowed).
-- **FIX gate:** current severity tier fully addressed. Per-fix evidence logged. Auto-commit per tier. No partial-tier advancement.
-- **CONFIRM gate:** tests pass; `remaining_actionable == 0` and new findings == 0; confirmation written. needs_rework → route back to FIX.
-
----
-
-## Error Codes (review-specific)
-
-| Code | Severity | Condition | Recovery |
-|------|----------|-----------|----------|
-| W003 | warning | Archaeology agent failure | Proceed with available results |
-| W006 | warning | No CLI tools | Skip explore |
-
----
-
-## Success Criteria (review-specific)
-
-- [ ] Session + 4 output files + prior knowledge searched
-- [ ] Archaeology + CLI review → evidence
-- [ ] CLI exploration → explore.json
-- [ ] All 4 dimensions reviewed with findings merged
-- [ ] understanding.md 8 sections progressive
-- [ ] Exhaustive fix by severity tier + confirmed (unless --skip-fix)
-- [ ] Generalization + scan (unless --skip-generalize)
-- [ ] Discoveries classified; unfixed findings individually justified
-- [ ] phase_goals + goal audit + resumable via -c
-- [ ] Completion summary
-
----
-
-## Next Step Routing (review-specific)
-
-| Condition | Next |
-|-----------|------|
-| Discovery issues | `Open the follow-up findings in the project issue tracker` |
-| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
-| Debug root cause | `$ew-odyssey <issue> --mode debug` |
-| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
-| Related question | `Use an Evolve analyze step for the question` |
-| Pending decisions | Filter evidence phase=decision status=pending |
+Use `--verdict done_with_concerns` when actionable findings remain. Stage any reusable review constraints or defect patterns after sealing through the [knowledge route](../../../references/knowledge-route.md).

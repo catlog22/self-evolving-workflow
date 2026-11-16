@@ -7,7 +7,7 @@
  *   node <scripts_path>/pin.mjs pin <command>
  *   node <scripts_path>/pin.mjs unpin <command>
  *
- * `pin audit` creates a lightweight audit skill that redirects to Maestro's bundled Impeccable workflow.
+ * `pin audit` creates a lightweight audit skill that redirects to Self-Evolving Workflow's bundled `ew-impeccable` workflow.
  * `unpin audit` removes that shortcut.
  *
  * The script discovers harness directories (.claude/skills, .cursor/skills, etc.)
@@ -307,7 +307,7 @@ function unpin(command, projectRoot) {
   }
 
   // OpenCode: remove the pinned command file if it's one of ours, in every
-  // scope it could have been written to — even when the Maestro entry is
+  // scope it could have been written to — even when the `ew-impeccable` entry is
   // already gone, since removal is marker-guarded.
   for (const commandsDir of findOpencodeCommandsDirs(projectRoot, { forCleanup: true })) {
     if (removePinnedOpencodeCommand(commandsDir, command)) removed++;

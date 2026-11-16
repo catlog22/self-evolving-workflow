@@ -30,7 +30,7 @@ goal: true
 
 ## Purpose
 
-Odyssey planex is a full requirement delivery cycle: requirement intake → acceptance criteria derivation → task planning → execution (agent or CLI) → verification → fix iteration → generalization → discovery → knowledge persistence. Unlike standalone `/plan` + `/execute` (which handle planning and execution separately), odyssey-planex owns the entire loop from requirement to all acceptance criteria passing, including iterative fix cycles and pattern generalization.
+Odyssey planex is a full requirement delivery cycle: requirement intake → acceptance criteria derivation → task planning → execution (agent or CLI) → verification → fix iteration → generalization → discovery → knowledge persistence. Unlike standalone `ew-plan` + `ew-execute` (which handle planning and execution separately), odyssey-planex owns the entire loop from requirement to all acceptance criteria passing, including iterative fix cycles and pattern generalization.
 
 ## Input Interpretation
 
@@ -62,29 +62,30 @@ Execution method is configurable at S_EXECUTE via interactive confirmation or `-
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, integration points
-- Wiki: `agent-memory wiki references "<requirement keywords>"` → prior implementations, patterns
-- Specs: `agent-memory wiki constraints --category coding` → coding standards, implementation patterns
-- Review specs: `agent-memory wiki constraints --category review` → acceptance criteria templates
-- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
-- CLI tools: `the Codex or Agy executables available to the host` → available executors for task dispatch
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<requirement keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `coding` and `review` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<requirement keywords>"` → module boundaries, integration points.
+- CLI tools: `the Codex or Agy executables available to the host` → available executors for task dispatch.
 
 When prior planex sessions of the same scope exist, check their acceptance criteria and plan to avoid duplicating work or re-implementing already-delivered features.
+
+## Run Artifact Metadata
+
+Attach `kind`, `schema`, `role`, and `alias` from `produces` to top-level `_meta` in `outputs/session.json`, the first JSON record in `outputs/evidence.ndjson`, and YAML frontmatter in `outputs/understanding.md` (`current_state: "END"` before `evolve run complete`).
 
 ## Boundaries and Invariants
 
 - **State chain:** `S_INTAKE → S_PLAN → S_EXECUTE → S_VERIFY → S_FIX → [back-half]` with FIX↔VERIFY loop until all criteria pass.
 - **Acceptance criteria are sacred** — once confirmed at S_INTAKE, criteria cannot be silently dropped or weakened. All must reach `passed` (or `deferred` at max iteration with user consent).
-- **Max iterations** (default 3) prevents infinite FIX↔VERIFY loops. When exceeded: Normal → request_user_input (continue/lower bar/accept) | `-y` → `deferred`, proceed S_RECORD.
-- **Max 3 retries per task** — first attempt normal → retry with `--resume` simplified → fallback to Agent → all 3 fail → mark `blocked`, continue remaining. NEVER exceed 3 attempts.
+- **Max iterations** (default 3) prevents infinite FIX↔VERIFY loops. When exceeded: Normal → structured user prompt (continue/lower bar/accept) | `-y` → `deferred`, proceed S_RECORD.
+- **Max 3 retries per task** — first attempt normal → retry with simplified self-contained prompt → switch to a joined subagent (see [runtime adapters](../runtime-adapters.md)) → all 3 fail → mark `blocked`, continue remaining. NEVER exceed 3 attempts.
 - **Replan preserves criteria** — when S_VERIFY routes back to S_PLAN (fundamental plan flaw), `acceptance_criteria[]` statuses are preserved; only `plan.tasks[]` are regenerated. Passed criteria retain `passed`; failed criteria reset to `pending`.
 - **Evidence append-only** — evidence.ndjson entries are immutable observations; modifying or deleting them is forbidden.
 - **Phase goal tracking** — mark each goal done/failed before transition; no silent skips.
 - **Generalize is mandatory** unless `skip_generalize == true`; prior-phase convergence is NOT a valid skip reason.
 - **Fix scope:** fixes target diagnosed gaps in specific failed criteria, not re-implementation. Targeted code fix, not wholesale rewrite.
-- **In scope:** Single requirement delivery loop. **Out of scope:** Multi-requirement orchestration → `/ew-orchestrate --goal roadmap` | Deep debugging → `--mode debug` | Code review → `--mode review` | UI optimization → `--mode ui`.
+- **In scope:** Single requirement delivery loop. **Out of scope:** Multi-requirement orchestration → `/ew-orchestrate` (`ew-plan`) | Deep debugging → `--mode debug` | Code review → `--mode review` | UI optimization → `--mode ui`.
 
 ## Risk Checklist
 

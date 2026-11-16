@@ -23,7 +23,7 @@ contract:
 
 Brainstorm is a planning step inside the Evolve Skill. Explore the problem space, record assumptions and alternatives, and leave a bounded option set for the next chain step.
 
-1. Read the current Session objective, boundary contract and available Wiki evidence. Search `agent-memory context "<intent keywords>" --category arch --include-memory` when prior decisions or learning examples may affect the options.
+1. Read the current Session objective, boundary contract, and available Wiki evidence. If prior decisions may affect options, query `wiki_context` (Run MCP) or `evolve context "<intent keywords>" --category arch --include-memory --session <session> --reads "<run_dir>/knowledge-reads.json"` (CLI fallback, single receipt source per Run).
 2. Separate observed facts, user constraints, open questions and proposed options.
 3. Compare options against scope, risk, reversibility and verification cost.
 4. Write `outputs/brainstorm.json` with source evidence for every material conclusion.

@@ -17,9 +17,11 @@ license: Apache-2.0
 
 Impeccable 4.1.3 for Self-Evolving Workflow. Its design playbooks and tools are bundled with this Skill. See [provenance](UPSTREAM.md).
 
-Invoke the installed Skill in the host, for example with `$ew-impeccable audit <target>` in Codex or `/ew-impeccable audit <target>` in Claude Code. In a project installation, ask the host to read `skills/ew-impeccable/SKILL.md` and name the command and target.
+Invoke via your host's Skill or slash command (`audit <target>` / `shape <feature>`), or ask the host to read `skills/ew-impeccable/SKILL.md` with your target.
 
-For a bound Evolve Run, use the command and target in its packet. Read this entry and the selected playbook from the bound revision with `evolve run skill-read`. Use scripts from the same revision and the project root as their working directory. Record the verification in the Run report and follow the continuation supplied by Evolve. Open the controller guide with `evolve workflows show session-run`.
+For a bound Evolve Run, use the command and target in its packet, read this entry and the selected playbook with `evolve run skill-read`, and run scripts from that revision at the project root. Record verification in the Run report (`evolve workflows show orchestrate`).
+
+1. **Knowledge Gate first**: In this repository, satisfy `AGENTS.md` Knowledge Gate (`evolve context ...` or Run MCP `wiki_context`) before opening project files or running `context.mjs`; `PRODUCT.md`, `DESIGN.md`, and `.impeccable/*` are command-authorized workspace outputs.
 
 Core principles:
 - Go all out. No hedging, no shortcuts. The deliverable must be complete (except assets the user must provide).
@@ -86,10 +88,4 @@ Routing:
 
 After init writes PRODUCT.md, resume without rerunning `context.mjs`; init loads the native platform reference itself when the platform it recorded is `ios`, `android`, or `adaptive`.
 
-**Pin / Unpin:** `node <impeccable-base>/scripts/pin.mjs <pin|unpin> <command>` creates or removes a standalone `/<command>` shortcut. Report the script's result concisely; relay stderr verbatim on error.
-
-**Hooks:** `/ew-impeccable hooks <on|off|status|ignore-rule|ignore-file|ignore-value|reset>` manages the design detector hook for this project (auto-runs the detector after UI file edits and surfaces findings). Load [reference/hooks.md](reference/hooks.md) when the user invokes it with any argument.
-
-**Doctor:** `/ew-impeccable doctor` reports and repairs drift between this project's Impeccable artifacts (PRODUCT.md, DESIGN.md and its sidecar, config, surface briefs, the hook) and what this version reads. Load [reference/doctor.md](reference/doctor.md) when the user invokes it, or when they ask what is out of date, stale, or needs refreshing. A `CONTEXT_STALE` directive in Setup's output is the cheap subset of the same report; act on it there per its own instructions rather than running doctor unasked.
-
-**Never repair drift as a side effect of a design task.** A `CONTEXT_STALE` finding is reported, not acted on, unless the user asks. The one exception is a finding marked `auto`, which the next write to that file performs anyway.
+- **Shortcut pin, hooks & doctor**: `node <impeccable-base>/scripts/pin.mjs <pin|unpin> <command>` manages `/<command>` shortcuts (relay errors verbatim). Load [reference/hooks.md](reference/hooks.md) for `/ew-impeccable hooks <action>`, and [reference/doctor.md](reference/doctor.md) for `/ew-impeccable doctor` (only surface `CONTEXT_STALE` without repairing unasked unless flagged `auto`).

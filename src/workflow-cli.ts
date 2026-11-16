@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CodeGraph } from './code.js';
@@ -31,15 +31,17 @@ const options = {
 } as const;
 
 const usage = [
+  'evolve capabilities',
   'evolve session open <objective> --id <id> [--chain <commands>] --actor <id>',
   'evolve session status|amend|complete --session <id>',
   'evolve session list|resume-view',
   'evolve session chain insert|replace|skip --session <id> --step-id <id>',
   'evolve run next|brief|check|skill-read|artifact-read|complete|transition|cancel|decide --session <id>',
+  'evolve run skill-read <run> [<path> --from <from>] --session <id>',
   'evolve run artifact-read <run> <alias> --session <id> [--scope <Wiki scope JSON>]',
   'evolve team controller|assign|report|cancel|list --session <id> --run <id>',
   'evolve skills [install <package>... | validate <command>]',
-  'evolve install [--scope project|user | --global] [--host codex|claude] [--skill <package>] [--root <project>] [--yes]',
+  'evolve install [--scope project|user | --global] [--host codex|claude|agy] [--skill <package>] [--root <project>] [--yes]',
   'evolve workflows [show <id>]',
   'evolve knowledge import [<source>] [--root <destination>] [--project <legacy-id>] [--global] [--knowhow-only] [--apply]',
   'evolve mcp --session <id> --run <id>',
@@ -94,6 +96,42 @@ function importLegacyKnowledge(root: string, sourceArg: string | undefined, valu
     needs_review: entries.filter(entry => entry.status === 'needs_review').length, entries };
 }
 
+function findWindowsCommand(name: string) {
+  const dirs = (process.env.PATH ?? '').split(';').filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of ['.exe', '.cmd', '.bat']) {
+      const candidate = join(dir, name + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return name + '.exe';
+}
+
+function resolveDelegateCommand(tool: 'codex' | 'agy', childArgs: string[]) {
+  const raw = tool === 'codex'
+    ? process.env.CODEX_REPLAY_EXECUTABLE ?? (process.platform === 'win32' ? findWindowsCommand('codex') : 'codex')
+    : process.env.AGY_EXECUTABLE ?? (process.platform === 'win32' ? findWindowsCommand('agy') : 'agy');
+  if (/\.[cm]?js$/i.test(raw)) {
+    return { command: process.execPath, args: [resolve(raw), ...childArgs], shell: false };
+  }
+  if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(raw)) {
+    if (existsSync(raw)) {
+      const shim = readFileSync(raw, 'utf8');
+      const match = /%~?dp0[\\/]([^"\r\n]+\.[cm]?js)/i.exec(shim);
+      if (match) {
+        const script = resolve(dirname(raw), match[1]);
+        if (existsSync(script)) return { command: process.execPath, args: [script, ...childArgs], shell: false };
+      }
+    }
+    return {
+      command: `"${raw}"`,
+      args: childArgs.map(arg => `"${arg.replaceAll('"', '\\"')}"`),
+      shell: true,
+    };
+  }
+  return { command: raw, args: childArgs, shell: false };
+}
+
 function delegate(root: string, values: {
   to?: string; tool?: string; mode?: string; model?: string; cd?: string; session?: string; run?: string; 'prompt-file'?: string;
 }, args: string[]) {
@@ -101,9 +139,6 @@ function delegate(root: string, values: {
   const mode = select(values.mode ?? 'analysis', ['analysis', 'write'], 'mode');
   const cwd = resolve(root, values.cd ?? '.');
   const prompt = requireText(values['prompt-file'] ? readFileSync(resolve(cwd, values['prompt-file']), 'utf8') : args.join(' '), 'prompt');
-  const cli = tool === 'codex'
-    ? process.env.CODEX_REPLAY_EXECUTABLE ?? (process.platform === 'win32' ? 'codex.exe' : 'codex')
-    : process.env.AGY_EXECUTABLE ?? 'agy';
   const model = values.model ? ['--model', values.model] : [];
   if ((values.session === undefined) !== (values.run === undefined)) throw new InputError('Supply both Session and Run identifiers');
   const bound = values.session && values.run ? [
@@ -118,8 +153,9 @@ function delegate(root: string, values: {
     ? ['-a', 'never', 'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check',
       '--sandbox', mode === 'analysis' ? 'read-only' : 'workspace-write', ...model, ...bound, '-']
     : ['--mode', mode === 'analysis' ? 'plan' : 'accept-edits', '--output-format', 'text', ...model, '--print=' + prompt];
-  const child = spawnSync(cli, childArgs, { cwd, input: tool === 'codex' ? prompt : undefined, encoding: 'utf8',
-    windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'], maxBuffer: 8 * 1024 * 1024 });
+  const resolved = resolveDelegateCommand(tool, childArgs);
+  const child = spawnSync(resolved.command, resolved.args, { cwd, input: tool === 'codex' ? prompt : undefined, encoding: 'utf8',
+    shell: resolved.shell, windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'], maxBuffer: 8 * 1024 * 1024 });
   if (child.error) throw child.error;
   if (child.status !== 0) throw new InputError(tool + ' exited with status ' + child.status);
   return { executor: tool, output: child.stdout };
@@ -137,7 +173,7 @@ async function runWorkflowCli(argv: string[]) {
     features: ['revision-cas', 'request-receipts', 'git-skill-binding', 'atomic-artifact-seal', 'run-knowledge', 'swarm-coordination'] });
   if (group === 'knowledge') {
     if (action !== 'import' || args.length > 1) {
-      throw new InputError('Usage: evolve knowledge import [<source>] [--knowhow-only] [--apply]');
+      throw new InputError('Usage: evolve knowledge import [<source>] [--root <destination>] [--project <legacy-id>] [--global] [--knowhow-only] [--apply]');
     }
     return print(importLegacyKnowledge(root, args[0], values));
   }
@@ -155,7 +191,7 @@ async function runWorkflowCli(argv: string[]) {
       : values.scope === undefined ? undefined : select(values.scope, ['project', 'user'] as const, 'Install scope');
     return print(await installWorkflow(root, {
       scope,
-      host: values.host === undefined ? undefined : select(values.host, ['codex', 'claude'] as const, 'Install host'),
+      host: values.host === undefined ? undefined : select(values.host, ['codex', 'claude', 'agy'] as const, 'Install host'),
       skill: values.skill, yes: values.yes,
     }));
   }
@@ -210,8 +246,9 @@ async function runWorkflowCli(argv: string[]) {
       if (action === 'next' || action === 'create') return print(store.next(id(), mutation(), gates, values['step-id']));
       if (action === 'brief') return print(store.brief(id(), runId()));
       if (action === 'check') return print(store.check(id(), runId(), gates));
-      if (action === 'skill-read') return print(store.readSkill(id(), runId(), values.from, args[1]));
-      if (action === 'artifact-read') return print(store.readArtifact(id(), runId(), requireText(args[1], 'artifact ID or alias'),
+      const target = values.run === undefined ? args[1] : args[0];
+      if (action === 'skill-read') return print(store.readSkill(id(), runId(), values.from, target));
+      if (action === 'artifact-read') return print(store.readArtifact(id(), runId(), requireText(target, 'artifact ID or alias'),
         wikiLookupScope(values.scope === undefined ? undefined : JSON.parse(values.scope))));
       if (action === 'complete') return print(store.completeRun(id(), runId(), requireText(values.summary, 'Run summary'),
         select(values.verdict ?? 'done', ['done', 'done_with_concerns'], 'verdict'), gates, mutation()));

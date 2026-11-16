@@ -6,7 +6,7 @@
  * Three kinds of drift live under "out of date", and they want different
  * handling:
  *
- *   1. Bundled core version drift is owned by Maestro releases, not this module.
+ *   1. Bundled core version drift is owned by Self-Evolving Workflow (ew-impeccable) releases, not this module.
  *   2. Schema drift. An artifact was written by an older Impeccable: fields it
  *      no longer reads, fields it now expects, files in retired locations.
  *      Deterministic, and mostly fixable without asking anyone.

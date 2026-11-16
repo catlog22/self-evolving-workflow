@@ -1,26 +1,26 @@
 # Evolve 知识路由
 
-本文件是 Evolve 内部唯一的知识路由。Wiki、Session/Skill 收尾沉淀、候选审查和发布共用 Agent Memory 与统一 Wiki。`workflow-closeout` 只作为旧调用名的兼容入口，并引用本文件。
+本文件是 Evolve 内部唯一的知识路由。Wiki、Session/Skill 收尾沉淀、候选审查和发布共用统一 Wiki 与 `evolve` CLI。
 
 ## 路由边界
 
 | 用户意图 | 路由 | 默认状态 | 主要入口 |
 | --- | --- | --- | --- |
-| 查约束、查参考、查术语、查 Wiki | `read` | 只读 | `agent-memory wiki constraints|references|reference|search|get` |
-| Session 或 Skill 完成后的沉淀 | `closeout` | 生成候选 | `agent-memory closeout session|skill|scan|show` |
-| 审查重复、重叠、冲突和证据 | `review` | 只读 | `closeout show`、`wiki get`、`wiki search` |
-| 发布或更新候选 | `publish` | 需要明确授权 | `wiki propose` → `wiki apply` 或 `closeout publish` |
-| 迁移旧 Spec 和 Knowhow | `migrate` | 预览 | `agent-memory wiki migrate` |
-| 发现可归因于 Skill 的问题 | `evolve` | 只读回溯 | `agent-memory session review` 或 `agent-memory evolve review`，随后转交 `workflow-evolve` |
-| 候选需要新 Skill 或新流程包 | `skill-design` | 只读决策 | `agent-memory closeout route`，满足结构条件时显式调用元 Skill 设计 |
+| 查约束、查参考、查术语、查 Wiki | `read` | 只读 | `evolve wiki constraints|references|search|get` |
+| Session 或 Skill 完成后的沉淀 | `closeout` | 生成候选 | `evolve closeout session|skill|scan|show` |
+| 审查重复、重叠、冲突和证据 | `review` | 只读 | `evolve closeout show`、`evolve wiki get`、`evolve wiki search` |
+| 发布或更新候选 | `publish` | 需要明确授权 | `evolve wiki propose` → `evolve wiki apply` 或 `evolve closeout publish` |
+| 迁移旧知识目录 | `migrate` | 预览 | `evolve knowledge import` 或 `evolve wiki migrate` |
+| 发现可归因于 Skill 的问题 | `evolve` | 只读回溯 | `evolve session review` 或 `evolve skills review`，随后转交 `workflow-evolve` |
+| 候选需要新 Skill 或新流程包 | `skill-design` | 只读决策 | `evolve closeout route`，满足结构条件时显式调用元 Skill 设计 |
 
 ### 导入现有 Spec 和 Knowhow
 
-在原项目根目录运行 `evolve knowledge import` 查看迁移条目和待审查数，追加 `--apply` 后写入该项目的 Agent Memory Wiki。也可以用 `evolve knowledge import "<项目路径>" --apply` 从其他目录执行。用 `--root "<目标项目路径>"` 指定不同目标，用 `--project <来源 ID>` 沿用已使用的迁移身份。
+在原项目根目录运行 `evolve knowledge import` 查看迁移条目和待审查数，追加 `--apply` 后写入该项目的 Wiki。也可以用 `evolve knowledge import "<项目路径>" --apply` 从其他目录执行。用 `--root "<目标项目路径>"` 指定不同目标，用 `--project <来源 ID>` 沿用已使用的迁移身份。
 
-只迁移 Knowhow 时，在项目或全局导入命令中加 `--knowhow-only`，例如 `evolve knowledge import "<项目路径>" --knowhow-only`。核对预览后用相同参数加 `--apply`。底层命令 `agent-memory wiki migrate` 也支持该选项。
+只迁移 Knowhow 时，在项目或全局导入命令中加 `--knowhow-only`，例如 `evolve knowledge import "<项目路径>" --knowhow-only`。核对预览后用相同参数加 `--apply`。底层命令 `evolve wiki migrate` 也支持该选项。
 
-`evolve knowledge import --global --apply` 将用户目录 `.maestro` 中的知识导入独立的 `~/.evolve` Wiki，用 `agent-memory --root "<用户目录>/.evolve" context "<查询>"` 查阅。重复导入保留已存在的相同条目，原始 Markdown 保留为出处。
+`evolve knowledge import --global --apply` 将用户目录中的旧全局知识导入独立的 `~/.evolve` Wiki，用 `evolve --root "<用户目录>/.evolve" context "<查询>"` 查阅。重复导入保留已存在的相同条目，原始 Markdown 保留为出处。
 
 ### 统一 Wiki 条目
 
@@ -33,7 +33,7 @@
 - `categories`、`tags` 和 `keywords` 用于查询和路由，不能替代 `mode` 与 `scope`。
 - `sources` 必须能回查到完成回执、消息锚点或迁移来源。
 
-不再创建或直接修改 `.workflow/specs/`、`.workflow/knowhow/`。旧目录只作为迁移输入和历史档案。
+正式知识统一通过 Wiki 命令写入 `wiki/`，禁止直接创建或修改历史知识目录。
 
 ## 路由规则
 
@@ -53,19 +53,19 @@
 
 按查询类型选择最窄的入口。约束读取必须带适用上下文，参考读取保留条目 ID 和来源。
 
-旧条目可以继续通过 `wiki get <entry-id>` 查阅。只有旧 `skill:` 作用域的条目需要经 Wiki 提案确认新的适用范围，才会进入上下文。混合作用域的条目沿用其项目、任务和路径条件。
+旧条目继续通过 `evolve wiki get <entry-id>` 查阅。只有 `skill:` 作用域的条目经 Wiki 提案确认新的适用范围后才会进入上下文。混合作用域的条目沿用其项目、任务和路径条件。
 
 ```text
-agent-memory --root <project> wiki constraints --category <category>
-agent-memory --root <project> wiki references "<topic>" --task <kind>
-agent-memory --root <project> wiki reference <entry-id> --task <kind>
-agent-memory --root <project> wiki search "<query>"
-agent-memory --root <project> wiki get <entry-id>
-agent-memory --root <project> context "<query>" --task <kind> --session <session-id>
-agent-memory --root <project> context "<query>" --task <kind> --session <session-id> --include-memory
-agent-memory --root <project> context "<query>" --session <current-session-id> --memory-session <historical-session-id> --include-memory
-agent-memory --root <project> context "<query>" --context-file <context.json> --include-memory
-agent-memory --root <project> search "<query>" --scope memory --scene <scene> --type <type> --reads <knowledge-reads.json>
+evolve --root <project> wiki constraints --category <category>
+evolve --root <project> wiki references "<topic>" --task <kind>
+evolve --root <project> wiki get <entry-id> --resolved --task <kind>
+evolve --root <project> wiki search "<query>"
+evolve --root <project> wiki get <entry-id>
+evolve --root <project> context "<query>" --task <kind> --session <session-id>
+evolve --root <project> context "<query>" --task <kind> --session <session-id> --include-memory
+evolve --root <project> context "<query>" --session <current-session-id> --memory-session <historical-session-id> --include-memory
+evolve --root <project> context "<query>" --context-file <context.json> --include-memory
+evolve --root <project> search "<query>" --scope memory --scene <scene> --type <type> --reads <knowledge-reads.json>
 ```
 
 没有命中时保留查询条件和空结果。不要把缺少参考误写成新的约束。
@@ -74,45 +74,45 @@ agent-memory --root <project> search "<query>" --scope memory --scene <scene> --
 
 - `search(query, filters?)` 用查询词、任务、路径和分类发现候选。按 `knowledge_id` 打开选中的条目。
 - 搜索结果返回稳定的 `knowledge_id`，供后续精确读取和审计使用。
-- `get(id)`、`query({ id })` 和 `reference(id)` 负责单条读取，必须接收稳定 ID。Wiki 可以兼容已登记的 `aliases`，写入操作不接受别名。
+- `get(id)` / `wiki get <id> --resolved` 负责单条读取，必须接收稳定 ID。写入操作不接受别名。
 - `constraints(context)` 根据任务、路径和分类解析适用约束。返回结果带 `knowledge_id`，用于 Run 快照和消费记录。
 - `propose`、`changes` 和 `apply` 属于变更接口，必须使用规范化条目 ID、候选 ID 或变更 ID，并校验基线哈希。
 
-标准调用顺序是 `search → get/query`。搜索只返回摘要和 ID，精确读取才返回完整正文、作用域和来源。
+标准调用顺序是 `search → get`。搜索只返回摘要和 ID，精确读取才返回完整正文、作用域和来源。
 
 ### 搜索回执
 
 Run MCP 的 `wiki_context` 和 `wiki_reference` 自动记录 `knowledge_reads/1.0`，封存时写入回执。分析 Run 也会封存已读取的 Wiki 正文和约束为 `session-priors`。后续 Run 实际打开该工件后，回执中的 `priors_reuse` 记录产物 ID、哈希和原 Run ID。
 
 - `searches[]` 记录查询词、阶段过滤条件、返回 ID 和命中数，不接收条目 ID。
-- `reads[]` 记录 `wiki reference <id>`、`wiki get <id>` 或 `memory get <id>` 的精确读取，必须带稳定 ID。
+- `reads[]` 记录 Run MCP `wiki_reference`、`evolve wiki get <id> [--resolved]` 或 `evolve memory get <id>` 的精确读取，必须带稳定 ID。
 - `reads[].from_search_id` 将精确读取关联到对应搜索。已有的 CLI 历史回执还可使用 `priors` 来源标记。
-- 跨 CLI 调用时使用同一个 `--reads` 文件，精确读取再传 `--from-search <search-id>`，保持同一份回执中的搜索与读取关联。`--trace-file` 仍作为兼容别名。
+- 跨 CLI 调用时使用同一个 `--reads` 文件，精确读取再传 `--from-search <search-id>`，保持同一份回执中的搜索与读取关联。
 - `content_sha256` 和 `version` 用于确认读取内容与回执时点一致。
 - 没有执行搜索时不生成伪造记录。零命中使用 `returned_ids: []` 保留为可分析信号。
 
 ### L3 初始化与无侵入回溯
 
-初始化时调用 `agent-memory context` 加载 L3 Wiki 约束和参考，返回 `agent-memory-envelope/1.0`。宿主保留自己的 system prompt、模型调用和工具链，初始化过程不读取宿主历史文件。
+初始化时调用 `evolve context` 加载 L3 Wiki 约束和参考，返回 `agent-memory-envelope/1.0`。宿主保留自己的 system prompt、模型调用和工具链，初始化过程不读取宿主历史文件。
 
 `context --session` 只标记当前工作上下文。需要限定历史 Working Memory 时显式使用 `--memory-session`，避免把新 Session ID 错当成历史记忆过滤条件。
 
-任务结束后使用已提交的 Session/Run 回执执行 Review 和自进化。原始 CLI 历史不是常规输入。未来如果需要补充历史，按 `host_kind` 和显式配置的历史根目录选择性读取，并把结果转换成现有 `transcript-evidence/1.0`，只服务于一次明确的回溯请求。
+任务结束后使用已提交的 Session/Run 回执执行 Review 和自进化。原始 CLI 历史不是常规输入。需要补充历史时，按 `host_kind` 和显式配置的历史根目录选择性读取，并把结果转换成 `transcript-evidence/1.0`，只服务于一次明确的回溯请求。
 
 ### `closeout`
 
-先消费已提交回执，再读取候选。模型提取使用 Agent Memory 的统一系统提示词，候选保留来源消息 ID 和回执身份。
+先消费已提交回执，再读取候选。模型提取使用统一系统提示词，候选保留来源消息 ID 和回执身份。
 
 ```text
-agent-memory --root <project> closeout session <session-id> --project <source-project-id> --receipt <receipt-id>
-agent-memory --root <project> closeout skill <execution-id> --skill <skill-id> --skill-version <version> --status <status> --transcript <messages.json> --project <source-project-id>
-agent-memory --root <project> closeout scan <source-project-root> --project <source-project-id>
-agent-memory --root <project> closeout show <receipt-id> --project <source-project-id>
-agent-memory --root <project> closeout route <closeout-id> <candidate-id> --skill <skill-id> --skill-version <version>
-agent-memory --root <project> skill-design run <task-id> --runner <meta-skill-runner.mjs>
-agent-memory --root <project> skill-design review <design-id>
-agent-memory --root <project> skill-design replay <design-id> --runner <host-runner.mjs> --scenarios <cases.json>
-agent-memory --root <project> skill-design apply <design-id>
+evolve --root <project> closeout session <session-id> --project <source-project-id> --receipt <receipt-id>
+evolve --root <project> closeout skill <execution-id> --skill <skill-id> --skill-version <version> --status <status> --transcript <messages.json> --project <source-project-id>
+evolve --root <project> closeout scan <source-project-root> --project <source-project-id>
+evolve --root <project> closeout show <receipt-id> --project <source-project-id>
+evolve --root <project> closeout route <closeout-id> <candidate-id> --skill <skill-id> --skill-version <version>
+evolve --root <project> skill-design run <task-id> --runner <meta-skill-runner.mjs>
+evolve --root <project> skill-design review <design-id>
+evolve --root <project> skill-design replay <design-id> --runner <host-runner.mjs> --scenarios <cases.json>
+evolve --root <project> skill-design apply <design-id>
 ```
 
 重复投递按回执身份幂等处理。模型失败后使用同一回执重试，不重新构造证据。Closeout 自身和 `workflow-evolve` 的执行记录不进入自动沉淀，避免递归。
@@ -136,10 +136,10 @@ agent-memory --root <project> skill-design apply <design-id>
 新条目或正文变化先创建提案，再在明确授权后应用。
 
 ```text
-agent-memory --root <project> wiki propose <change.json> --closeout <closeout-id> --candidate <candidate-id>
-agent-memory --root <project> wiki changes --entry <entry-id>
-agent-memory --root <project> wiki apply <change-id>
-agent-memory --root <project> closeout publish <closeout-id> <candidate-id> "<title>"
+evolve --root <project> wiki propose <change.json> --closeout <closeout-id> --candidate <candidate-id>
+evolve --root <project> wiki changes --entry <entry-id>
+evolve --root <project> wiki apply <change-id>
+evolve --root <project> closeout publish <closeout-id> <candidate-id> "<title>"
 ```
 
 应用前核对目标条目基线、证据和作用域。应用后重建 Wiki 索引并读取结果验证。基线漂移、证据缺失、关系未裁决或授权不明确时保持候选待处理。
@@ -149,15 +149,14 @@ agent-memory --root <project> closeout publish <closeout-id> <candidate-id> "<ti
 迁移先预览，再逐范围核对。旧 Spec 映射为 `mode: constraint`，旧 Knowhow 映射为 `mode: reference`。保留原 ID、来源文件、旧标签和别名。无法判断作用域、身份冲突或引用断链时使用 `status: needs_review`。
 
 ```text
-agent-memory --root <project> wiki migrate <legacy-root> --project <source-project-id> --scope project
-agent-memory --root <project> wiki migrate <legacy-root> --project <source-project-id> --scope project --apply
+evolve --root <project> wiki migrate <legacy-root> --project <source-project-id> --scope project
+evolve --root <project> wiki migrate <legacy-root> --project <source-project-id> --scope project --apply
 ```
 
 迁移重复执行必须命中同一稳定 ID。应用前保留来源快照和迁移映射，应用后核对旧查询与新 Wiki 的有效条目集合。
 
 ## 与其他 Skill 的关系
 
-- 当前 Agent Memory 主包负责识别意图并读取本路由。
-- `workflow-closeout` 只提供旧名称兼容，不维护第二份知识规则。
+- `ew-orchestrate` 负责识别意图并读取本路由。
 - `workflow-evolve` 只处理有证据归因到 Skill 行为的修改、回放、应用和回滚。
 - `ew-odyssey`、`team-swarm` 和 `ew-skill-design` 可以产生证据或候选，但知识落点仍由本路由决定。

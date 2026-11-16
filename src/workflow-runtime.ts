@@ -226,7 +226,7 @@ export class WorkflowStore {
     const session = this.find(id);
     if (!session) {
       if (existsSync(join(this.root, '.workflow', 'sessions', workflowId(id, 'Session ID')))) {
-        throw new InputError('Historical Session: use agent-memory session review or closeout session for committed evidence');
+        throw new InputError('Historical Session: use evolve session review or evolve closeout session to inspect pre-Evolve Sessions');
       }
       throw new InputError('Evolve Session not found: ' + id);
     }

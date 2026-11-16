@@ -23,6 +23,12 @@ contract:
       role: primary
       alias: review-understanding
       required: false
+    - path: outputs/explore.json
+      kind: exploration
+      schema: exploration/1.0
+      role: evidence
+      alias: review-explore
+      required: false
 goal: true
 ---
 
@@ -40,7 +46,7 @@ Entry modes:
 |------|---------|---------------|
 | file/dir | file or directory path in `<intent>` | Review those files directly |
 | diff | `HEAD` or `staged` in `<intent>` | `git diff HEAD` or `git diff --staged` |
-| phase | phase number in `<intent>` | state.json → changed files for that phase |
+| session/run | session/run ID or commit range in `<intent>` | Evolve Run artifacts / `git diff <base>..<head>` |
 | PR | PR number in `<intent>` | `git diff main...HEAD` |
 | continuation | `-c` | Resume via latest session, jump to `current_state` |
 
@@ -50,20 +56,21 @@ Target resolution table:
 |-------|-----------|
 | File/dir path | Review those files |
 | `HEAD` / `staged` | `git diff HEAD` / `git diff --staged` |
-| Phase number | state.json → changed files |
+| Session/Run ID or commit range | Evolve Run artifacts / `git diff <base>..<head>` |
 | PR number | `git diff main...HEAD` |
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, ownership
-- Wiki: `agent-memory wiki references "<target keywords>" --json` → prior reviews and known patterns
-- Specs: `agent-memory wiki constraints --category review` → known review standards and recurring patterns
-- Coding specs: `agent-memory wiki constraints --category coding` → patterns relevant to the review area
-- Role knowledge: `agent-memory wiki references "<topic>" --category review` → pick relevant items → `agent-memory wiki reference <id>`
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<target keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `review` and `coding` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<target keywords>"` → module boundaries, ownership.
 
 When prior review artifacts of the same scope exist, check their findings first to avoid re-reviewing already-addressed patterns.
+
+## Run Artifact Metadata
+
+Attach `kind`, `schema`, `role`, and `alias` from `produces` to top-level `_meta` in `outputs/session.json` and `outputs/explore.json`, the first JSON record in `outputs/evidence.ndjson`, and YAML frontmatter in `outputs/understanding.md` (`current_state: "END"` before `evolve run complete`).
 
 ## Boundaries and Invariants
 
@@ -93,6 +100,6 @@ When prior review artifacts of the same scope exist, check their findings first 
 
 ## Gate Intent
 
-- `discovery-complete`: archaeology and/or exploration phases have logged evidence, understanding.md §2-§3 are updated, and explore goal (G2) is marked. Archaeology partial results via W003 are acceptable; explore skip via W006 is acceptable if no CLI tools are available.
+- `discovery-complete`: archaeology and/or exploration phases have logged evidence, understanding.md §2-§3 are updated, and explore goal (G2) is marked. Log W003 on partial archaeology failure or W006 when no CLI exploration executor is available, and record what was covered.
 - `all-dimensions-reviewed`: all 4 dimension agents (correctness, security, performance, architecture) have completed, findings are merged into review_result with severity classification, evidence phase=review is logged, and understanding.md §4 severity matrix is written. G1 is marked. Zero dimensions reviewed is BLOCKED (W002 partial with at least 1 dimension is allowed).
 - `zero-remaining`: exhaustive fix has been applied tier-by-tier, `remaining_actionable == 0` (or all remaining individually classified as deferred after 5-round escalation), tests covering the modified areas pass (reusing still-valid live-run results from S_FIX rounds when nothing they cover changed since; rerunning only invalidated targets), CLI re-review confirms no new findings, confirmation is written, understanding.md §5 is updated, and G3 is marked. `needs_rework` routes back to FIX. Skippable only when `skip_fix == true`.

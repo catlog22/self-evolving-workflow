@@ -263,25 +263,31 @@ function workspacePath(uri: string): string | undefined {
 }
 
 function* agyTranscripts(root: string, session: string | undefined, full: boolean): Generator<Transcript> {
-  const home = join(homedir(), '.gemini', 'antigravity-cli');
-  const index = join(home, 'conversation_summaries.db');
-  if (!existsSync(index)) return;
-  const db = openDb(index, true);
-  try {
-    const select = db.prepare(`SELECT conversation_id, workspace_uris FROM conversation_summaries
-      WHERE coalesce(parent_conversation_id, '') = ''${session === undefined ? '' : ' AND conversation_id = ?'}`);
-    for (const row of select.iterate(...(session === undefined ? [] : [session]))) {
-      const { conversation_id: id, workspace_uris: raw } = row;
-      if (typeof id !== 'string' || !/^[\w-]+$/.test(id) || !readableText(raw)) continue;
-      const uris: unknown = JSON.parse(raw);
-      if (!Array.isArray(uris) || typeof uris[0] !== 'string' || !projectContains(root, workspacePath(uris[0]))) continue;
-      const directory = join(home, 'brain', id, '.system_generated', 'logs');
-      const names = full ? ['transcript_full.jsonl', 'transcript.jsonl'] : ['transcript.jsonl'];
-      const path = names.map(name => join(directory, name)).find(existsSync);
-      if (path) yield { path, session: id };
+  const seen = new Set<string>();
+  for (const dirName of ['antigravity-cli', 'antigravity']) {
+    const home = join(homedir(), '.gemini', dirName);
+    const index = join(home, 'conversation_summaries.db');
+    if (!existsSync(index)) continue;
+    const db = openDb(index, true);
+    try {
+      const select = db.prepare(`SELECT conversation_id, workspace_uris FROM conversation_summaries
+        WHERE coalesce(parent_conversation_id, '') = ''${session === undefined ? '' : ' AND conversation_id = ?'}`);
+      for (const row of select.iterate(...(session === undefined ? [] : [session]))) {
+        const { conversation_id: id, workspace_uris: raw } = row;
+        if (typeof id !== 'string' || !/^[\w-]+$/.test(id) || seen.has(id) || !readableText(raw)) continue;
+        const uris: unknown = JSON.parse(raw);
+        if (!Array.isArray(uris) || typeof uris[0] !== 'string' || !projectContains(root, workspacePath(uris[0]))) continue;
+        const directory = join(home, 'brain', id, '.system_generated', 'logs');
+        const names = full ? ['transcript_full.jsonl', 'transcript.jsonl'] : ['transcript.jsonl'];
+        const path = names.map(name => join(directory, name)).find(existsSync);
+        if (path) {
+          seen.add(id);
+          yield { path, session: id };
+        }
+      }
+    } finally {
+      db.close();
     }
-  } finally {
-    db.close();
   }
 }
 

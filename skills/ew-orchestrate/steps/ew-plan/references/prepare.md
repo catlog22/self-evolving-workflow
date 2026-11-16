@@ -1,51 +1,8 @@
----
-refs:
-  - path: ref/boundary-grill.md
-    when: Task boundary or file write conflict
-  - path: ref/tdd.md
-    when: --tdd mode
-  - path: ref/finish-work.md
-    when: Wrapping up
----
+# Pre-flight: ew-plan
 
-# Pre-task Thinking: plan
+Confirm inputs, agent topology, and non-negotiable task quality rules before running [workflow](workflow.md) (open [test-first planning](tdd.md) when `--tdd` is active):
 
-## Purpose
-
-The output of plan is "task JSON an executor can follow to finish the work," not a task-list overview. Understand the input and boundaries before you start.
-
-## Input Interpretation
-
-- Resolve input aliases through the Run packet's `upstream_aliases` and read the corresponding Artifact paths in `upstream` relative to the Session directory. `current-analysis` takes priority. `--gaps` consumes registered issues plus available `latest-review`, `latest-verification`, and `latest-debug` evidence. If there is no usable source, report E001. In a legacy Run, use its existing upstream data.
-- How large is the scope? It determines single-agent vs 2+1 agent mode: ≤3 modules single agent (≤8 tasks); >3 modules 2+1 (2 parallel planners of ≤8 each + 1 synthesis agent, total ≤16). Module count is derived from milestone phase definitions and the analyze upstream.
-- Is it a special mode? `--revise` loads an existing plan for incremental changes (skips preceding phases); `--check` is read-only validation; `--tdd` generates a test-first task chain (open [test-first planning](tdd.md)). All three bypass the standard create pipeline.
-
-## Required Context
-
-- Open bound `session-priors` and reuse its Wiki bodies for the same lookup scope. Query through Run MCP when the plan adds a task, path, category or repository scope.
-- With `current-analysis`: read `findings.json#decisions` — locked as inviolable constraints, free left to the implementer's discretion, deferred explicitly excluded; `findings[]` and recommendation as task-scope input. If upstream gave implementation_scope, 1 scope item → 1 task.
-- With `latest-review`/`latest-debug` (`--gaps`): preserve review finding IDs and severity, cluster shared root causes, and produce traceable fix tasks; issue-backed gaps keep bidirectional `issue_id` links.
-- Pass the Run's `wiki_constraints` to the planner when the field is present. An empty list is a resolved result. Follow the workflow's legacy rules lookup when the field is absent.
-
-## Boundaries and Invariants
-
-- One feature = one task (even if it touches 3-5 files); never split by file.
-- Merge simple unrelated changes into one batch task to reduce agent spawns.
-- depends_on is only for real output dependencies; most tasks should be parallelizable.
-- Each task should be substantial (15-60 minutes); trivial changes <5 minutes must be merged.
-
-## Risk Checklist
-
-- Does every task map to an acceptance/requirement ref? A task with no mapping is an out-of-scope artifact.
-- Are convergence.criteria grep-verifiable? Subjective/referential phrasings like "looks correct", "properly configured", "align X with Y" are forbidden — you must write exact strings/values/command output.
-- Do action and implementation contain concrete values? "Update config to match production" is bad — write the exact key/signature/import path. The executor only works from the task JSON; vague instructions produce shallow changes.
-- Is read_first complete? At minimum it includes the modified files themselves + the source-of-truth files from context.
-- Are there file write conflicts within the same wave? Only check `files[]` (write targets); `read_first[]` (read-only) is not a conflict. Detected conflicts must be re-arranged across waves.
-- UI plan: does every delivery wave have ≥1 `[UI-observable]` convergence criterion? Vertical slices — do not split into pure-backend/pure-frontend tasks.
-
-## Gate Intent
-
-- `context-collected`: upstream context/exploration is loaded; no context source blocks with E001.
-- `plan-generated`: plan.json + tasks are produced by the planner agent (inline planning in the main flow is FORBIDDEN).
-- `plan-checked`: plan-checker passes or minor issues confirmed; boundary grill complete; pressure pass complete.
-- `plan-confirmed`: artifacts are registered only after user confirmation (execute/modify/cancel).
+- **Input resolution**: read upstream artifacts only via injected `upstream_aliases` (`current-analysis` takes priority; `--gaps` combines issues + `latest-review` + `latest-verification` + `latest-debug`). Fail with `E001` if no usable context exists.
+- **Mode & topology**: `--revise` modifies an existing plan in place; `--check` validates read-only; `--tdd` enforces RED -> GREEN -> REFACTOR chains. Scope <=3 modules -> single planner subagent (<=8 tasks); >3 modules -> 2+1 split (<=16 tasks total). Inline planning in the main flow is forbidden.
+- **Knowledge reuse**: consume bound `session-priors` without re-searching identical scope; query `wiki_context`/`wiki_reference` (or CLI `--reads`) when introducing new paths or categories, and forward resolved Wiki constraints to planners.
+- **Task quality**: one feature = one task (vertical UI slices with >=1 `[UI-observable]` criterion per delivery wave; batch trivial <5-minute edits); concrete `action`/`implementation` values (no "align X with Y"); grep/command-verifiable `convergence.criteria`; complete `read_first[]`; no same-wave `files[]` write collisions.

@@ -1,8 +1,16 @@
-# Project Skill package
+# Project Skill Package Contract
 
-Use the package directory name in `name`, and describe the actual invocation in `description`. Keep common steps in `SKILL.md`. For any bundle-only phase, add a standard Markdown link and describe when to follow it. A path is relative to the document that contains its link. Use regular `.md` files tracked under the same Skill directory. Keep every required root link in `required_links` as well as in the body. A header fragment such as `#verify-result` must resolve to an actual heading in the linked file.
+## Frontmatter & Links
 
-For a Skill with no Session/Run lifecycle, use `session-mode: none`. A stateful Skill uses `session-mode: run` and a structured `contract` with `contract_version: 2.1`. Use the same artifact schema, roles, and aliases as the consuming steps. For example:
+- **`name`**: Must match the package directory name (except `ew-odyssey-*`, where `name` is `ew-odyssey` and `src/workflow-skills.ts` binds per-mode `contract` and `required_links` from `references/prepare/odyssey-<mode>.md`).
+- **`description`**: State exact invocation triggers and boundaries.
+- **`session-mode`**: `none` for standalone Skills; `run` for stateful Skills with `contract` (`contract_version: 2.1`).
+- **`required_links`**:
+  - Include ONLY documents that every invocation must preload. Keep conditional/mode guides as standard body links without putting them in `required_links`.
+  - Every item in `required_links` MUST appear as a literal relative Markdown link inside `SKILL.md` (for `ew-odyssey-*`, inside `ew-odyssey/SKILL.md`), resolve to a committed regular `.md` file inside the same package (no `..` segments), and any `#heading` fragment must match an actual heading.
+- **Host portability**: Avoid hardcoding host-specific tool names (`Bash`, `AskUserQuestion`, `spawn_agent`, etc.) in shared rules; describe capabilities neutrally or isolate host mappings in a dedicated adapter reference.
+
+## Session/Run Contract (`contract_version: 2.1`)
 
 ```yaml
 session-mode: run
@@ -25,4 +33,8 @@ contract:
       required: true
 ```
 
-Describe how each declared input is used and what each output proves. Put typed outputs under the current Run's `outputs/` directory. Ensure each output's metadata matches its slot. Use the current Run's `report.md` for the execution narrative and `evidence/` for verification traces. Keep scratch files outside `outputs/`. Define the observable pass condition, blocked result, and next authorized action at each phase boundary that affects correctness or recovery. The coordinator owns progression through the existing Session/Run commands and receipts.
+## Output & Boundary Rules
+
+- Put all typed outputs under the Run's `outputs/` directory with matching `_meta` / frontmatter (`kind`, `schema`, `role`, optional `alias`).
+- Use `report.md` for execution narrative and `evidence/` for verification traces; keep scratch files outside `outputs/`.
+- Define observable pass conditions, blocked states, and next authorized actions at each phase boundary. The coordinator drives progression via Session/Run commands and receipts.

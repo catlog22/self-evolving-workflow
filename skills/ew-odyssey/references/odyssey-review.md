@@ -1,10 +1,6 @@
----
-name: ew-odyssey-review
-prepare: odyssey-review
-session-mode: inherited
----
-
 # Workflow: Odyssey Review
+
+Follow [shared phases](odyssey-base.md) and [runtime adapters](runtime-adapters.md) for parallel agents, structured prompts, and metadata.
 
 ## State Chain
 
@@ -29,7 +25,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared phase
 |-------|-----------|
 | File/dir path | Review those files |
 | `HEAD` / `staged` | `git diff HEAD` / `git diff --staged` |
-| Phase number | state.json → changed files |
+| Session/Run ID or commit range | Evolve Run artifacts / `git diff <base>..<head>` |
 | PR number | `git diff main...HEAD` |
 
 ---
@@ -73,7 +69,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared phase
 7. Discoveries
 8. Learnings
 
-Specs: `agent-memory wiki constraints --category review`.
+Specs: `evolve wiki constraints --category review`.
 
 ---
 
@@ -99,15 +95,13 @@ Discover routes: fixable sibling → S_FIX; new target needing review → S_REVI
 
 ### A_ARCHAEOLOGY
 
-2 parallel Agents:
+Run 2 parallel subagents (join before advancing — see [runtime adapters](runtime-adapters.md)):
 - **Timeline**: `git log --oneline -20 -- {files}`
 - **Blame**: top 3 files `git blame -L {region}`
 
 Evidence phase=archaeology.
 
-`evolve delegate --role analyze --mode analysis` (`run_in_background: true`):
-- PURPOSE: review recent modifications related to {target}
-- EXPECTED: JSON `[{commit_sha, risk_level, analysis, could_cause_issue, explanation}]`
+`evolve delegate "PURPOSE: review recent modifications related to {target}. EXPECTED: JSON [{commit_sha, risk_level, analysis, could_cause_issue, explanation}]" --to codex --mode analysis`
 
 Update §2 (Archaeology).
 
@@ -117,9 +111,7 @@ If an archaeology agent fails, log W003 and proceed with available results.
 
 Skip if no CLI tools (W006).
 
-`evolve delegate --role explore --mode analysis` (`run_in_background: true`):
-- PURPOSE: call chains, recent changes, error gaps, similar patterns
-- EXPECTED: JSON `{call_chains, recent_changes, error_gaps, similar_patterns}`
+`evolve delegate "PURPOSE: trace call chains, recent changes, error gaps, and similar patterns for {target}. EXPECTED: JSON {call_chains, recent_changes, error_gaps, similar_patterns}" --to codex --mode analysis`
 
 Write `explore.json` + evidence phase=explore. Update §3 (Exploration). Mark G2.
 
@@ -127,7 +119,7 @@ Write `explore.json` + evidence phase=explore. Update §3 (Exploration). Mark G2
 
 ### A_REVIEW
 
-Spawn N parallel Agents, one per dimension:
+Run N parallel subagents (one per dimension; join all before advancing — see [runtime adapters](runtime-adapters.md)):
 - **Correctness**: logic errors, boundary conditions, null/undefined, race conditions
 - **Security**: injection, XSS, CSRF, data exposure, auth bypass
 - **Performance**: hot paths, N+1, memory leaks, unnecessary recomputation
@@ -146,11 +138,11 @@ for tier in [critical, high, medium, low].filter(>= threshold):
   re-review modified area (new findings → append, continue; max 2 per tier)
   tier done → auto-commit
 ```
-Normal: request_user_input per tier | `-y`: auto-fix all. Remaining > 0 → retry (**MANDATORY hard limit: max_fix_rounds = 5**). Unchanged 2 rounds → classify each individually. After 5 rounds remaining > 0 → escalate: Normal: request_user_input (continue/accept/reclassify) | `-y`: classify remaining as `deferred`, proceed. **No partial-tier advancement** — a tier is complete only when every finding is fixed or individually classified. Blanket "pre-existing" forbidden. Commit per tier: `"odyssey-review({slug}): FIX-{tier} — {N} items fixed"`.
+Normal: structured prompt per tier | `-y`: auto-fix all. Remaining > 0 → retry (**MANDATORY hard limit: max_fix_rounds = 5**). Unchanged 2 rounds → classify each individually. After 5 rounds remaining > 0 → escalate: Normal: structured prompt (continue/accept/reclassify) | `-y`: classify remaining as `deferred`, proceed. **No partial-tier advancement** — a tier is complete only when every finding is fixed or individually classified. Blanket "pre-existing" forbidden. Commit per tier: `"odyssey-review({slug}): FIX-{tier} — {N} items fixed"`.
 
 ### A_CONFIRM
 
-Run tests + `evolve delegate --role review --mode analysis` (`run_in_background: true`) zero-residual review. `remaining == 0 AND new == 0` → confirmed, mark G3; otherwise → needs_rework → S_FIX. Update `confirmation` + `remaining_actionable` + §5.
+Run tests + `evolve delegate "Review modified files for zero-residual defects across correctness, security, performance, and architecture; return remaining findings and verdict" --to codex --mode analysis`. `remaining == 0 AND new == 0` → confirmed, mark G3; otherwise → needs_rework → S_FIX. Update `confirmation` + `remaining_actionable` + §5.
 
 **GATE: zero-remaining** — exhaustive fix applied tier-by-tier, `remaining_actionable == 0` (or all remaining individually classified as deferred after 5-round escalation), tests pass, CLI re-review confirms no new findings, confirmation + §5 written, G3 marked. `needs_rework` routes back to FIX; skippable only when `skip_fix == true`.
 
@@ -166,15 +158,14 @@ Review findings with severity >= medium.
 
 ## Knowledge Persistence (§8)
 
-Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
-
+Include verified reusable findings in the Run summary and harvest the completed Session through `evolve workflows show knowledge` (`evolve closeout session` → `evolve wiki propose`).
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `stage spec → review` |
-| Security finding | Vulnerability type + triggers + fix approach | `stage spec → debug` |
-| Architecture violation pattern | Violation + correct boundary + verification | `stage spec → arch` |
-| Reusable generalization pattern | Signature + risk + fix template + scope | `stage spec → coding` |
+| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `evolve closeout session` → `evolve wiki propose` (`category: review`) |
+| Security finding | Vulnerability type + triggers + fix approach | `evolve closeout session` → `evolve wiki propose` (`category: debug`) |
+| Architecture violation pattern | Violation + correct boundary + verification | `evolve closeout session` → `evolve wiki propose` (`category: arch`) |
+| Reusable generalization pattern | Signature + risk + fix template + scope | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
 
 ---
 
@@ -199,10 +190,10 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Decision Point | Normal | `-y` |
 |---------------|--------|------|
-| S_FIX tier candidates | request_user_input | auto-fix `deferred` |
-| S_FIX re-review new findings | request_user_input | auto-append |
-| S_CONFIRM needs_rework | request_user_input | auto proceed |
-| A_DISCOVER routing | request_user_input | auto-fix w/ template, issue for rest |
+| S_FIX tier candidates | structured prompt | auto-fix `deferred` |
+| S_FIX re-review new findings | structured prompt | auto-append |
+| S_CONFIRM needs_rework | structured prompt | auto proceed |
+| A_DISCOVER routing | structured prompt | auto-fix w/ template, issue for rest |
 
 ---
 
@@ -239,13 +230,4 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 ---
 
-## Next Step Routing (review-specific)
-
-| Condition | Next |
-|-----------|------|
-| Discovery issues | `Open the follow-up findings in the project issue tracker` |
-| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
-| Debug root cause | `/ew-odyssey <issue> --mode debug` |
-| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
-| Related question | `Use an Evolve analyze step for the question` |
-| Pending decisions | Filter evidence phase=decision status=pending |
+See [shared base](odyssey-base.md) for generic follow-up routing (`Next Step Routing`). Root-cause debugging: `/ew-odyssey <issue> --mode debug`.

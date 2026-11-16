@@ -1,6 +1,6 @@
 # Self-Evolving Workflow
 
-面向代码助手的可恢复开发工作流。用 `evolve` 编排任务、记录验证证据，并从代码图谱、项目 Wiki 和工作记忆中检索上下文。每个 Run 可以绑定 Git 中的 Skill 版本，让后续执行可以恢复和复查。
+面向代码助手的自进化工作流。用 `evolve` 编排任务，为每一步提供项目知识，并根据执行证据提出和验证 Skill 改进。
 
 [npm 安装包](https://www.npmjs.com/package/self-evolving-workflow) · [Session 与 Run 指南](skills/ew-orchestrate/references/orchestrator-run-loop.md) · [MIT 许可证](LICENSE)
 
@@ -42,11 +42,11 @@ evolve context "回归测试" --session quickstart --include-memory
 
 > 读取项目的 `AGENTS.md` 和 `skills/ew-orchestrate/SKILL.md`，使用 `ew-companion` 开一轮 Evolve Run，验证刚写入的回归测试记忆能被检索，并完成 Session。
 
-用 `evolve session list` 查看 Session，用 `evolve workflows show session-run` 查看命令行的分派、封存和恢复步骤。
+用 `evolve session list` 找到任务，再用 `evolve session status --session <id>` 查看当前步骤。接手执行时，用 `evolve run brief <run-id> --session <id>` 查看任务参数、绑定的 Skill 版本和上游成果的引用，再结合当前工作区继续。已有成果可通过 `evolve run artifact-read` 读取。失败的步骤可以开启新的 Run，保留与上次尝试的关联。完整操作见 `evolve workflows show session-run`。
 
 ## 随包提供的 Skills
 
-![六个工作流 Skill，覆盖任务编排、迭代排查、并行协作、Skill 设计、回放验证和知识沉淀](docs/images/workflow-skills.png)
+![八个工作流 Skill，覆盖任务编排、迭代排查、并行协作、Skill 设计、回放验证、知识沉淀、界面设计与发布门禁](docs/images/workflow-skills.png)
 
 | Skill | 适用任务 |
 | --- | --- |
@@ -57,6 +57,7 @@ evolve context "回归测试" --session quickstart --include-memory
 | [workflow-evolve](skills/workflow-evolve/SKILL.md) | 根据执行记录提出改进，用回放比较基线与候选版本。 |
 | [workflow-closeout](skills/workflow-closeout/SKILL.md) | 将 Session 收尾、知识候选和 Wiki 审查交给统一的知识流程。 |
 | [ew-impeccable](skills/ew-impeccable/SKILL.md) | 为 Web 和原生移动界面制定方向、实现设计、审计和打磨。 |
+| [release-gate](skills/release-gate/SKILL.md) | 依据 Wiki 约束、校验和与冻结窗口检查发布就绪状态并输出 `release-gate/1.0`。 |
 
 ### Impeccable 界面设计
 

@@ -68,7 +68,7 @@ const UI_EXTENSIONS = new Set(['.html', '.htm', '.jsx', '.tsx', '.vue', '.svelte
 const VISUAL_SCAN_FILE_LIMIT = 250;
 const VISUAL_SCAN_DEPTH_LIMIT = 4;
 
-// Maestro bundles this core; upstream update checks are intentionally disabled.
+// Self-Evolving Workflow bundles this core (ew-impeccable); upstream update checks are intentionally disabled.
 
 export function resolveContextDir(cwd = process.cwd(), options = {}) {
   return resolveContext(cwd, options).contextDir;
@@ -1161,10 +1161,10 @@ function hasTargetOption(options) {
 }
 
 const HOOK_MANIFESTS_BY_PROVIDER = Object.freeze({
-  evolve: ['.codex/hooks.json', '.claude/settings.local.json', '.claude/settings.json'],
+  evolve: ['.codex/hooks.json', '.claude/settings.local.json', '.claude/settings.json', '.agents/hooks.json'],
   'claude-code': ['.claude/settings.local.json', '.claude/settings.json'],
   codex: ['.codex/hooks.json'],
-  agents: ['.codex/hooks.json'],
+  agents: ['.agents/hooks.json', '.codex/hooks.json'],
   cursor: ['.cursor/hooks.json'],
   github: ['.github/hooks/impeccable.json'],
   grok: ['.grok/hooks/impeccable.json'],
@@ -1180,7 +1180,8 @@ function valueHasHookMarker(value) {
       || value.includes('skills/impeccable/scripts/hook-before-edit.mjs')
       || value.includes('workflows/impeccable/scripts/hook.mjs')
       || value.includes('workflows/impeccable/scripts/hook-before-edit.mjs')
-      || value.includes('skills/ew-impeccable/scripts/hook.mjs');
+      || value.includes('skills/ew-impeccable/scripts/hook.mjs')
+      || value.includes('skills/ew-impeccable/scripts/hook-before-edit.mjs');
   }
   if (Array.isArray(value)) return value.some(valueHasHookMarker);
   if (value && typeof value === 'object') return Object.values(value).some(valueHasHookMarker);

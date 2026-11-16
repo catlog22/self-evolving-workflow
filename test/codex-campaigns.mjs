@@ -195,8 +195,8 @@ async function odyssey(run, session) {
   assert.equal(brief.goal_mode.platform, 'codex');
   const answer = await host(session, brief, [
     ...entryLinks(...brief.skill_required_links),
-    ...entryLinks('references/odyssey-review.codex.md'),
-    { from: 'references/odyssey-review.codex.md', destination: 'odyssey-base-codex.md' },
+    ...entryLinks('references/odyssey-review.md'),
+    { from: 'references/odyssey-review.md', destination: 'odyssey-base.md' },
   ], [
     'Apply the review workflow to the one-line change. Review correctness, security, performance, and architecture.',
     'This audit-only fixture has no pending fixes. Return {dimensions, findings, remaining_actionable}; dimensions are strings.',
@@ -430,8 +430,8 @@ function verifyDebugCommand(commands, name, code, marker) {
 
 async function odysseyDebug(run, session, sourceCommit) {
   const links = [
-    ...entryLinks(...run.skill_required_links, 'references/odyssey-debug.codex.md'),
-    { from: 'references/odyssey-debug.codex.md', destination: 'odyssey-base-codex.md' },
+    ...entryLinks(...run.skill_required_links, 'references/odyssey-debug.md'),
+    { from: 'references/odyssey-debug.md', destination: 'odyssey-base.md' },
   ];
   const diagnosis = await host(session, run, links, [
     'Execute the archaeology, discovery and diagnosis phases of the loaded Odyssey Debug workflow on this small repository.',
@@ -603,7 +603,7 @@ async function swarmCampaign(run, session, callTool, reconnect) {
   assert.ok(report.top_k.every(item => item.source === 'verified_llm'));
   save(run, 'swarm-report.json', report);
   const synthesis = await host(session, brief, [
-    ...entryLinks(...brief.skill_required_links, 'roles/analyst/role.md'),
+    ...entryLinks(...brief.skill_required_links, 'roles/coordinator/role.md', 'roles/analyst/role.md'),
     { from: 'roles/coordinator/role.md', destination: 'commands/converge.md' },
   ], 'Synthesize the winner. Return {file, value, evidence, iteration, phase}. Take iteration and phase from the coordinator state returned by team_msg. Use the controller report and the source evidence.',
   { report, source: 'limit-b.mjs:1 export const limit = 3;', ants: allAnts }, { calls: [

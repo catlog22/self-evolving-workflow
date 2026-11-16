@@ -3,7 +3,7 @@
 ## Inputs
 
 - `swarm-config.json` from Phase 1 (in memory until the exact Run directory is resolved)
-- canonical `session_id` from the birth packet or self-start receipt (not a separate `TS-*` locator)
+- canonical `session_id` from the birth packet or self-start receipt
 - `skill_root` = directory containing the active `team-swarm/SKILL.md` (do not assume project cwd or a particular mirror)
 
 ## Workflow
@@ -23,8 +23,10 @@ session_path = Path(run_dir) / "work" / "team"
 
 ### Step 2: Create session directory tree
 
-```
-mkdir -p <session_path>/{pheromone/history,trails,scores,artifacts,wisdom,.msg}
+Create `<session_path>` and subdirectories (`pheromone/history`, `trails`, `scores`, `artifacts`, `wisdom`) cross-platform (do NOT use POSIX brace expansion `{...}` on Windows PowerShell):
+
+```python
+python -c "from pathlib import Path; s = Path(r'<session_path>'); [ (s/d).mkdir(parents=True, exist_ok=True) for d in ('pheromone/history','trails','scores','artifacts','wisdom') ]"
 ```
 
 ### Step 3: Write swarm-config.json
@@ -36,10 +38,10 @@ Validate before write:
 - `swarm.n_ants` >= 2 (single-ant defeats swarm purpose)
 - `convergence.max_iterations` >= 1
 
-### Step 4: Create team
+### Step 4: Verify Evolve Run roster
 
 ```
-TeamCreate({ name: "swarm" })
+Bash: evolve team list --session <session_id> --run <run_id>
 ```
 
 ### Step 5: Write role-binding.json
@@ -61,7 +63,7 @@ Bash: python <skill_root>/scripts/aco.py --session <session_path> --run-dir <run
 ```
 
 Parse stdout JSON. On `status: "error"`:
-- exit_code 2 -> config validation error -> request_user_input to fix
+- exit_code 2 -> config validation error -> ask user via structured question (`ask_question` / `request_user_input`) to fix
 - exit_code 1 -> runtime error -> log to issues.md + retry once
 
 On success, capture:
@@ -120,15 +122,15 @@ Do NOT spawn any workers in this command. First spawn happens in iterate.md step
 
 | Failure | Action |
 |---------|--------|
-| Config invalid | request_user_input, regenerate, retry |
-| `aco.py init` runtime error | Log to issues.md, retry once, then request_user_input (abort/refine) |
+| Config invalid | Ask user via structured question (`ask_question` / `request_user_input`), regenerate, retry |
+| `aco.py init` runtime error | Log to issues.md, retry once, then ask user (abort/refine) |
 | Directory creation fails | Check disk space / permissions, retry |
-| TeamCreate fails | Resolve the exact `run_id` / `run_dir`, inspect its one `work/team/team-session.json`, and offer resume only if lifecycle reconciliation verifies a matching active/paused `team-swarm` session; otherwise fail closed |
+| Roster conflict / existing session | Resolve the exact `run_id` / `run_dir`, inspect its one `work/team/team-session.json`, and offer resume only if lifecycle reconciliation verifies a matching active/paused `team-swarm` session; otherwise fail closed |
 
-### TeamCreate Conflict Recovery Contract
+### Run Conflict Recovery Contract
 
 1. Start from the birth-packet `run_id` / `run_dir`. Do not scan sibling Runs and do not treat an arbitrary existing team name as a resumable match.
 2. Inspect the exact team session and reconcile canonical Run status, broker-backed live agents, non-terminal tasks, and ordered activity timestamps through the runtime lifecycle adapter.
 3. Offer **Resume** only when the exact candidate is a verified matching `team-swarm` session with lifecycle `active` or `paused`. If health is `stale_candidate`, show the evidence and require an explicit operator choice; never convert stale health into cleanup eligibility.
-4. If exact locator evidence is absent, mismatched, `unknown`, or `inconsistent`, fail closed. Locator-less legacy discovery must use ranked candidates plus request_user_input and must never choose array index 0 implicitly.
+4. If exact locator evidence is absent, mismatched, `unknown`, or `inconsistent`, fail closed without scanning or guessing an unlocated candidate.
 5. Do not offer a generic "clean or resume" action. `abandoned` requires a separate explicit audited transition after all liveness/activity checks, and cleanup requires a second confirmation that removes only team coordination state, never Run authority or outputs.

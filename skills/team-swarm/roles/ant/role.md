@@ -65,7 +65,7 @@ For each step:
    - For each candidate c: `weight = edge_preferences.get("<current>::<c>", baseline) * heuristic(c)`
    - `heuristic(c)` = ant's own evidence-based judgment (1.0 if no opinion)
 3. **Investigate top candidates** using available tools:
-   - Tool selection: Read, Grep, Glob for code-based task spaces; or CLI delegate `--mode analysis` for richer analysis
+   - Tool selection: use host file-read and search tools (`read_file` / `run_command` or `evolve code search`) for code-based task spaces, or dispatch a read-only subagent (`invoke_subagent` in Antigravity, or `evolve delegate "<prompt>" --to codex --mode analysis` externally) for deeper inspection.
    - Gather evidence about each top candidate before committing
 4. **Choose next node**: weighted-random OR argmax (when high confidence)
 5. **Record decision**:

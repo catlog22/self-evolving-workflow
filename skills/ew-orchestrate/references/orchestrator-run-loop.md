@@ -1,36 +1,37 @@
-# Evolve Session execution and recovery
+# Evolve Session Execution and Recovery
 
-Use the bundled evolve command. A checkout can invoke the same entry with node dist/workflow-cli.js. Session and Run state, requests and sealed artifact bytes share the SQLite database under .agent-memory/. Working outputs and campaign checkpoints live under the run_dir returned by the controller.
+Use the bundled `evolve` CLI (in this source checkout, run `node dist/workflow-cli.js`). Session and Run state, requests, and sealed artifact bytes share the SQLite database under `.agent-memory/`; working outputs live under the `run_dir` returned by the controller.
 
-## Start and dispatch
+## Start and Dispatch
 
-1. Run `evolve install` to choose a project or user installation and select Skill packages. For unattended project setup, use `evolve install --scope project --yes`. Commit the project Skill files so Runs can pin them. Use `evolve workflows` to list the packaged Markdown and `evolve workflows show session-run` to open this guide. Use `evolve skills validate <command>` to validate a step's committed contract and required links.
-2. Open with evolve session open "<objective>" --id <session> --actor <actor>. Supply --definition-of-done and --chain "ew-analyze,ew-plan,ew-execute,ew-review" for an argument-free chain. For step arguments, use evolve session chain insert --session <session> --step-id <id> --command <command> --arg "<argument>" --actor <actor> --expected-orchestration-revision <revision>. Add --decision-ref <id> where a step requires a coordinator decision. Pass argument values beginning with a hyphen as --arg=VALUE.
-3. Dispatch evolve run next --session <session> --actor <actor> --expected-orchestration-revision <revision>. The response supplies the exact Run, frozen task, Skill reference, input artifacts and exit gates. Pass these identifiers to the host worker.
-4. Use the returned orchestration_revision for the next Session mutation. Run completion and recovery also take the current Run revision. Supply a stable --request-id for a retry after an uncertain response. Each Session records the normalized mutation payload and the original result. Refresh status after a revision conflict.
+1. **Install & validate**: Run `evolve install` (`--scope project --yes` for unattended project setup), commit Skill packages so Runs bind to a Git revision, list docs via `evolve workflows`, and validate contracts via `evolve skills validate <command>`.
+2. **Open Session & chain**:
+   - Argument-free chain: `evolve session open "<objective>" --id <session> --actor <actor> [--definition-of-done "<text>"] --chain "ew-analyze,ew-plan,ew-execute,ew-review"`.
+   - With step args / gates: `evolve session chain insert --session <session> --step-id <id> --command <command> --arg "<argument>" [--decision-ref <id>] --actor <actor> --expected-orchestration-revision <revision>` (pass values starting with `-` as `--arg=VALUE`).
+3. **Dispatch Run**: `evolve run next --session <session> --actor <actor> --expected-orchestration-revision <revision>` — pass the returned `run_id`, `run_dir`, `skill_ref`, `upstream`, and `gates` to the executing worker.
+4. **Concurrency & retries**: Advance `--expected-orchestration-revision` (and `--expected-run-revision` for Run mutations) from each receipt; keep a stable `--request-id` when retrying an uncertain response, and call `evolve session status` after any `REVISION_CONFLICT`.
 
-## Read and execute
+## Read and Execute
 
-Open the entry with evolve run skill-read <run> --session <session>. Open each applicable Markdown link with evolve run skill-read <run> <destination> --from <source> --session <session>. Paths are relative to the bound Skill package. If Git objects are unavailable, restore that revision before resuming.
+- **Skill reads**: Open entry with `evolve run skill-read <run> --session <session>`, and required/conditional links with `evolve run skill-read <run> <destination> --from <source> --session <session>` (package-relative `.md` paths only).
+- **Artifacts**: Read upstream inputs with `evolve run artifact-read <run> <alias-or-id> --session <session>` (`--scope <JSON>` when filtering). Write declared outputs under `{run_dir}/outputs/` with matching `_meta` (JSON), first NDJSON record, or YAML frontmatter (Markdown).
+- **Knowledge Gate inside a Run** (choose one receipt source per Run):
+  - **Run MCP** (`evolve mcp --root <project> --session <session> --run <run>`): open bound `session-priors` via `read_artifact` when its scope matches; otherwise search with `wiki_context` and open selected IDs with `wiki_reference`.
+  - **CLI fallback**: `evolve context "<topic>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"`, then inspect exact IDs with `--from-search <search-id>`.
+- **Delegation**:
+  - Within Antigravity: execute directly or use `invoke_subagent` / `swarm` (joining all subagents).
+  - External worker: `evolve delegate "<prompt>" --to codex --mode analysis|write --session <session> --run <run>` attaches `evolve mcp` (`--to agy` runs standalone without Run MCP binding).
 
-Read input artifacts with evolve run artifact-read <run> <alias-or-id> --session <session>. This returns the sealed bytes and lineage from the Run's input binding. Write the outputs declared by the Skill to its run_dir. Use _meta in JSON, the first record of NDJSON, or YAML frontmatter in Markdown. Match the declared kind, schema, role and alias.
+## Verify and Continue
 
-Use Run MCP `wiki_context` with a keyword for project knowledge. It records the search and returns applicable constraints and candidate reference IDs. Open the references you use with `wiki_reference`. The Run records the originating search ID and exact body hash. Analysis seals those bodies and bound constraints as `session-priors`.
-
-For a later Run, open the bound `session-priors` with `read_artifact` before searching again. Use the entries matching its current Wiki scope. Supply the current `scope` with task, paths, categories or repository when it is known. Scope changes call for a fresh lookup. The consumer receipt records the opened artifact, digest and producer Run. CLI artifact reads take the same scope as a JSON object via `--scope`.
-
-Hosts can connect to `evolve mcp --root <project> --session <session> --run <run>` for Skill, artifact, Wiki and working Memory reads. CLI-only runs can use `agent-memory context "<topic>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` and pass the same file with the matching `--from-search` for exact reads. Select one source for direct knowledge reads per Run.
-
-For a bound Codex worker, use `evolve delegate "<prompt>" --to codex --mode analysis --session <session> --run <run>`. This connects Codex to that Run’s MCP tools. Use write mode for authorized edits. A host may also execute the step directly or use its own collaboration tools. Use `evolve delegate` without a Run binding for a second opinion from Agy.
-
-## Verify and continue
-
-Seal directly with `evolve run complete <run> --session <session> --actor <actor> --expected-orchestration-revision <revision> --expected-run-revision <revision> --summary "<observed result>"`. Repeat `--gate <id>` for each verified exit gate. Completion validates required reads, evidence and outputs, then seals and advances the step in one transaction. Use `run check` for diagnostics. Record qualified outcomes with `--verdict done_with_concerns`.
-
-Follow continuation.action. For decide, run evolve run decide <decision-id> --session <session> --actor <actor> --expected-orchestration-revision <revision> --verdict proceed|fix|escalate --summary "<decision evidence>". For next, allocate the pending step. For complete, use evolve session complete --session <session> --actor <actor> --expected-orchestration-revision <revision>. Review and harvest completed evidence through the [knowledge route](knowledge-route.md).
+- **Seal Run**: `evolve run complete <run> --session <session> --actor <actor> --expected-orchestration-revision <revision> --expected-run-revision <revision> --summary "<observed result>" --gate <id>... [--verdict done|done_with_concerns]`. Use `evolve run check` to diagnose blockers.
+- **Follow `continuation.action`**:
+  - `decide` -> `evolve run decide <decision-id> --session <session> --actor <actor> --expected-orchestration-revision <revision> --verdict proceed|fix|escalate --summary "<evidence>"`
+  - `next` -> allocate next pending step via `evolve run next`
+  - `complete` -> `evolve session complete --session <session> --actor <actor> --expected-orchestration-revision <revision>`, then follow [knowledge-route.md](knowledge-route.md) to review/harvest findings.
 
 ## Recover
 
-Read evolve session status --session <session> and evolve run brief <run> --session <session>. Resume the exact bound Run and any domain checkpoint in its run_dir. For a blocked Run, transition it to running when the blocker clears. For a failed attempt, use evolve run transition <run> failed --session <session> --actor <actor> --expected-orchestration-revision <revision> --expected-run-revision <revision> --reason "<evidence>". Cancellation uses evolve run cancel with the same fences and reason. Allocate the resulting pending step through run next. New attempts retain retry lineage and bind the current Git version.
-
-Historical Session receipts are available to agent-memory session review and agent-memory closeout session. Start an Evolve Session for new execution and reference the historical evidence in its objective when relevant.
+- Inspect `evolve session status --session <session>` and `evolve run brief <run> --session <session>`.
+- Transition blocked Runs back to `running`, or mark failed/cancelled attempts via `evolve run transition <run> failed` / `evolve run cancel` (with current fences and `--reason`), then allocate the pending retry via `evolve run next`.
+- Historical receipts remain readable via `evolve session review` and `evolve closeout session`.

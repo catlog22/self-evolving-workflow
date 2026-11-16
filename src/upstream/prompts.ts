@@ -163,12 +163,7 @@ export function buildGeneratePrompt(args: {
 }): string {
   const { sourceName, sourceText, existingPages, pagesToUpdate } = args;
 
-  const existingList =
-    existingPages.length > 0
-      ? existingPages
-          .map((p) => `- [${p.type}] ${p.relPath}${p.title ? ` — ${p.title}` : ""}${p.description ? `（${p.description}）` : ""}`)
-          .join("\n")
-      : "(wiki is empty — this is the first source)";
+  const existingList = formatExistingPages(existingPages);
 
   const updateSection =
     pagesToUpdate && pagesToUpdate.length > 0

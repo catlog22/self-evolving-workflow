@@ -58,5 +58,5 @@ session-mode: run
 
 Read [preparation](references/prepare.md), then follow the [analysis workflow](references/workflow.md).
 
-- Read [boundary review](references/boundary-grill.md) when a responsibility conflict is found.
+- Read [boundary review](../../references/boundary-grill.md) when a responsibility conflict is found.
 - Read [issue gap analysis](references/issue-gaps-analyze.md) for the --gaps branch.

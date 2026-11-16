@@ -2,8 +2,6 @@
 role: coordinator
 ---
 
-> **Plan tracking**: codex 无 TaskCreate/TaskUpdate/TodoWrite 任务板。进度清单用 `update_plan({ explanation?, plan: [{ step, status }] })` 维护（整体提交步骤数组，status: `pending` | `in_progress` | `completed`），权威状态始终在 session 工件中；依赖/认领（addBlockedBy/owner）是工件字段，不是工具参数。
-
 # Coordinator Role — team-swarm
 
 ## Identity
@@ -56,11 +54,11 @@ When coordinator needs to execute a phase command:
 | [Initialization](commands/init-swarm.md) | Command | Phase 2: build swarm-config + call `aco.py init` |
 | [Iteration](commands/iterate.md) | Command | Phase 3: single iteration loop body (select/spawn/update) |
 | [Convergence](commands/converge.md) | Command | Phase 4: convergence handler + analyst spawn |
-| `scripts/aco.py` | Script | All numeric decisions (Bash subprocess) |
-| team-worker | Subagent | Worker spawning (ant, scorer, analyst) |
-| update_plan / list_agents / wait_agent / update_plan | System | Task lifecycle |
+| `scripts/aco.py` | Script | All numeric decisions (Python subprocess) |
+| team-worker | Subagent | Worker dispatch (ant, scorer, analyst) via host subagent / swarm |
+| host plan / roster | System | Track assignments and join/await workers before concluding |
 | evolve team | Evolve runtime | Assignment and result receipts |
-| send_message / request_user_input | System | Comms |
+| host user prompt | System | Clarify ambiguity / failure (`ask_question` or `request_user_input`) |
 
 ---
 
@@ -80,13 +78,12 @@ When coordinator needs to execute a phase command:
 
 ## Phase 0: Session Resume Check
 
-1. **Exact Run locator first**: when the birth packet supplies `run_id` / `run_dir`, inspect only `{run_dir}/work/team/team-session.json`. An exact `run_dir` contains at most one team session; do not scan sibling Runs and do not enter a multiple-candidate branch.
-2. Reconcile the exact candidate through the runtime lifecycle adapter before resuming: canonical Run status, broker-backed live agents, non-terminal team tasks, and the ordered activity clock (message/task -> meta -> sidecar -> legacy filesystem fallback).
-3. Resume only a verified matching `team-swarm` session whose canonical lifecycle is `active` or `paused`. Reconcile list_agents vs `session.iteration` vs `pheromone/current.json` before dispatching any worker.
-4. **Locator-less legacy recovery**: enumerate and rank candidates through the runtime resume ranker, then show the ranked evidence with request_user_input. Never select candidate index 0 implicitly; ties, `stale_candidate`, `unknown`, or `inconsistent` health always require an explicit choice.
-5. `stale_candidate` is derived health, never a lifecycle and never cleanup eligibility. An operator may explicitly resume an active/paused stale candidate after reviewing evidence, or request an audited transition to `abandoned`; TTL alone must not persist abandonment or delete state.
-6. Abandonment and cleanup are separate confirmed operations. Abandon only after rechecking Run status, live agents, non-terminal tasks, and activity; cleanup requires a second confirmation and may remove only `{run_dir}/work/team`, never `run.json`, `outputs/`, artifacts, evidence, or Session metadata.
-7. Reopen the saved assignment batch for this iteration. Match each task with its roster entry, callback and artifact. Wait for live workers and retain completed work. Retry only a missing or failed assignment. For LLM scoring, recover the scorer job and score file before updating. If `pheromone/updates/<k>.json` exists, use its `scoring` value for replay (`fallback` requires `--allow-score-fallback`). Continue with the controller's committed iteration.
+1. **Exact Run locator first**: when the birth packet supplies `run_id` / `run_dir`, inspect only `{run_dir}/work/team/team-session.json`. An exact `run_dir` contains at most one team session; do not scan sibling Runs and do not enter a multiple-candidate branch. If the locator is absent or inconsistent, fail closed.
+2. Reconcile the exact candidate through the runtime lifecycle adapter before resuming: canonical Run status, broker-backed live agents, non-terminal team tasks, and the ordered activity clock.
+3. Resume only a verified matching `team-swarm` session whose canonical lifecycle is `active` or `paused`. Reconcile `list_agents` vs `session.iteration` vs `pheromone/current.json` before dispatching any worker.
+4. `stale_candidate` is derived health, never a lifecycle and never cleanup eligibility. An operator may explicitly resume an active/paused stale candidate after reviewing evidence, or request an audited transition to `abandoned`; TTL alone must not persist abandonment or delete state.
+5. Abandonment and cleanup are separate confirmed operations. Abandon only after rechecking Run status, live agents, non-terminal tasks, and activity; cleanup requires a second confirmation and may remove only `{run_dir}/work/team`, never `run.json`, `outputs/`, artifacts, evidence, or Session metadata.
+6. Reopen the saved assignment batch for this iteration. Match each task with its roster entry, callback and artifact. Wait for live workers and retain completed work. Retry only a missing or failed assignment. For LLM scoring, recover the scorer job and score file before updating. If `pheromone/updates/<k>.json` exists, use its `scoring` value for replay (`fallback` requires `--allow-score-fallback`). Continue with the controller's committed iteration.
 
 ---
 
@@ -97,7 +94,7 @@ When coordinator needs to execute a phase command:
 **Workflow**:
 
 1. Parse user task description (text-level only, no codebase exploration)
-2. Clarify via request_user_input if ambiguous:
+2. Clarify via the host structured question tool if ambiguous:
    - What is the search space? (file glob, explicit node list, abstract decisions)
    - What is the objective? (find best X, discover Y, optimize Z)
    - How should results be scored? (test pass rate, lint, custom rule, LLM judge)
@@ -125,10 +122,9 @@ Delegate to `@commands/init-swarm.md`:
    {run_dir}/work/team/
    ├── swarm-config.json    (from Phase 1)
    ├── pheromone/, trails/, scores/, artifacts/, wisdom/
-   ├── .msg/
    └── role-binding.json    (paths to role.md files)
    ```
-3. TeamCreate with team_name = `swarm`
+3. Verify the Evolve Run roster with `evolve team list --session <session_id> --run <run_id>`
 4. Bash: `python <skill_root>/scripts/aco.py --session {run_dir}/work/team --run-dir <run_dir> init`
 5. Parse stdout JSON: capture `n_nodes`, `n_edges`, `pheromone_path`
 6. Initialize team-session.json with `iteration: 0`, `status: "active"`
@@ -140,89 +136,35 @@ Before creating the session folder or writing `swarm-config.json`:
 
 1. **Resolve Run** (birth-packet first): if the dispatch context already carries `run_id` / `run_dir` (injected by an orchestrator), retain them in memory and persist them at init-swarm Step 7 after creating the parent directory; skip self-start — a second allocation mints a duplicate Run. Otherwise execute this receipt-chained self-start recipe; every revision comes from the immediately preceding receipt and `--actor` carries the authorized identity (`--participant` defaults to it; the CLI derives a stable request ID per distinct invocation):
    ```bash
-   evolve session open "<task summary>" --id <slug> --actor {actor_id} --json
-   evolve session chain insert --session {session_id} --step-id {step_id} --command team-swarm --arg "<task summary>" --actor {actor_id} --expected-orchestration-revision {open_orchestration_revision} --json
-   evolve run next --session {session_id} --actor {actor_id} --expected-orchestration-revision {insert_orchestration_revision} --json
+   evolve session open "<task summary>" --id <slug> --actor {actor_id}
+   evolve session chain insert --session {session_id} --step-id {step_id} --command team-swarm --arg "<task summary>" --actor {actor_id} --expected-orchestration-revision {open_orchestration_revision}
+   evolve run next --session {session_id} --actor {actor_id} --expected-orchestration-revision {insert_orchestration_revision}
    ```
    - Slug format: `YYYYMMDD-team-swarm-<topic>` (ASCII, ≤64 chars)
    - Store returned canonical `session_id`, `run_id`, and `run_dir` in `team-session.json`:
      ```json
      "run": { "session_id": "<canonical-session-id>", "run_id": "<id>", "run_dir": "<path>" }
      ```
-2. **Resume**: Resolve exact `session_id` + `run_id` + `run_dir` from the birth packet or `team-session.json.run`; never infer a Run ID from output files. Read `evolve run check <run_id> --session <session_id> --json` for status/output blockers, then `evolve run brief <run_id> --session <session_id> --json` for the structured `continuation`. If sealed, follow the brief's continuation; allocate another Run only through a freshly fenced `run next` when it reports a pending step. If the locator is absent or inconsistent, fail closed rather than minting a duplicate Run.
+2. **Resume**: Resolve exact `session_id` + `run_id` + `run_dir` from the birth packet or `team-session.json.run`; never infer a Run ID from output files. Read `evolve run check <run_id> --session <session_id>` for status/output blockers, then `evolve run brief <run_id> --session <session_id>` for the structured `continuation`. If sealed, follow the brief's continuation; allocate another Run only through a freshly fenced `run next` when it reports a pending step. If the locator is absent or inconsistent, fail closed rather than minting a duplicate Run.
 
 ---
 
 ## Phase 3: Iteration Loop
 
-**Objective**: Run iteration k = 1..K. Each iteration = spawn-and-stop + callback resume.
+**Objective**: Run iteration `k = 1..K`. Execute the canonical loop in [commands/iterate.md](commands/iterate.md):
 
-**Per-iteration workflow** (delegate to `@commands/iterate.md`):
-
-1. Increment iteration counter: k = session.iteration + 1
-2. Bash: `python aco.py --session {run_dir}/work/team select --iter <k>`
-   -> returns `{assignments: [{ant_id, start_node, edge_preferences, max_path_length}, ...]}`
-3. For each assignment:
-   - update_plan `ANT-<k>-<i>` with description including session path + assignment
-   - update_plan set owner = `ant`
-4. Spawn N × team-worker(ant) in background, each with assignment injected into prompt:
-   ```
-   role: ant
-   role_spec: <skill_root>/roles/ant/role.md
-   session: {run_dir}/work/team
-   session_id: <run-id>
-   run_dir: <exact run_dir from the birth packet or team-session.json.run.run_dir>
-   team_name: swarm
-   requirement: <ant_prompt.objective> | Assignment: <full assignment JSON>
-   inner_loop: false
-   ```
-5. STOP
-
-**On all-ants-complete callback** (Phase 3.5):
-
-1. Verify all `ANT-<k>-*` tasks have status = completed
-2. (Optional, if `scoring.mode == "llm"`) Spawn scorer worker for iteration k, await callback
-3. Bash: `python aco.py --session {run_dir}/work/team --run-dir <run_dir> update --iter <k>`
-   -> parse `{best_score, mean_score, delta, hallucinations_flagged, ...}`
-4. Bash: `python aco.py --session {run_dir}/work/team converged`
-   -> parse `{converged, triggered_by, reason, metrics}`
-5. Update session.iteration = k, log state_update
-6. Branch:
-   - `converged == true` -> Phase 4
-   - `converged == false` -> loop back to step 1 (iteration k+1)
+1. `aco.py select --iter <k>` -> register assignments via `evolve team assign` -> dispatch `N` `ant` workers in parallel (using host `invoke_subagent` / `swarm` with join, or Codex `spawn_agent` + `wait_agent`).
+2. When all `ANT-<k>-*` report (`evolve team report`), optionally dispatch `scorer` (`scoring.mode == "llm"`), then run `aco.py update --iter <k>` and `aco.py converged`.
+3. Branch: `converged == true` -> Phase 4; else loop `k + 1`.
 
 ---
 
 ## Phase 4: Converge + Synthesize
 
-Delegate to `@commands/converge.md`:
-
-1. Bash: `python aco.py --session {run_dir}/work/team --run-dir <run_dir> report` -> capture best + top_k + curve
-2. Spawn analyst worker:
-   ```
-   role: analyst
-   role_spec: <skill_root>/roles/analyst/role.md
-   requirement: synthesize swarm results | session: {run_dir}/work/team
-   ```
-3. Await analyst callback -> `best-solution.md` written
-4. Build completion report:
-   - Total iterations, total ants
-   - Best score + best path + best solution summary
-   - Convergence reason
-   - Top 5 trails table
-5. Execute completion action (interactive request_user_input: Archive / Keep / Export)
+Execute [commands/converge.md](commands/converge.md): run `aco.py report` (`outputs/swarm-report.json`), dispatch `analyst` to produce `outputs/best-solution.md`, seal via `evolve run complete`, and run the interactive completion action.
 
 ---
 
 ## Error Handling
 
-| Error | Resolution |
-|-------|------------|
-| `aco.py` exits non-zero | Capture stderr, log to issues.md, retry once with same args |
-| Ant produces invalid JSON | Script's `update` skips that artifact + logs warning; coordinator continues |
-| All ants in iteration fail | Halt loop, request_user_input (retry / abort) |
-| Convergence flag never trips | max_iterations safety net always triggers |
-| Script not found | Resolve `<skill_root>/scripts/aco.py`; if missing, fail with install hint |
-| Hallucination cluster (>50% ants flagged) | Pause, request_user_input (continue / refine config) |
-| Task description too vague | request_user_input before Phase 1 config generation |
-| Session corruption | Phase 0 reconciliation; if irrecoverable, archive and start fresh |
+Follow the failure recovery tables in [init-swarm.md](commands/init-swarm.md), [iterate.md](commands/iterate.md), and [converge.md](commands/converge.md). On any unrecoverable error, halt and ask the user before mutating state; always join or cancel active subagents before returning.

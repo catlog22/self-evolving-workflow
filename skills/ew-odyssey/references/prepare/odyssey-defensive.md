@@ -56,9 +56,8 @@ Target resolution determines what gets audited:
 | Input | Resolution |
 |-------|-----------|
 | File/dir path | Audit those files |
-| `--scope <path>` | Limit scan to directory |
 | `HEAD` / `staged` | Review changes in diff for defensive patterns introduced/modified |
-| Phase number | state.json → changed files for that phase |
+| Session/Run or commit range | Evolve Run artifacts / `git diff <base>..<head>` |
 | PR number | `git diff main...HEAD` |
 | Project root (default) | Full project scan |
 | continuation (`-c`) | Resume latest session, jump to `current_state` |
@@ -75,13 +74,10 @@ Tier selection (default: `standard`):
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, business-semantic layer, ownership
-- Wiki: `agent-memory wiki references "<target keywords>"` → prior defensive audits, known failure→value patterns
-- Specs: `agent-memory wiki constraints --category coding` → known defensive-programming patterns and standards
-- Coding specs: `agent-memory wiki constraints --category review` → recurring review standards (e.g. degradation/fallback rules)
-- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<target keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `coding` and `review` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<target keywords>"` → module boundaries, business-semantic layer, ownership.
 
 When prior defensive-audit sessions of the same target exist, check their findings first to avoid re-reporting already-documented defensive patterns.
 

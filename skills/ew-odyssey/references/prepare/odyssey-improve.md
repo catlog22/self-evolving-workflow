@@ -47,15 +47,17 @@ The six dimensions (default all, overridable via `--dimensions`): performance, s
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, layering rules
-- Wiki: `agent-memory wiki references "<target keywords>"` → prior audits, known issues
-- Specs: `agent-memory wiki constraints --category coding` + `agent-memory wiki constraints --category debug` → coding standards, known vulnerability patterns
-- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
-- Baseline metrics: capture current test pass rate, bundle size, dependency count, complexity hotspots before any changes — these form `session.json.baseline_metrics` for before/after comparison
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<target keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `coding` and `debug` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<target keywords>"` → module boundaries, layering rules.
+- Baseline metrics: capture current test pass rate, bundle size, dependency count, complexity hotspots before any changes — these form `session.json.baseline_metrics` for before/after comparison.
 
 When prior improve sessions of the same target exist, check their audit results and fixes first to avoid re-diagnosing already-resolved issues.
+
+## Run Artifact Metadata
+
+Attach `kind`, `schema`, `role`, and `alias` from `produces` to top-level `_meta` in `outputs/session.json`, the first JSON record in `outputs/evidence.ndjson`, and YAML frontmatter in `outputs/understanding.md` (`current_state: "END"` before `evolve run complete`).
 
 ## Boundaries and Invariants
 

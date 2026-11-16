@@ -15,7 +15,7 @@ message_types:
 - Apply a uniform scoring rubric across the batch (consistency over absolute correctness)
 - Produce `{run_dir}/work/team/scores/iter-<k>-scores.json` matching the schema in specs/ant-output-schema.md
 - Provide a one-line `rationale` per ant
-- Use a different model from the ant if possible (configured via evolve delegate) to reduce same-source bias
+- Use an independent evaluation pass (or a different model via host subagent / `evolve delegate "<prompt>" --to codex --model <model>`) to reduce same-source bias
 
 ### MUST NOT
 - Modify ant artifacts

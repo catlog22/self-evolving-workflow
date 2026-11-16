@@ -47,16 +47,17 @@ The six dimensions (default all, overridable via `--dimensions`): visual_hierarc
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → component hierarchy, design system structure
-- Wiki: `agent-memory wiki references "<target keywords>"` → prior UI audits, design decisions
-- Specs: `agent-memory wiki constraints --category ui` → design patterns, interaction specs, accessibility rules
-- Coding specs: `agent-memory wiki constraints --category coding` → component patterns, generalization patterns
-- Role knowledge: `agent-memory wiki references "<topic>" --category ui` → pick relevant items → `agent-memory wiki reference <id>`
-- Design system scan: scan for design tokens, CSS variables, theme imports at survey phase — these inform the audit baseline
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<target keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `ui` and `coding` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<target keywords>"` → component hierarchy, design system structure.
+- Design system scan: scan for design tokens, CSS variables, theme imports at survey phase — these inform the audit baseline.
 
 When prior UI sessions of the same target exist, check their audit results and diverge ideas first to avoid re-auditing already-addressed dimensions.
+
+## Run Artifact Metadata
+
+Attach `kind`, `schema`, `role`, and `alias` from `produces` to top-level `_meta` in `outputs/session.json`, the first JSON record in `outputs/evidence.ndjson`, and YAML frontmatter in `outputs/understanding.md` (`current_state: "END"` before `evolve run complete`).
 
 ## Boundaries and Invariants
 

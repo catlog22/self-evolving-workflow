@@ -54,7 +54,7 @@ if (!Array.isArray(scenarios) || scenarios.length < 2 ||
 let scenarioSet = scenarios.map(scenario => ({ ...scenario }));
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-const outputDir = resolve(root, option('--output-dir', join('.workflow', 'evolution', timestamp)));
+const outputDir = resolve(root, option('--output-dir', join('.agent-memory', 'evolution', timestamp)));
 mkdirSync(outputDir, { recursive: true });
 const statePath = join(outputDir, 'state.json');
 const state = {
@@ -86,15 +86,17 @@ function runReplay(scenario, commit) {
 }
 
 function parseAgyResponse(output) {
-  const outer = JSON.parse(output);
-  const text = typeof outer.response === 'string' ? outer.response : typeof outer.result === 'string' ? outer.result : outer.output;
-  if (typeof text !== 'string') throw new Error('Agy did not return a text response');
-  const clean = text.trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '');
-  return JSON.parse(clean);
+  const clean = output.trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+  const parsed = JSON.parse(clean);
+  const text = typeof parsed?.response === 'string' ? parsed.response
+    : typeof parsed?.result === 'string' ? parsed.result
+    : typeof parsed?.output === 'string' ? parsed.output : null;
+  if (text === null) return parsed;
+  return JSON.parse(text.trim().replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
 }
 
 function askAgy(prompt) {
-  const output = run(agy, ['--dangerously-skip-permissions', '--output-format', 'json', '--effort', 'medium', '--mode', 'plan', `--print=${prompt}`], { timeout: 600_000 });
+  const output = run(agy, ['--mode', 'plan', '--output-format', 'text', `--print=${prompt}`], { timeout: 600_000 });
   return parseAgyResponse(output);
 }
 
@@ -205,10 +207,9 @@ try {
       state.rounds.push({ round, base, status: 'agy_rejected', retries: attempt, history: history.source });
       break;
     }
-    const evidence = Array.isArray(discussion.evidence) ? discussion.evidence : [`workflow-evolve:round-${round}`];
     const draft = jsonCommand(process.execPath, [memoryCli, '--root', root, 'evolve', 'draft', entry,
       discussion.instruction, '--priority', discussion.priority, ...(discussion.when ? ['--when', discussion.when] : []),
-      ...evidence.flatMap(item => ['--evidence', item])]);
+      ...discussion.evidence.flatMap(item => ['--evidence', item])]);
     const draftPath = join(roundDir, 'draft.json');
     writeFileSync(draftPath, JSON.stringify(draft, null, 2) + '\n');
     const scenarioPath = join(roundDir, 'scenarios.json');

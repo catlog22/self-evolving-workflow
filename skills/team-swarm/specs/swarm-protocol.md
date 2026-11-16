@@ -1,7 +1,3 @@
-
-> **Plan tracking**: codex 无 TaskCreate/TaskUpdate/TodoWrite 任务板。进度清单用 `update_plan({ explanation?, plan: [{ step, status }] })` 维护（整体提交步骤数组，status: `pending` | `in_progress` | `completed`），权威状态始终在 session 工件中；依赖/认领（addBlockedBy/owner）是工件字段，不是工具参数。
-
-
 # Swarm Protocol
 
 Master protocol document for team-swarm: defines how the LLM coordinator and Python ACO controller interface, how ants explore the task space, and how exploration results flow back to update pheromone state.
@@ -22,10 +18,10 @@ Master protocol document for team-swarm: defines how the LLM coordinator and Pyt
 +-----------------------------------------------------+
 |  LLM Coordinator (roles/coordinator/role.md)       |
 |  - Parses user task → emits swarm-config.json       |
-|  - Phase 3 main loop: calls script, spawns workers  |
-|  - Translates worker callbacks back into script ops |
+|  - Phase 3 main loop: calls script, dispatches       |
+|  - Translates worker results back into script ops  |
 +--------+--------------------------------------------+
-         | Bash subprocess
+         | CLI subprocess (run_command / Bash)
          v
 +-----------------------------------------------------+
 |  Python ACO Controller (scripts/aco.py)            |
@@ -54,12 +50,12 @@ Master protocol document for team-swarm: defines how the LLM coordinator and Pyt
 [Coordinator] iteration k (k = 1..K):
   ├─> python aco.py --session {run_dir}/work/team --run-dir <run_dir> select --iter k
   │    └─> returns N ant assignments (paths to explore)
-  ├─> update_plan × N ant tasks
-  ├─> spawn N × team-worker(ant) in background
-  └─> STOP (await all callbacks)
+  ├─> register N ant assignments in Evolve roster
+  ├─> dispatch N × ant workers in parallel and wait/join
+  └─> advance when all N ants report
   
 [Callback] all ants done → handleIterationComplete
-  ├─> (optional) spawn scorer worker → verified_scores.json
+  ├─> (optional) dispatch scorer worker → verified_scores.json
   ├─> python aco.py --session {run_dir}/work/team --run-dir <run_dir> update --iter k
   │    └─> reads {run_dir}/outputs/ant-k-*.json + verified_scores
   │    └─> updates pheromone + elite + history
@@ -69,7 +65,7 @@ Master protocol document for team-swarm: defines how the LLM coordinator and Pyt
 
 [Coordinator] Phase 4: converge
   ├─> python aco.py --session {run_dir}/work/team --run-dir <run_dir> report → stdout JSON saved as outputs/swarm-report.json
-  ├─> spawn analyst worker → best-solution.md
+  ├─> dispatch analyst worker → best-solution.md
   └─> completion action (Archive/Keep/Export)
 ```
 

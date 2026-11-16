@@ -1,5 +1,3 @@
-
-> **Agent timeout**: `spawn_agent` 异步执行且无内置超时 — 除明确短任务外一律 `spawn_agent` 后立即 `wait_agent({ timeout_ms: 3600000 })`（上限 1 小时）阻塞等待，绝不依赖 30000 默认值；`timed_out: true` 且 Agent 未完成时再次 `wait_agent` 续等，不丢弃。批量场景使用 `spawn_agents_on_csv({ max_runtime_seconds: 3600, ... })`。
 # Command: converge
 
 ## Workflow
@@ -25,52 +23,24 @@ Parse stdout JSON. Expected:
 
 Save the complete stdout JSON, including `_meta`, to `{run_dir}/outputs/swarm-report.json` (raw data for analyst). Do not wrap, strip, or replace the metadata.
 
-### Step 2: Spawn analyst worker
+### Step 2: Dispatch analyst worker
 
-```
-spawn_agent({
-  subagent_type: "team-worker",
-  description: "Spawn analyst for swarm synthesis",
-  team_name: "swarm",
-  name: "analyst",
-  run_in_background: true,
-  prompt: `## Role Assignment
-role: analyst
-role_spec: <skill_root>/roles/analyst/role.md
-session: <session_path>
-session_id: <run-id>
-run_dir: <exact run_dir from the birth packet or team-session.json.run.run_dir>
-team_name: swarm
-requirement: synthesize swarm results into human-readable best-solution.md
-inner_loop: false
-
-## Context
-Report data: {run_dir}/outputs/swarm-report.json
-Best solution: {run_dir}/work/team/best.json
-All trails: {run_dir}/work/team/trails/*.jsonl
-Original objective: <config.ant_prompt.objective>
-
-## Progress Milestones
-Record synthesis and verification in the Run summary.
-})
-```
-
-STOP. Resume on analyst callback.
+Dispatch an `analyst` worker via host subagent/swarm (`role_spec: <skill_root>/roles/analyst/role.md`) with `outputs/swarm-report.json`, `work/team/best.json`, `work/team/trails/*.jsonl`, and `<config.ant_prompt.objective>` to synthesize `outputs/best-solution.md`, and wait/join for completion.
 
 ### Step 3: On analyst callback
 
-Give `{run_dir}/outputs/best-solution.md` the `kind: swarm-best-solution`, `schema: swarm-best-solution/1.0`, and `role: primary` YAML frontmatter. Seal with `evolve run complete` and fix any output contract errors it reports.
+Give `{run_dir}/outputs/best-solution.md` the `kind: swarm-best-solution`, `schema: swarm-best-solution/1.0`, and `role: primary` YAML frontmatter. Seal with `evolve run complete <run_id> --session <session-id> --actor <actor> --expected-orchestration-revision <rev> --expected-run-revision <rev> --summary "<summary>" --verdict done` and fix any output contract errors it reports.
 
-If missing -> request_user_input (skip synthesis / retry analyst).
+If missing -> ask user (`ask_question` / `request_user_input`) to skip synthesis or retry analyst.
 
 ### Step 3.5: Run lifecycle completion
 
 ```
   +- Run lifecycle completion:
   |   - Read run_id from team-session.json.run.run_id
-  |   - Write {run_dir}/report.md with frontmatter per run-mode-lite.md Complete §1 (verdict/summary/constraints/decisions/concerns; constraints/decisions = {text,status} objects, id auto-derived)
+  |   - Write {run_dir}/report.md with frontmatter (verdict/summary/constraints/decisions/concerns; constraints/decisions = {text,status} objects, id auto-derived)
   |   - Before requesting completion, merge-write team status="completed", converged_at=<iso8601>, convergence_reason=<triggered_by>, preserving run; log the final state_update now. If completion is blocked, leave it unsealed and merge-write status="paused" with the blocker.
-  |   - If self-started, use the complete fenced `evolve run complete ... --advance` (and `evolve session complete` when the chain is terminal) from run-mode-lite.md; if dispatched, return to the claim-holding orchestrator
+  |   - If self-started, run `evolve run complete <run_id> --session <session-id> --actor <actor> --expected-orchestration-revision <rev> --expected-run-revision <rev> --summary "<summary>" --verdict done` (and `evolve session complete --session <session-id> --actor <actor> --expected-orchestration-revision <rev>` when the chain is terminal; follow the `ew-orchestrate` controller run loop guide); if dispatched, return to the claim-holding orchestrator
   |   - If complete fails: fix the blocking gate and retry once; still failing -> do NOT archive/clean - keep the team active (status=paused) and report the blocking gate
 ```
 
@@ -110,36 +80,24 @@ The final team state and state_update were written before completion in Step 3.5
 
 ### Step 6: Completion action (interactive)
 
-```
-request_user_input({
-  questions: [{
-    question: "Swarm pipeline complete. What would you like to do?",
-    header: "Completion",
-    multiSelect: false,
-    options: [
-      { label: "Archive & Clean (Recommended)", description: "Archive session, delete team" },
-      { label: "Keep Active", description: "Keep team available for inspection; follow-up work requires a fresh Run" },
-      { label: "Export Best Solution", description: "Copy best-solution.md to target path" },
-      { label: "Run Another Round", description: "Start a fresh Run for K more iterations, optionally seeded from frozen pheromone" }
-    ]
-  }]
-})
-```
-
-### Action Handlers
+Ask the user via host structured question (`ask_question` / `request_user_input`) to choose one of:
+- **Archive & Clean (Recommended)** — Close/join active worker handles; output final summary; preserve the sealed Run directory and evidence.
+- **Keep Active** — Keep team available for read-only inspection; follow-up work requires a fresh Run.
+- **Export Best Solution** — Prompt for target path, copy `best-solution.md` + `best.json`, then Archive & Clean.
+- **Run Another Round** — Prompt for additional `K`, then follow the fresh-Run handoff below (never reset or iterate in the completed Run).
 
 | Choice | Steps |
 |--------|-------|
-| Archive & Clean | TeamDelete; output final summary; preserve the sealed Run directory and evidence |
+| Archive & Clean | Close active worker handles; output final summary; preserve the sealed Run directory and evidence |
 | Keep Active | Keep the live team for read-only inspection; output fresh-Run follow-up instructions; do not change completed team state |
-| Export Best Solution | request_user_input(target path); copy best-solution.md + best.json; then Archive & Clean |
-| Run Another Round | request_user_input(additional K); follow the fresh-Run handoff below; never reset or iterate in the completed Run |
+| Export Best Solution | Ask target path; copy best-solution.md + best.json; then Archive & Clean |
+| Run Another Round | Ask additional K; follow the fresh-Run handoff below; never reset or iterate in the completed Run |
 
 ### Fresh-Run handoff for another round
 
 - Completion above seals the old Run. Never write its `work/team`, `outputs/`, report, counters, or pheromone again, including changing its completed team state to paused. Keep Active preserves the live team for inspection only; it does not reopen the Run.
 - For an orchestrator-dispatched Run, return the requested K and exact old locator to the completion owner and wait for a new birth packet. Do not create a competing Run or continue under the old locator.
-- For a self-started Run, use Run Mode Lite Create with fresh receipt-derived authority. If the prior Session is terminal/completed, open a new Session; otherwise the owner inserts and dispatches a new chain step. Do not reuse the completed step or Run ID.
+- For a self-started Run, use the receipt-chained `evolve session open` / `evolve session chain insert` / `evolve run next` flow from `roles/coordinator/role.md`. If the prior Session is terminal/completed, open a new Session; otherwise the owner inserts and dispatches a new chain step. Do not reuse the completed step or Run ID.
 - Resolve a distinct new `session_id` / `run_id` / `run_dir` before any follow-up write. Initialize a new `work/team/team-session.json` via init-swarm.md with the new public locator and reset round-local counters there only.
 - If retaining pheromone is requested, read the old frozen config/task-space/pheromone as seed inputs and copy only compatible inputs into the new Run's coordination directory after initialization; record their exact source locator. Set the new iteration cap to K. Do not copy old outputs, trails, scores, worker liveness, or completion state as new-round evidence. Spawn new ants through Phase 3 iterate.md only after the new locator and seed/config are verified.
 - If allocation or seed validation fails, keep the old Run immutable and report the blocker; never fall back to iterating there.
@@ -151,4 +109,4 @@ request_user_input({
 | `aco.py report` fails | Stop before analyst dispatch; keep Run unsealed and team paused, record stderr, repair the script/state, then retry `report`. Do not substitute an untyped manual report for required `outputs/swarm-report.json`. |
 | Analyst worker crashes | Retry once. If synthesizing a minimal best-solution.md from best.json is explicitly chosen, include the required `swarm-best-solution/1.0` primary YAML frontmatter for completion. |
 | best.json missing | Pipeline ran but no successful ant - report failure, keep session for inspection |
-| Run Another Round chosen but max_iterations already at limit | request_user_input to raise the cap before continuing |
+| Run Another Round chosen but max_iterations already at limit | Ask user to raise the cap before continuing |

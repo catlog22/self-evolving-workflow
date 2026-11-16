@@ -7,7 +7,7 @@ import { extractMemoryInputs, validateConversationMessages, type ConversationMes
 import type { LlmClient } from './upstream/llm.js';
 import { readCompletionTranscriptRefs, readTranscriptSnapshots } from './transcript-evidence.js';
 import type { Wiki } from './wiki.js';
-import { validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
+import { formatKnowledgeReadsMessage, validateKnowledgeReads, type KnowledgeReadsReceipt } from './knowledge-reads.js';
 import { readEvolveSessions } from './workflow-runtime.js';
 
 export interface SkillSignal {
@@ -75,7 +75,7 @@ export async function reviewSkillExecution(wiki: Wiki, project: string, executio
   if (completion.knowledgeReads) {
     messages.push({
       id: `receipt:${project}:${completion.id}#knowledge-reads`, role: 'tool',
-      timestamp: completion.timestamp, content: knowledgeReadsMessage(completion.knowledgeReads),
+      timestamp: completion.timestamp, content: formatKnowledgeReadsMessage(completion.knowledgeReads),
     });
   }
   return {
@@ -122,17 +122,6 @@ function readSkillFiles(value: unknown, run: ReviewedRun): NonNullable<ReviewedR
   return [...files].map(([path, sha256]) => ({ path, sha256 }));
 }
 
-function knowledgeReadsMessage(receipt: KnowledgeReadsReceipt): string {
-  const searches = receipt.searches.map(search =>
-    `${search.search_id} ${search.source} "${search.query}" (${search.total_hits} hits: ${search.returned_ids.join(', ') || 'none'})`).join('; ');
-  const reads = receipt.reads.map(read =>
-    `${read.kind}:${read.id}${read.from_search_id ? ` from ${read.from_search_id}` : ''}`).join(', ') || 'none';
-  const constraints = receipt.constraints_bound.map(item => item.knowledge_id).join(', ') || 'none';
-  const reuse = receipt.priors_reuse?.map(item => `${item.artifact_id} from ${item.producer_run_id} (${item.content_sha256})`).join(', ');
-  return `Knowledge searches: ${searches || 'none'}. Knowledge reads: ${reads}. Bound constraints: ${constraints}.` +
-    (reuse ? ` Reused session priors: ${reuse}.` : '');
-}
-
 export async function reviewSession(
   root: string,
   session: string,
@@ -157,7 +146,7 @@ export async function reviewSession(
       const readSource = source + ':skill-reads';
       if (files.length) record(readSource, 'Opened Skill documents: ' + files.map(file => file.path).join(', '));
       const knowledgeSource = source + ':knowledge-reads';
-      if (run.knowledge_reads) record(knowledgeSource, knowledgeReadsMessage(run.knowledge_reads));
+      if (run.knowledge_reads) record(knowledgeSource, formatKnowledgeReadsMessage(run.knowledge_reads));
       const { skill_id, commit, tree, package_path, entry } = run.skill;
       return {
         id: run.id, command: run.task.command, source, retryOf: run.retry_of_run_id,
@@ -230,7 +219,7 @@ export async function reviewSession(
       const knowledgeSource = `receipt:${id}#knowledge-reads:${run}`;
       reviewedRun.knowledgeReads = { source: knowledgeSource, receipt };
       evidence.set(knowledgeSource, {
-        id: knowledgeSource, role: 'tool', timestamp, content: knowledgeReadsMessage(receipt),
+        id: knowledgeSource, role: 'tool', timestamp, content: formatKnowledgeReadsMessage(receipt),
       });
       evidenceRuns.set(knowledgeSource, [run]);
     }

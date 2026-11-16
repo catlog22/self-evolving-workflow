@@ -2,21 +2,9 @@
 name: workflow-evolve
 description: Analyze a Skill execution history, run a real Codex plus Agent Memory regression, and iteratively improve the Skill through an Agy-confirmed replay loop.
 argument-hint: <skill-entry> --iterations <n> --scenarios <file> [--session <id>|--execution <id>] [--auto]
-allowed-tools:
-  - Bash
-  - Edit
-  - Glob
-  - Grep
-  - Read
-  - Write
-  - request_user_input
-  - update_plan
-  - wait_agent
 session-mode: run
 required_links:
   - references/auto-loop.md
-  - references/history-review.md
-  - references/agy-gate.md
 contract:
   contract_version: 2.1
   consumes: []
@@ -35,45 +23,42 @@ contract:
       - every applied round has an Agy confirmation receipt
       - baseline and candidate scenarios pass
       - failed applications are rolled back
-version: 0.2.0
+version: 0.3.0
 ---
 
 # Workflow Evolution
 
-Use this Skill when a completed Session/Run or standalone Skill execution needs evidence-based improvement. The Skill keeps the existing Git worktree replay model, adds a real Codex and Agent Memory task, and runs a bounded loop whose changes are gated by Agy.
+Use this Skill for single-evidence behavioral fixes grounded in a completed Session/Run or standalone execution (new Skills or contract/multi-file restructuring route to `ew-skill-design` instead). `--iterations <n>` is required; `--auto` enables unattended `apply` and rollback after the Agy confirmation gate.
 
-The entry requires `--iterations <n>`. `--auto` enables unattended apply and rollback after the Agy gate while retaining history, replay and confirmation checks. With interactive apply, the loop stops after a confirmed replay and leaves the receipt ready for the next authorized action.
+- Read [the automatic loop](references/auto-loop.md) for argument parsing, state, retries, and stop conditions.
+- Read [history review](references/history-review.md) when reconstructing execution evidence or building a transcript fixture.
+- Read [the Agy gate](references/agy-gate.md) when preparing or validating Agy discussion and confirmation payloads.
 
-Follow [the automatic loop](references/auto-loop.md) for argument parsing, state, retries and stop conditions. Follow [history review](references/history-review.md) before drafting a change. Follow [the Agy gate](references/agy-gate.md) before replay and apply.
-
-## Entry contract
+## Entry Contract
 
 ```text
 workflow-evolve <skill-entry>
   --iterations <positive integer>
-  --scenarios <JSON file with one baseline failure and one baseline pass>
+  --scenarios <JSON file with >=1 baseline failure and >=1 baseline pass>
   [--runner <replay runner>]
   --session <Session ID> | --execution <Skill execution ID> | --history <JSON transcript>
   [--project <project ID>] [--max-retries <n>] [--auto]
 ```
 
-The default runner is `scripts/codex-memory-replay.mjs`. It invokes `codex exec` in read-only mode and opens Skill documents from the selected Git commit. The runner calls the bundled Agent Memory CLI and returns the document hashes and a `knowledge-reads/1.0` receipt. Set `AGENT_MEMORY_DB` to an absolute database path when replay should use existing memories. Each replay uses a fresh search trace.
+- **Default runner**: `scripts/codex-memory-replay.mjs` (runs `codex exec` read-only against the target Git commit and returns loaded document hashes + `knowledge-reads/1.0`). Set `AGENT_MEMORY_DB` to an absolute path when replay should query existing memories.
+- **Clean commit required**: Commit target Skill changes before replay (`evolve skills replay` creates isolated worktrees under `<git-dir>/evolve-replay/`).
+- **Agy receipts**: Preserve both discussion and confirmation JSON per round; apply only when `approved: true`.
 
-## Required evidence
-
-- Prepare the target Skill package as a clean commit before replay. `agent-memory evolve replay` creates isolated baseline and candidate worktrees from that commit.
-- Supply either a committed Session/Run, a standalone Skill execution ID, or an explicit transcript file. The history review records the source and the extracted signals used for the draft.
-- Preserve the Agy discussion and confirmation JSON for every round. Apply each draft after its Agy response carries `approved: true`.
-
-## Automatic invocation
+## Automatic Invocation
 
 ```powershell
+# PowerShell (use `\` line continuation on POSIX shells)
 node skills/workflow-evolve/scripts/evolve-loop.mjs `
   --skill skills/workflow-evolve/SKILL.md `
   --iterations 3 `
-  --scenarios .workflow/evolution/scenarios.json `
+  --scenarios .agent-memory/evolution/scenarios.json `
   --session <session-id> `
   --auto
 ```
 
-The script writes one state file and one directory per round under `.workflow/evolution/<timestamp>/`. Pass `--run-dir <run_dir>` for an Evolve Run. The script writes the final result to that Run’s `outputs/evolution-report.json`.
+Writes round state under `.agent-memory/evolution/<timestamp>/` (and `outputs/evolution-report.json` when `--run-dir <run_dir>` is passed).

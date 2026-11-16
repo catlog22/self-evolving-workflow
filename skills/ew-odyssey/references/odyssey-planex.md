@@ -1,12 +1,6 @@
----
-name: ew-odyssey-planex
-prepare: odyssey-planex
-session-mode: inherited
----
-
 # Workflow: Odyssey Planex
 
-Single requirement delivery loop — requirement parsing → acceptance criteria → plan → execute → verify → generalize.
+Single requirement delivery loop — requirement parsing → acceptance criteria → plan → execute → verify → generalize. Follow [shared phases](odyssey-base.md) and [runtime adapters](runtime-adapters.md).
 
 ---
 
@@ -103,7 +97,7 @@ Discover routes to S_EXECUTE (not FIX): area needing same implementation → new
 
 ### Actions
 
-**A_INTAKE extra** — Define acceptance criteria: analyze requirement → derive testable criteria, each with `verify_method` (test|grep|cli-review|manual). Normal: request_user_input to confirm/edit | `-y`: auto-derive, record `{"phase":"decision","type":"criteria-confirmation","status":"deferred"}`. Mark G1.
+**A_INTAKE extra** — Define acceptance criteria: analyze requirement → derive testable criteria, each with `verify_method` (test|grep|cli-review|manual). Normal: structured prompt to confirm/edit | `-y`: auto-derive, record `{"phase":"decision","type":"criteria-confirmation","status":"deferred"}`. Mark G1.
 
 **GATE: criteria-defined** — ≥1 criterion in `acceptance_criteria[]`, each with a testable `criterion` and assigned `verify_method` (test|grep|cli-review|manual); confirmed by user or auto-derived with deferred confirmation under `-y`; G1 marked.
 
@@ -114,19 +108,19 @@ TASK: Decompose into subtasks | Map to acceptance criteria | Identify dependenci
 MODE: analysis
 CONTEXT: @**/* | Criteria: {criteria_summary}
 EXPECTED: JSON [{task_id, title, description, criteria_refs, deps}]
-" --role analyze --mode analysis
+" --to codex --mode analysis
 ```
-Run `run_in_background: true`, wait for callback. (3) Write `session.json.plan`, append evidence (planning), update §2. Mark G2.
+(3) Write `session.json.plan`, append evidence (planning), update §2. Mark G2.
 
 Commit: `"odyssey-planex({slug}): PLAN — requirement decomposed into tasks"`
 
 **A_EXECUTE** —
 
-- **Step 1 — Execution Options Confirmation.** Skip if `-y` OR `--method` explicitly set OR `execution_config.confirmed == true` (resume). Load tools: `the Codex or Agy executables available to the host`. request_user_input 3 questions: Executor (Auto domain routing | Agent all | specific CLI | custom) / Review (Skip | {tool}) / Verify (Auto | specific tool | Skip). Parse → write `execution_config`, set `confirmed: true`. `--skip-verify` overrides verification to `"Skip"`.
+- **Step 1 — Execution Options Confirmation.** Skip if `-y` OR `--method` explicitly set OR `execution_config.confirmed == true` (resume). Load tools: `the Codex or Agy executables available to the host`. Prompt via structured prompt (3 questions): Executor (Auto domain routing | Agent all | specific CLI | custom) / Review (Skip | {tool}) / Verify (Auto | specific tool | Skip). Parse → write `execution_config`, set `confirmed: true`. `--skip-verify` overrides verification to `"Skip"`.
 
-- **Step 2 — Executor Resolution** (method == "auto"): domain routing — frontend (UI/component/page/style, .tsx/.jsx/.vue/.css/.html/.svelte) | backend (API/server/db/service, .go/.rs/.java/.py/.sql/.proto) | general (mixed/config/tests, .ts/.js/other). Resolution: `execution_config.domain_routing[domain]` → fallback `.default` ("agent").
+- **Step 2 — Executor Resolution** (method == "auto"): domain routing — frontend (UI/component/page/style, .tsx/.jsx/.vue/.css/.html/.svelte) | backend (API/server/db/service, .go/.rs/.java/.py/.sql/.proto) | general (mixed/config/tests, .ts/.js/other). Resolution: `execution_config.domain_routing[domain]` or default `"agent"`.
 
-- **Step 3 — Task Execution** per plan order (independent tasks may parallelize). **Agent path:** spawn Agent with task definition + criteria refs + prior task summaries + specs_content → implement → verify convergence → auto-fix (max 3) → return. **CLI path:**
+- **Step 3 — Task Execution** per plan order (independent tasks may parallelize cleanly via joined subagents — see [runtime adapters](runtime-adapters.md)). **Agent path:** launch subagent with task definition + criteria refs + prior task summaries + specs_content → implement → verify convergence → auto-fix (max 3) → return. **CLI path:**
 ```bash
 evolve delegate "PURPOSE: Implement task ${task_id}: ${title}; success = criteria ${criteria_refs} satisfied
 TASK: ${description} | Read existing code first | Verify convergence criteria after changes
@@ -146,9 +140,9 @@ ${specs_content}
 
 ## Prior Task Summaries
 ${prior_summaries}
-" --to ${resolved_executor} --mode write --id planex-${slug}-${task_id}
+" --to ${resolved_executor} --mode write
 ```
-Run `run_in_background: true`, wait for callback. **Deviation Rule (MANDATORY hard limit — max 3 retries per task):** first attempt normal dispatch → retry `--resume planex-${slug}-${task_id}` simplified → fallback to Agent path → all 3 fail → mark task `blocked`, checkpoint, continue remaining. NEVER exceed 3 attempts on a single task.
+**Deviation Rule (MANDATORY hard limit — max 3 retries per task):** first attempt normal dispatch → retry with simplified self-contained prompt via `evolve delegate "<simplified prompt>" --to ${resolved_executor} --mode write` → switch to Agent path → all 3 fail → mark task `blocked`, checkpoint, continue remaining. NEVER exceed 3 attempts on a single task.
 
 - **Step 4 — Per-Task Evidence:** `{"phase":"execution","type":"task-completed","task_id":"T1","executor":"...","files_modified":[],"summary":"","attempt":1}`; update task status.
 
@@ -172,7 +166,7 @@ ${acceptance_criteria.map(c => c.criterion).join('\n')}
 ${modified_files.join('\n')}
 " --to ${execution_config.verification_tool} --mode analysis
 ```
-Run `run_in_background: true`. `overall == "passed"` → proceed to S_VERIFY with boosted confidence; `gaps_found` → log findings, proceed. **Check 3** Code Review (if `code_review_tool != "Skip"`): `evolve delegate "Review git diff for correctness, style, bugs" --to ${code_review_tool} --mode analysis --rule analysis-review-code-quality`.
+`overall == "passed"` → proceed to S_VERIFY with boosted confidence; `gaps_found` → log findings, proceed. **Check 3** Code Review (if `code_review_tool != "Skip"`): `evolve delegate "Review git diff for correctness, style, bugs, and code quality" --to ${code_review_tool} --mode analysis`.
 
 - **Step 6 — Completion:** update §3. Mark G3.
 
@@ -186,16 +180,16 @@ Commit: `"odyssey-planex({slug}): EXECUTE — task implementation complete"`
 |--------|--------|
 | `test` | Run relevant tests, check pass/fail |
 | `grep` | Grep for expected pattern |
-| `cli-review` | `evolve delegate "PURPOSE: Verify criterion {id}: {criterion}\nTASK: Read implementation \| Check behavior \| Report pass/fail with file:line\nMODE: analysis\nCONTEXT: @{relevant_files}\nEXPECTED: JSON {criterion_id, status, evidence}" --role review --mode analysis` |
-| `manual` | Normal: request_user_input / `-y`: record `deferred` |
+| `cli-review` | `evolve delegate "PURPOSE: Verify criterion {id}: {criterion}\nTASK: Read implementation \| Check behavior \| Report pass/fail with file:line\nMODE: analysis\nCONTEXT: @{relevant_files}\nEXPECTED: JSON {criterion_id, status, evidence}" --to codex --mode analysis` |
+| `manual` | Normal: structured prompt / `-y`: record `deferred` |
 
-Record per criterion: `{"phase":"verification","type":"criterion-check","criterion_id":"AC1","method":"","result":"passed|failed","evidence":"","iteration":N}`. Update `acceptance_criteria[].status`. Append to `iterations[]`. Update §4 pass/fail table. **Route:** all passed → mark G4 → next. Some failed + iteration < max → S_FIX. Some failed + iteration >= max → Normal: request_user_input (continue/lower bar/accept) / `-y`: `deferred`, proceed S_RECORD.
+Record per criterion: `{"phase":"verification","type":"criterion-check","criterion_id":"AC1","method":"","result":"passed|failed","evidence":"","iteration":N}`. Update `acceptance_criteria[].status`. Append to `iterations[]`. Update §4 pass/fail table. **Route:** all passed → mark G4 → next. Some failed + iteration < max → S_FIX. Some failed + iteration >= max → Normal: structured prompt (continue/lower bar/accept) / `-y`: `deferred`, proceed S_RECORD.
 
 **GATE: all-criteria-passed** — every `acceptance_criteria[].status == passed` with recorded evidence and `passed_at`, verified by the declared `verify_method`; iterations logged in `iterations[]`; if max iterations exceeded, criteria may be `deferred` only with explicit user consent (or `-y` auto-accept); G4 marked.
 
 Commit: `"odyssey-planex({slug}): VERIFY — criteria verification iteration {N}"`
 
-**A_FIX** — (1) Increment `current_iteration`. (2) For each failed criterion: diagnose gap → targeted code fix (not re-implementation). (3) CLI fix review (optional): `evolve delegate` review fixes for regressions, EXPECTED `{verdict, regression_risk, concerns}`. (4) Append evidence (fix), update §5 → S_VERIFY.
+**A_FIX** — (1) Increment `current_iteration`. (2) For each failed criterion: diagnose gap → targeted code fix (not re-implementation). (3) CLI fix review (optional): `evolve delegate "Review fixes in git diff for regressions and return JSON {verdict, regression_risk, concerns}" --to codex --mode analysis`. (4) Append evidence (fix), update §5 → S_VERIFY.
 
 Commit: `"odyssey-planex({slug}): FIX — iteration {N} gap fixes"`
 
@@ -223,15 +217,14 @@ Max iterations (default 3) prevents infinite loops.
 
 ## Knowledge Persistence (§8)
 
-Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
-
+Include verified reusable findings in the Run summary and harvest the completed Session through `evolve workflows show knowledge` (`evolve closeout session` → `evolve wiki propose`).
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Multi-round fix cycle pattern | Problem scenario + fix iteration + final approach | `stage spec → debug` |
-| Reusable implementation pattern | Pattern + applicable scope + code template | `stage spec → coding` |
-| Acceptance criteria template | Standard template + verify_method suggestion | `stage spec → review` |
-| Generalization pattern | Signature + risk + fix template | `stage spec → coding` |
+| Multi-round fix cycle pattern | Problem scenario + fix iteration + final approach | `evolve closeout session` → `evolve wiki propose` (`category: debug`) |
+| Reusable implementation pattern | Pattern + applicable scope + code template | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
+| Acceptance criteria template | Standard template + verify_method suggestion | `evolve closeout session` → `evolve wiki propose` (`category: review`) |
+| Generalization pattern | Signature + risk + fix template | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
 
 ---
 
@@ -258,20 +251,20 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 
 | Decision Point | Normal | `-y` |
 |---------------|--------|------|
-| S_INTAKE criteria | request_user_input | auto-derive `deferred` |
-| S_EXECUTE options | request_user_input | defaults (auto/Skip/Auto) `confirmed:true` |
-| S_EXECUTE task blocked | request_user_input | auto continue, log blocked |
-| S_VERIFY manual criterion | request_user_input | `deferred` |
-| S_VERIFY max iteration | request_user_input | auto accept `deferred` |
-| A_DISCOVER routing | request_user_input | auto-route to execute, issue for rest |
+| S_INTAKE criteria | structured prompt | auto-derive `deferred` |
+| S_EXECUTE options | structured prompt | defaults (auto/Skip/Auto) `confirmed:true` |
+| S_EXECUTE task blocked | structured prompt | auto continue, log blocked |
+| S_VERIFY manual criterion | structured prompt | `deferred` |
+| S_VERIFY max iteration | structured prompt | auto accept `deferred` |
+| A_DISCOVER routing | structured prompt | auto-route to execute, issue for rest |
 
 ---
 
 ## Phase Gates
 
-- **Audit gate** (PLAN+EXECUTE): plan tasks mapped to criteria; all tasks executed or blocked after 3 retries.
-- **FIX gate:** current severity tier fully addressed. Per-fix evidence phase=fix logged. Auto-commit per tier.
-- **VERIFY gate:** every criterion verified by its method. confirmation written, understanding.md updated, verify goal marked. needs_rework → route back to FIX.
+- **Audit gate** (PLAN+EXECUTE): plan tasks mapped to criteria; all tasks executed or blocked after 3 retries (`plan-executed`).
+- **FIX gate:** every failing acceptance criterion receives a targeted fix scoped to the diagnosed failure without dropping/weakening criteria (`evidence phase=fix`), bounded by `--max-iterations`.
+- **VERIFY gate:** every criterion verified by its declared `verify_method`; `all-criteria-passed` confirmed or max-iteration escalation consented (`needs_rework` routes back to FIX).
 
 ---
 
@@ -298,15 +291,4 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 
 ---
 
-## Next Step Routing
-
-| Condition | Next |
-|-----------|------|
-| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
-| Deeper debug needed | `/ew-odyssey <finding> --mode debug` |
-| Formal review of changes | `/ew-odyssey <changed-files> --mode review` |
-| UI-related findings | `/ew-odyssey <component> --mode ui` |
-| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
-| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
-| Reusable pattern to persist | `stage spec → coding` |
-| Pending decisions | Filter evidence phase=decision status=pending |
+See [shared base](odyssey-base.md) for generic follow-up routing (`Next Step Routing`). Related transitions: `/ew-odyssey <finding> --mode debug` (root cause), `/ew-odyssey <changed-files> --mode review` (formal review), `/ew-odyssey <component> --mode ui` (UI fixes).

@@ -1,12 +1,6 @@
----
-name: ew-odyssey-security
-prepare: odyssey-security
-session-mode: inherited
----
-
 # Workflow: Odyssey Security
 
-Read-only tiered security audit — OWASP Top 10 / dependency supply chain / secrets / CI/CD / STRIDE / git history → severity matrix report → generalize security patterns.
+Read-only tiered security audit — OWASP Top 10 / dependency supply chain / secrets / CI/CD / STRIDE / git history → severity matrix report → generalize security patterns. Follow [shared phases](odyssey-base.md) and [runtime adapters](runtime-adapters.md).
 
 ---
 
@@ -99,7 +93,7 @@ Commit: `"odyssey-security({slug}): RECON — reconnaissance complete"`
 
 **A_SCAN** — Tier-gated parallel scan phases:
 
-- **OWASP Top 10** (all tiers): Spawn parallel agents per category (A01-A10). Each scans relevant source files using Grep pattern matching (`eval(`, `exec(`, `innerHTML`, `dangerouslySetInnerHTML`, `sql.*\+.*req\.`, `process\.env` without validation). Returns `[{title, severity, category, file, line, description, cwe, remediation}]`.
+- **OWASP Top 10** (all tiers): Run parallel subagents per category (A01-A10; join all before merging — see [runtime adapters](runtime-adapters.md)). Each scans relevant source files using Grep pattern matching (`eval(`, `exec(`, `innerHTML`, `dangerouslySetInnerHTML`, `sql.*\+.*req\.`, `process\.env` without validation). Returns `[{title, severity, category, file, line, description, cwe, remediation}]`.
 
 | # | Category | What to check |
 |---|----------|--------------|
@@ -154,15 +148,14 @@ Security findings with severity >= medium + vulnerability patterns across scan p
 
 ## Knowledge Persistence (§7)
 
-Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
-
+Include verified reusable findings in the Run summary and harvest the completed Session through `evolve workflows show knowledge` (`evolve closeout session` → `evolve wiki propose`).
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Vulnerability pattern | CWE + trigger + detection pattern + remediation | `stage spec → debug` |
-| Security constraint | Trust boundary + validation rule + enforcement | `stage spec → arch` |
-| Dependency risk | Package + CVE + safe version + migration path | `stage spec → coding` |
-| CI/CD hardening | Misconfiguration + fix + prevention check | `stage spec → coding` |
+| Vulnerability pattern | CWE + trigger + detection pattern + remediation | `evolve closeout session` → `evolve wiki propose` (`category: debug`) |
+| Security constraint | Trust boundary + validation rule + enforcement | `evolve closeout session` → `evolve wiki propose` (`category: arch`) |
+| Dependency risk | Package + CVE + safe version + migration path | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
+| CI/CD hardening | Misconfiguration + fix + prevention check | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
 
 ---
 
@@ -192,10 +185,10 @@ Goals:       {done}/{total} ({skipped} skipped)
 
 | Decision Point | Normal | `-y` |
 |---------------|--------|------|
-| A_SCAN false positive dismissal | request_user_input | Dismiss only with recorded counter-evidence. Keep unresolved candidates as deferred. |
-| A_REPORT severity downgrade | request_user_input | Downgrade only with documented counter-evidence. Keep the current severity when the decision is deferred. |
-| A_DISCOVER routing | request_user_input | Record a deferred discovery with evidence. Route issue creation through an explicit follow-up. |
-| Ambiguous items | request_user_input | all `deferred` |
+| A_SCAN false positive dismissal | structured prompt | Dismiss only with recorded counter-evidence. Keep unresolved candidates as deferred. |
+| A_REPORT severity downgrade | structured prompt | Downgrade only with documented counter-evidence. Keep the current severity when the decision is deferred. |
+| A_DISCOVER routing | structured prompt | Record a deferred discovery with evidence. Route issue creation through an explicit follow-up. |
+| Ambiguous items | structured prompt | all `deferred` |
 
 ---
 
@@ -212,7 +205,7 @@ Goals:       {done}/{total} ({skipped} skipped)
 | Code | Severity | Condition | Recovery |
 |------|----------|-----------|----------|
 | E001 | error | No target / scope provided | Provide target or -c |
-| E002 | error | No source files found in scope / no entry points | Verify --scope path exists |
+| E002 | error | No source files found in scope / no entry points | Verify target path exists |
 | W001 | warning | Dependency audit tool unavailable (npm audit etc.) | Skip dependency phase, note limitation |
 | W002 | warning | Git history scan failed | Skip git history phase, note limitation |
 | W003 | warning | Partial scan (some files inaccessible) | Report coverage gap in findings |
@@ -235,15 +228,4 @@ Goals:       {done}/{total} ({skipped} skipped)
 
 ---
 
-## Next Step Routing
-
-| Condition | Next |
-|-----------|------|
-| Critical findings need fix | `/ew-odyssey <finding> --mode improve` |
-| Deeper debug needed | `/ew-odyssey <finding> --mode debug` |
-| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
-| Need deeper audit tier | `/ew-odyssey <target> --mode security --tier deep` |
-| Document pattern | `Review the module and stage the reusable method via Agent Memory closeout` |
-| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
-| Security pattern to persist | `stage spec → debug` |
-| Pending decisions | Filter evidence phase=decision status=pending |
+See [shared base](odyssey-base.md) for generic follow-up routing (`Next Step Routing`). Related transitions: `/ew-odyssey <finding> --mode improve` (remediation), `/ew-odyssey <finding> --mode debug` (root cause), `/ew-odyssey <target> --mode security --tier deep` (deeper scan).

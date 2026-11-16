@@ -1,69 +1,38 @@
 # Workflow: Analyze
 
-Multi-dimensional iterative analysis: CLI exploration → multi-perspective synthesis → discussion timeline → intent tracking → six-dimension scoring → decision extraction. Preserves macro/micro, quick, gaps, and up-to-5-round convergence semantics.
+Multi-dimensional iterative analysis: exploration -> multi-perspective synthesis -> discussion timeline -> intent tracking -> six-dimension scoring -> decision extraction.
 
-## Pipeline / FSM
-
-```
-Full mode (-q absent):
-  Step 1: Setup & Scoping        → session init, dimension selection, report discussion area init
-     │
-  Step 2: CLI Exploration        → outputs/exploration-codebase.json, outputs/perspectives.json
-     │                              (cli-explore-agent three layers + multi-CLI parallel)
-     │
-  Step 3: Interactive Discussion → report.md discussion section (up to 5 rounds)
-     │                              (Decision Recording, Intent Coverage)
-     │
-  Step 4: Six-Dimension Scoring  → 6 dims × 1-5 points + risk matrix
-     │
-  Step 5: Synthesis & Conclusion → outputs/findings.json, report.md conclusion area
-     │
-  Step 6: Decision Extraction    → findings.json#decisions (Locked/Free/Deferred)
-
-Quick mode (-q):
-  Step 1: Setup (minimal)        → load upstream, skip scoping
-     │
-  Step 6: Decision Extraction    → findings.json#decisions
-```
-
-## Mode Determination
+## Mode & Pipeline
 
 ```
-First positional arg is pure digits (^\d+$)   → micro, milestone-level deep-dive
-First positional arg is non-numeric text      → macro, topic impact scope
-No positional arg + has roadmap               → current milestone micro
-No positional arg + no roadmap                → macro fallback
-Mixed input (e.g. "1 milestone")              → handled as text, goes macro
---gaps [ISS-ID]                               → gaps, goes issue root-cause analysis ([issue gap analysis](issue-gaps-analyze.md))
--q                                            → quick, skip Step 2-5, jump directly to Step 6
+First positional arg matches ^\d+$ -> micro (milestone deep-dive)
+First positional arg is non-numeric  -> macro (topic impact; mixed text counts as macro)
+No arg + active milestone            -> current milestone micro; else macro
+--gaps [ISS-ID]                      -> gaps ([issue gap analysis](issue-gaps-analyze.md))
+-q                                   -> quick (skip Steps 2-5, jump from Step 1 to Step 6)
 ```
 
-macro mode additionally evaluates `scope_verdict` during Step 5 synthesis:
-- `large`: 3+ independent subsystems, or a hard serial dependency barrier exists → downstream goes roadmap
-- `medium`: 1-2 subsystems, parallelizable → downstream goes plan
-- `small`: single file or few-file change → downstream goes plan
+Full mode (`-q` and `--gaps` absent):
+1. **Setup & Scoping** -> Knowledge/upstream load, scoping, `report.md` discussion init
+2. **Exploration & Perspectives** -> `evidence/exploration-codebase.json`, `evidence/perspectives.json`
+3. **Interactive Discussion** -> up to 5 rounds in `report.md` (with pressure pass & intent tracking)
+4. **Six-Dimension Scoring** -> 6 dimensions (1-5) + risk matrix
+5. **Synthesis & Conclusion** -> `outputs/findings.json`, `outputs/risk-matrix.json`, `report.md`
+6. **Decision Extraction** -> `findings.json#decisions[]` (Locked/Free/Deferred)
 
-## Step Gates (Full mode, active when both `-q` and `--gaps` are absent)
+In macro mode, Step 5 sets `scope_verdict`:
+- `large`: 3+ independent subsystems or hard serial barrier -> downstream `ew-plan` with multi-subsystem decomposition
+- `medium`: 1-2 parallelizable subsystems -> downstream `ew-plan`
+- `small`: single or few-file change -> downstream `ew-plan`
 
-Mandatory and blocking. Cannot advance if any gate is unmet.
+## Blocking Step Gates (Full mode only)
 
-**GATE: exploration-done (Step 2 → 3)**
-- cli-explore-agent complete, `outputs/exploration-codebase.json` written and contains ≥1 code anchor
-- ≥1 CLI delegate complete, output landed in `outputs/perspectives.json`
-- discussion area records baseline confidence score
-
-**GATE: discussion-round (Step 3 → 4)**
-- discussion area contains ≥1 round of interaction with user feedback
-- confidence re-scored ≥1 time and delta shown
-- pressure pass completed ≥1 time
-
-**GATE: scoring-complete (Step 4 → 5)**
-- all six dimensions scored
-- each dimension's score cites exploration/perspectives evidence, **not manual Read**
-
-**GATE: intent-covered (Step 5 → 6)**
-- findings.json decisions and recommendations written
-- Intent Coverage Matrix has no unhandled ❌ (or user confirms defer)
+| Gate | Requirement to advance |
+|------|------------------------|
+| `exploration-done` (2 -> 3) | Exploration subagent joined; `evidence/exploration-codebase.json` has >=1 code anchor; >=1 `evolve delegate` (or independent subagent) pass written to `evidence/perspectives.json`; baseline confidence recorded |
+| `discussion-round` (3 -> 4) | >=1 interactive round with user feedback recorded; confidence re-scored >=1 time with delta; >=1 pressure pass completed |
+| `scoring-complete` (4 -> 5) | All 6 dimensions scored citing exploration/perspective evidence (**manual Read alone is invalid**) |
+| `intent-covered` (5 -> 6) | `outputs/findings.json` written; Intent Coverage Matrix has zero unhandled ❌ (or user-confirmed deferral) |
 
 ---
 
@@ -71,331 +40,98 @@ Mandatory and blocking. Cannot advance if any gate is unmet.
 
 ### Step 1: Setup & Scoping
 
-Parse mode/flags (see above). Load upstream and project context:
+1. **Upstream typed artifacts**: read only via injected alias->path (`current-guidance`, `current-blueprint`, `latest-debug`), never guess latest by mtime. Keep locked constraints fixed; prioritize open constraints/questions. Reuse `architecture_template_evidence` when present without re-searching.
+2. **Project knowledge**: query `wiki_context` / `memory_search` for the topic and open selected entries with `wiki_reference` / `memory_get`. In CLI-only hosts, run `evolve context "<query>" --session <session> --include-memory --reads "<run-dir>/knowledge-reads.json"` and open selected IDs with `--reads ... --from-search ...`.
+3. **Domain terminology & prior runs**: align with `arch` Wiki references, record new term candidates in `report.md`, and skip already-decided areas from same-milestone analyses.
 
-1. Upstream typed artifacts: read only from injected alias→path (`current-guidance`/`current-blueprint`/`latest-debug`), do not guess latest by mtime.
-   - locked constraints → skip (already decided)
-   - open constraints → analyze first
-   - open questions → discussion seeds
-   - `architecture_template_evidence` → architecture analysis context; reuse it without a new search/load
-2. Architecture rules: use `wiki_context` for the analysis topic. Include the path or architecture category in `scope` when the analysis needs those filters.
-3. domain glossary: read `.workflow/domain/glossary.yaml` (if it exists), use canonical terms throughout the analysis; record new term candidates in the report.
-4. Existing same-milestone analyze artifacts: read their decisions, skip already-decided areas.
-5. Open the references selected from `wiki_context` with `wiki_reference`. For execution lessons, use `memory_search` and open relevant IDs with `memory_get`.
+**Quick routing (`-q`)**: jump directly to Step 6.
 
-**quick routing**: after loading context, jump directly to Step 6.
+**Scoping** (skip if `-c`/`-y`; otherwise use a structured prompt such as `ask_question`, up to 3 questions):
+1. **Analysis dimensions** (multiSelect, pick 3-4):
+   - `architecture`: System Design, Component Interactions, Technology Choices, Design Patterns
+   - `implementation`: Code Structure, Patterns, Error Handling, Algorithm Analysis
+   - `performance`: Bottlenecks, Optimization, Resource Utilization, Concurrency
+   - `security`: Vulnerabilities, Auth, Data Protection, Input Validation
+   - `concept`: Foundation, Core Mechanisms, Patterns, Trade-offs
+   - `comparison`: Solution Comparison, Pros/Cons, Technology Evaluation
+   - `decision`: Criteria, Trade-off Analysis, Risk Assessment, Impact
+   - `external_research`: Standard Stack, Architecture Patterns, Don't Hand-Roll, Common Pitfalls (auto-suggest for unfamiliar domains or empty codebase search)
+2. **Analysis perspectives** (multiSelect, up to 4): Technical (implementation/feasibility), Architectural (design/scalability), Product/Business (value/impact), Domain Expert (standards/best practices).
+3. **Depth** (single): Quick Overview / Standard / Deep Dive. (`-y` defaults: all relevant dimensions, single synthesis perspective, Standard depth.)
 
-**Scoping & dimension selection** (skipped when `-c`/`-y`, interactive AskUserQuestion, up to 3 questions):
+Initialize `report.md`: metadata, original User Intent, replaceable `Current Understanding` block, empty discussion timeline, dimension rationale.
 
-1. **Analysis direction** (multiSelect), take 3-4 items from the dimension-direction mapping:
+### Step 2: Exploration & Multi-Perspective Analysis
 
-   | Dimension | Direction |
-   |------|------|
-   | architecture | System Design, Component Interactions, Technology Choices, Design Patterns |
-   | implementation | Code Structure, Patterns, Error Handling, Algorithm Analysis |
-   | performance | Bottlenecks, Optimization, Resource Utilization, Concurrency |
-   | security | Vulnerabilities, Auth, Data Protection, Input Validation |
-   | concept | Foundation, Core Mechanisms, Patterns, Trade-offs |
-   | comparison | Solution Comparison, Pros/Cons, Technology Evaluation |
-   | decision | Criteria, Trade-off Analysis, Risk Assessment, Impact |
-   | external_research | Standard Stack, Architecture Patterns, Don't Hand-Roll, Common Pitfalls (external web search) |
+**2.0 Research handoff** (only when `external_research` is active, or architecture patterns are active without upstream `architecture_template_evidence`):
+1. If `external_research` is selected, run 2-3 targeted web searches (`search_web` in Antigravity or host equivalent) for stack, architecture patterns, and pitfalls.
+2. Delegate synthesis (plus one focused architecture-template lookup if absent) to a `research` subagent (joined before proceeding) returning markdown only: `## Standard Stack`, `## Architecture Patterns`, `## Don't Hand-Roll`, `## Common Pitfalls`, and optional `## Architecture Template Evidence` (preserve `no_match`/`load_failed` status cleanly). Store as in-memory `researchContext`.
 
-   When the goal contains unfamiliar technology keywords, or the codebase has no pattern for that domain (Step 2 exploration relevant_files is empty), automatically suggest `external_research`.
+**2.1 Codebase exploration** (mandatory subagent, not manual Read/Grep):
+Launch exploration subagent(s) (`invoke_subagent` with `research` or host subagent; join all before advancing) across three layers:
+- **L1 Breadth**: relevant files and module boundaries (`relevant_files[]`)
+- **L2 Depth**: top 3-5 files, 2-3 call/data-flow layers (`call_chains[]`, `data_flows[]`)
+- **L3 Anchors**: 20-50 line `file:line` snippets (`code_anchors[]`)
 
-2. **Analysis perspective** (multiSelect, up to 4):
+Write `evidence/exploration-codebase.json` (single) or `evidence/explorations/{perspective}.json` (multi-perspective, up to 4).
 
-   | Perspective | CLI | Focus |
-   |------|-----|------|
-   | Technical | gemini | implementation, code patterns, feasibility |
-   | Architectural | claude | system design, scalability, interactions |
-   | Business | codex | value, ROI, stakeholder impact |
-   | Domain Expert | gemini | domain patterns, best practices, standards |
+**2.2 Cross-perspective analysis** (mandatory independent pass):
+Run >=1 `evolve delegate "<exploration context prompt>" --to codex|agy --mode analysis` (pass `--session <session> --run <run>` when using `--to codex` inside a bound Run; note `--to agy` runs standalone without `--session`/`--run`). Append `researchContext` as non-binding recommendations if present. For multi-perspective runs, fan out up to 4 parallel subagents/`evolve delegate` calls and wait/join all before continuing.
 
-3. **Analysis depth** (single): Quick Overview / Standard / Deep Dive
+**2.3 Aggregation & Round 1**: merge into `evidence/perspectives.json` (including `technical_solutions[]`: `{round, solution, problem, rationale, alternatives, status: proposed|validated|rejected, evidence_refs[], next_action}`), append Round 1 to `report.md`, check initial Intent coverage (✅/🔄/❌), and score baseline confidence across weights (`findings_depth .30`, `evidence_strength .25`, `coverage_breadth .20`, `user_validation .15`, `consistency .10`). `<60%` continue; `60-80%` confirm before converging; `>80%` ready for synthesis.
 
-**Auto (-y) defaults**: all relevant dimensions, single synthesis perspective, Standard depth.
+### Step 3: Interactive Discussion Loop (up to 5 rounds)
 
-Initialize report.md discussion area: dynamic TOC, session metadata, User Intent (original question, for intent tracking), Current Understanding replaceable block (overwritten each round, not appended), empty discussion timeline, dimension selection rationale.
-
-### Step 2: CLI Exploration
-
-Codebase exploration first, then (optional) external research, then CLI analysis.
-
-**Step 2.0 Research handoff** (when `external_research` is selected, or when architecture patterns are active and upstream `architecture_template_evidence` is absent):
-1. Only when `external_research` is selected, run WebSearch for 2-3 queries: `"{goal} standard library stack"`, `"architecture patterns best practices"`, `"common pitfalls mistakes"`; take top 1-2 per query and fetch official docs.
-2. Hand available web results and any upstream `architecture_template_evidence` to workflow-phase-researcher. When architecture patterns are active and the envelope is absent, the researcher follows the shared Architecture Template References rule and performs one focused search/load. Do not search for implementation-only phases.
-3. Ask the researcher to synthesize available material into: `## Standard Stack` (with versions), `## Architecture Patterns`, `## Don't Hand-Roll`, `## Common Pitfalls`, and `## Architecture Template Evidence` when applicable. Style: prescriptive ("use X"), cite sources, mark HIGH/MEDIUM/LOW. The agent returns markdown only and writes no files.
-4. Store the result as `researchContext` (in-memory). If neither dispatch condition applies, set `researchContext = null`.
-
-**Architecture template handoff**:
-- Reuse upstream `architecture_template_evidence` when present; otherwise dispatch `workflow-phase-researcher` for one focused template search/load whenever architecture patterns are an active dimension, independently of external web research.
-- Preserve the optional evidence envelope and its `no_match` or `load_failed` status in the analysis artifacts; downstream analysis does not search again.
-
-**Step 2.1 Codebase exploration** (cli-explore-agent, mandatory, not substitutable):
-
-MUST spawn cli-explore-agent; manual Read/Grep is not a substitute. Three layers:
-
-| Layer | Focus | Output |
-|----|------|------|
-| L1 Module discovery (breadth) | search by keywords, identify all relevant files, draw module boundaries | `relevant_files[]` |
-| L2 Structure tracing (depth) | top 3-5 key files: trace call chains 2-3 layers, identify data flows | `call_chains[]`, `data_flows[]` |
-| L3 Code anchors (detail) | extract 20-50 line snippet + file:line for each key finding | `code_anchors[]` |
-
-Output `outputs/exploration-codebase.json` (single perspective) or `outputs/explorations/{perspective}.json` (multi-perspective, up to 4 parallel).
-
-**Step 2.2 CLI analysis** (after exploration, mandatory, not substitutable):
-
-MUST have at least one CLI delegate. The orchestrator's own analysis does not count as independent verification — the CLI provides cross-validation from another model/perspective.
-
-Construct exploration context from Step 2.1 findings then spawn. When `researchContext` exists, append:
-```
-"External research findings (treat as strong recommendations, not laws):
-{researchContext}"
-```
-- Single perspective: one synthesis CLI call
-- Multi-perspective (up to 4): parallel call per perspective, each with its perspective focus
-
-CLI calls use `run_in_background: true`, wait for results before continuing.
-
-**Step 2.3 Aggregation**: merge explorations + CLI results; for multi-perspective, extract synthesis (converging themes, conflicting views, unique contributions); write `outputs/perspectives.json`. It contains `technical_solutions[]`: `{round, solution, problem, rationale, alternatives, status: proposed|validated|rejected, evidence_refs[], next_action}`, filled across the Step 3 rounds.
-
-**Step 2.4 Round 1**: append to discussion timeline — sources, key findings with code anchors, discussion points, open questions.
-
-**Step 2.5 Initial Intent check**: re-read User Intent, cross-check each item against Round 1: ✅ addressed / 🔄 in-progress / ❌ not touched.
-
-**Step 2.6 baseline confidence**: 6 dims × factors (weights): findings_depth(.30), evidence_strength(.25), coverage_breadth(.20), user_validation(.15), consistency(.10). Score each dimension. Thresholds: <60% keep going deeper | 60-80% needs user confirmation to converge | >80% proceed to synthesis (necessary convergence threshold).
-
-### Step 3: Interactive Discussion Loop
-
-Up to 5 rounds, each round:
-
-**3.1 Current Understanding** (Round ≥ 2, before new findings): 1-2 sentences bridging the previous round's conclusions to this round's starting point.
-
-**3.2 Present findings** from the latest exploration/analysis.
-
-**3.3 Collect feedback** AskUserQuestion (single, header "Analysis Feedback"):
-- **Go deeper** (recommended) — deep-dive the lowest-confidence dimension
-- **Adjust direction** — change focus or raise a specific question
-- **Supplement information** — user has additional context/constraints/corrections
-- **Analysis complete** — sufficient, exit to scoring
-
-Question text: `Round {N} | Confidence: {overall}% | Weakest: {weakest_dim} ({dim_score}%)`
-
-**3.4 Handle response** (always record choice + impact to the report discussion area):
-
-| Choice | Action |
-|------|------|
-| Go deeper | AskUserQuestion sub-direction → CLI/agent exploration → merge findings |
-| Adjust direction | capture new direction → new exploration → record Decision (old vs new, reason, impact) |
-| Supplement information | capture input → integrate → CLI-verify when needed → record correction |
-| Analysis complete | exit → record convergence reason |
-
-Go-deeper sub-direction: AskUserQuestion (single, "Deep-dive direction", up to 4: 3 from unresolved questions/low-confidence findings/unexplored dimensions + 1 heuristic "examine from a different angle").
-
-**3.5 Update discussion area**: append Round N (input, direction, Q&A, corrections, new insights); append Technical Solutions (this round's proposed/validated/rejected); replace Current Understanding block; update TOC.
-
-**3.6 Round Narrative Synthesis** (appended each round):
-```markdown
-### Round N: Narrative Synthesis
-**Starting point**: Building on the previous round's [conclusions/questions], this round enters from [starting point].
-**Key progress**: [New findings] [confirmed/refuted/modified] the prior understanding about [hypothesis].
-**Decision impact**: User chose [feedback type], causing the analysis direction to be [adjusted/deepened/maintained].
-**Current understanding**: After this round, the core understanding updates to [updated understanding].
-**Remaining questions**: [remaining questions driving next round]
-```
-
-**3.7 Intent Drift** (Round ≥ 2): per item ✅/🔄/⚠️ implicitly absorbed pending confirmation/❌ not discussed. ❌ or ⚠️ → proactively raise with the user at the start of the next round.
-
-**3.8 Re-score confidence** (each round): show delta `Confidence: {prev}% → {current}% ({±N%}), {weakest_dim} still needs deepening`.
-
-**3.9 Quality mechanisms**:
-- **Pressure Pass** (mandatory ≥1 before Step 4): highest-confidence finding → pressure gradient (evidence demand → assumption probe → boundary/tradeoff → root cause check). Record under `#### Pressure Test`.
-- **Devil's Advocate**: a dimension > 0.7 → challenge "what if [finding] doesn't hold?" (once per dimension)
-- **Scope Minimizer**: findings > 5 and scope expanding → "minimal viable conclusion set?"
-- **Stall Detection**: 2 consecutive rounds delta < 5% → "analysis may be stalling, suggest switching direction or converging"
-
-**3.10 Pre-convergence Readiness Gate** (on "Analysis complete"): blocking conditions — an ❌ with no deferral exists | any dimension < 40% | no pressure pass | unresolved contradiction | overall < 80%. If blocked, AskUserQuestion: supplement then continue / ignore risk and continue (record `residual_risks[]` and the accepted confidence).
-
-**Auto (-y)**: auto deep-dive ≤3 rounds, readiness gate auto-overridden and residual risk recorded.
+Per round:
+1. State `Current Understanding` (Round >= 2) and present latest findings.
+2. Prompt via structured choice (`ask_question` / host equivalent, skipped in `-y` which auto-deepens <=3 rounds) with header `Round {N} | Confidence: {overall}% | Weakest: {weakest_dim} ({dim_score}%)`:
+   - **Go deeper** (recommended): pick sub-direction (up to 4 choices) -> targeted exploration -> merge
+   - **Adjust direction**: capture new focus -> re-explore -> log decision delta
+   - **Supplement information**: integrate user constraints/corrections -> verify via subagent/delegate if needed
+   - **Analysis complete**: run readiness check -> proceed to Step 4
+3. Record Round N narrative synthesis (`Starting point`, `Key progress`, `Decision impact`, `Current understanding`, `Remaining questions`), Intent Drift checks (❌/⚠️ surfaced next round), updated `technical_solutions[]`, confidence delta, and quality guards:
+   - **Pressure Pass** (mandatory >=1 before Step 4): challenge highest-confidence finding (`evidence demand -> assumption probe -> boundary/tradeoff -> root cause`) under `#### Pressure Test`.
+   - **Devil's Advocate** (dim > 0.7), **Scope Minimizer** (>5 findings), **Stall Detection** (2 rounds delta < 5%).
+4. **Readiness Gate**: block "Analysis complete" if unhandled ❌, any dim < 40%, no pressure pass, unresolved contradiction, or overall < 80% (unless user explicitly accepts into `residual_risks[]`, or `-y` finishes 3 auto-rounds and records gaps in `residual_risks[]`).
 
 ### Step 4: Six-Dimension Scoring
 
-Synthesizing all exploration, discussion, and feedback, score six dimensions:
-
-| Dimension | Focus | Score |
-|------|------|----|
-| Feasibility | technical difficulty, team capability, time, tooling | 1-5 |
-| Impact | user value, business value, tech-debt reduction, DX | 1-5 |
-| Risk | failure modes, security, scalability, regression | 1-5 |
-| Complexity | integration points, dependencies, learning curve, testing | 1-5 |
-| Dependencies | external services, internal modules, data, infrastructure | 1-5 |
-| Alternatives | 2+ other approaches and their trade-offs | N/A |
-
-Each dimension cites specific evidence (code ref, exploration data point) and marks a per-dimension confidence %. Construct a probability-impact risk matrix. Form a Go/No-Go/Conditional recommendation and overall confidence %. Write the confidence summary (each dimension's score + overall + pressure pass result + residual risks) into the report conclusion area.
+Score each dimension 1-5 (`Feasibility`, `Impact`, `Risk`, `Complexity`, `Dependencies`, plus `Alternatives` with >=2 options N/A), citing exploration/delegate evidence and per-dimension confidence %. Build probability-impact risk matrix (`outputs/risk-matrix.json`), form `go | go_with_conditions | no_go` verdict, and write confidence + pressure summary to `report.md`.
 
 ### Step 5: Synthesis & Conclusion
 
-**5.1 Intent Coverage check** (mandatory before synthesis):
-```markdown
-### Intent Coverage Matrix
-| # | Original Intent | Status | Where Addressed | Notes |
-|---|----------------|--------|-----------------|-------|
-| 1 | [intent] | ✅ Addressed | Round N, Conclusion #M | |
-| 2 | [intent] | 🔀 Transformed | Round N → M | Original: X → Final: Y |
-| 3 | [intent] | ❌ Missed | — | Reason |
-```
-Gate: each ❌ Missed item must either (a) get an added round or (b) be user-confirmed defer.
+1. **Intent Coverage Matrix**: verify every original intent item is `✅ Addressed`, `🔀 Transformed`, or `❌ Missed` (each ❌ requires an extra round or user-confirmed deferral).
+2. **Write `outputs/findings.json`** (declared in `SKILL.md`): merge validated `technical_solutions[]` into prioritized recommendations, record Decision Trail, `architecture_template_evidence`, `scope_verdict`, and `recommendation`. Run **interactive recommendation review** (accepted/modified/rejected, skipped in `-y`).
+3. **Seal `session-priors`**: ensure every used Wiki entry was opened via `wiki_reference` (or CLI `--reads`).
+4. **Update `report.md`**: conclusion, recommendations, Decision Trail, Intent Coverage Matrix, session stats.
 
-**5.2 Synthesize insights**: compile the Decision Trail, key conclusions with evidence + confidence, recommendations with rationale + priority + actionable steps (**merge validated `technical_solutions[]` into high-priority recommendations**), open questions and follow-up suggestions → write into `outputs/findings.json`.
+### Step 6: Decision Extraction (Always runs — main step in `-q`)
 
-**5.3 Write findings.json** (artifact paths and metadata are declared in `prepare/analyze.md` contract):
-```json
-{
-  "mode": "macro|micro|quick|gaps",
-  "topic": "",
-  "dimensions": [],
-  "findings": [],
-  "decisions": [],
-  "architecture_template_evidence": null,
-  "scope_verdict": "small|medium|large",
-  "recommendation": "go|go_with_conditions|no_go"
-}
-```
-
-**5.4 Write risk-matrix.json**:
-```json
-{ "risks": [], "assumptions": [], "open_questions": [] }
-```
-
-**5.4b Session priors.** Use `wiki_context` to find Wiki candidates and `wiki_reference` to open the entries used in analysis. On completion, Evolve seals the exact bodies and bound constraints as `session-priors`, with their lookup scope and source search. Keep separate architecture-template evidence in `findings.json#architecture_template_evidence`.
-
-**5.5 report conclusion area**: conclusion summary, ranked conclusions, prioritized recommendations; Current Understanding (Final); Decision Trail (key decisions, direction-change timeline, trade-offs); Intent Coverage Matrix; session stats.
-
-**5.6 Interactive recommendation review** (auto skips): AskUserQuestion (up to 4 at a time, by priority): confirm → accepted / modify → modified / delete → rejected. Write back each recommendation's `review_status` to findings.json.
-
-### Step 6: Decision Extraction
-
-**Always executed** — in full mode after synthesis, in quick mode as the main step.
-
-**6.1 Identify gray areas**: analyze goal + loaded context, find undecided implementation areas. Domain-aware generation:
-- what the user will SEE: layout, density, interaction, states
-- what the user will CALL: responses, errors, auth, versioning
-- what the user will RUN: output format, flags, modes, error handling
-- what the user will READ: structure, tone, depth, flow
-- how it is ORGANIZED: standards, grouping, naming, exceptions
-
-Generate 3-5 **phase-specific** gray areas. Skip upstream already-decided areas; if upstream is locked: focus on SHOULD/MAY and gaps.
-
-**6.2 Gray area selection** (`-y` skips): AskUserQuestion to let the user pick which areas to discuss (including "All areas"/"Skip"). Choosing Skip → write empty Locked/Free/Deferred, proceed to 6.5.
-
-**6.3 Deep-dive discussion**: multiple rounds of dialogue per selected area (3-4 questions/area), give Option A/B/C with trade-offs, record each decision per the Decision Recording Protocol. **Scope guardrail**: roadmap phase boundaries are fixed, discuss HOW not WHETHER; user raises a new capability → "assign it to its own phase, record first" → into Deferred.
-
-**6.4 Classify decisions**:
-- **Locked**: hard decisions unchangeable during implementation
-- **Free**: implementer's discretion
-- **Deferred**: pushed to a later phase
-
-If `researchContext` exists: append a research-backed suggestion for each Free area.
-
-Write the classification into `findings.json#decisions[]`, each item marked `{title, class: locked|free|deferred, context, options[], chosen, reason}`.
-
-**6.5 Deferred → issue**: for each Deferred decision, create an issue in `.workflow/issues/issues.jsonl`: `status: deferred, priority: 5, severity: low, source: analyze, tags: [deferred, analyze]`. Require user confirmation (or `-y` flag) before writing to external stores.
+1. Identify 3-5 undecided domain gray areas (SEE / CALL / RUN / READ / ORGANIZE), skipping upstream locked items.
+2. Let user select areas to discuss (`-y` skips selection or defaults concisely; choosing "Skip" writes empty decision lists).
+3. Discuss selected areas with Option A/B/C trade-offs (respect upstream milestone boundaries; new out-of-scope features go to `Deferred`).
+4. Write `findings.json#decisions[]` as `{title, class: locked|free|deferred, context, options[], chosen, reason}` (attach `researchContext` hints to `free` items if present).
+5. With user confirmation (or `-y`), log `deferred` decisions to the issue tracker (`status: deferred, priority: 5, severity: low, source: analyze, tags: [deferred, analyze]`).
 
 ### Wrap-up
 
-Write the single `report.md`, with the following frontmatter and fixed sections:
-
-```md
----
-verdict: ready
-summary: one-line summary of the analysis conclusion
-constraints: []
-decisions: []
-concerns: []
-next:
-  - { command: ew-plan, reason: analysis ready, needs: [current-analysis] }
----
-## Summary
-## Conclusion/Verdict
-## Discussion/Retrospective
-## Artifacts
-## Handoff/Next
-```
-
-In macro mode, if `scope_verdict == large`, next points to roadmap instead of plan. In the report, reference domain values with `{{aref:current-analysis#/...}}` or an aref block, **never copy the JSON source of truth**.
-
-→ Wrap-up (archiving, spec/knowhow extraction) follows ref/finish-work.md.
+Write `report.md` with frontmatter (`verdict: ready`, `summary`, `constraints`, `decisions`, `concerns`, `next: [{ command: ew-plan, reason: ..., needs: [current-analysis] }]`) and sections (`## Summary`, `## Conclusion/Verdict`, `## Discussion/Retrospective`, `## Artifacts`, `## Handoff/Next`). Use `{{aref:current-analysis#/...}}` instead of copying JSON values. Follow [knowledge route](../../../references/knowledge-route.md) for sealing and candidate staging.
 
 ---
 
-## Decision Recording Protocol
+## Recording Formats
 
-Record as it occurs:
+**Decision Record**:
+> **Decision**: [Description] | **Context**: [Trigger] | **Options**: [...] | **Chosen**: [Approach] (**Reason**: ...) | **Rejected**: [...] | **Evidence Source**: [subagent / `evolve delegate` / user / `file:line`] | **Impact**: [...]
 
-| Trigger | Record |
-|------|------|
-| Direction choice | what was chosen, why, what was discarded |
-| Key finding | content, impact scope, confidence, effect on assumptions |
-| Assumption change | old → new understanding, reason, impact |
-| User feedback | input, rationale for adopting/adjusting |
-| Disagreement/trade-off | conflicting views, trade-off basis, final choice |
-| Scope adjustment | before/after scope, triggering reason |
-| Technical solution proposed/validated/rejected | solution, rationale, alternatives, status |
-
-**Decision Record format**:
-```
-> **Decision**: [Description]
-> - **Context**: [Trigger]
-> - **Options considered**: [Alternatives]
-> - **Chosen**: [Approach] — **Reason**: [Rationale]
-> - **Rejected**: [Why discarded]
-> - **Evidence Source**: [cli-explore-agent | CLI delegate | user input | code anchor] — REQUIRED, manual Read/Grep alone is INVALID
-> - **Impact**: [effect on the analysis]
-```
-
-**Technical Solution format**:
-```
-> **Solution**: [approach/pattern/implementation]
-> - **Status**: [Proposed / Validated / Rejected]
-> - **Problem**: [what it solves]
-> - **Rationale**: [why this path]
-> - **Alternatives**: [other options and why discarded]
-> - **Evidence**: [file:line or code anchor]
-> - **Next Action**: [follow-up or none]
-```
-
-## Success Criteria
-
-- [ ] Scope determined (small/medium/large) from codebase analysis
-- [ ] CLI exploration completed with concrete evidence
-- [ ] Interactive discussion rounds reached consensus or max rounds
-- [ ] Six-dimension scoring completed with evidence citations
-- [ ] Intent coverage matrix shows no unhandled ❌
-- [ ] Decision extraction captured all locked/free/deferred decisions
-- [ ] findings.json written with all scored dimensions
-
----
-
-## Domain Invariants
-
-- Every one of the six dimension scores must cite exploration/CLI evidence; manual Read/Grep is invalid.
-- Pressure pass is mandatory ≥1 time before synthesis.
-- Intent Coverage must have no unhandled ❌ before wrap-up.
-- `-q` only skips exploration and scoring; decision extraction cannot be omitted.
-- `--gaps` goes issue root-cause analysis; a root cause cannot be confirmed without evidence.
-
----
+**Technical Solution**:
+> **Solution**: [Approach] | **Status**: [Proposed/Validated/Rejected] | **Problem**: [...] | **Rationale**: [...] | **Alternatives**: [...] | **Evidence**: [`file:line`] | **Next Action**: [...]
 
 ## Error Codes
 
 | Code | Condition | Recovery |
 |------|-----------|----------|
-| E001 | No relevant findings | Broaden the search or ask the user to clarify |
-| W001 | cli-explore-agent failed | Retry once; if still failing mark subsequent decisions LOW CONFIDENCE, continue with existing context |
-| W002 | CLI timeout | Shorten prompt and retry; if still failing mark that perspective [LOW CONFIDENCE] and continue |
-| W003 | Max rounds reached (5) | Force synthesis, offer a continue option |
-
-## Knowledge Hooks
-
-- Open the Wiki and working Memory entries you use through the Run MCP tools. CLI-only hosts can record exact reads in the Run knowledge receipt with `--reads` and `--from-search`.
-- Write domain terms and accepted decisions to `report.md` frontmatter (`decisions`/`constraints`); sealing stages them as spec candidates automatically.
+| `E001` | No relevant findings | Broaden search or ask user to clarify |
+| `W001` | Exploration subagent failed | Retry once with narrowed scope; escalate or mark unverified dimensions explicitly |
+| `W002` | `evolve delegate` timeout/error | Narrow prompt and retry, switch executor, or mark perspective unverified |
+| `W003` | Max rounds reached (5) | Force synthesis and offer follow-up continuation |

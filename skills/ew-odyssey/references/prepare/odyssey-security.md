@@ -39,7 +39,6 @@ Target resolution determines what gets audited:
 | Input | Resolution |
 |-------|-----------|
 | Module/dir path | Audit that module |
-| `--scope <path>` | Limit scan to directory |
 | Project root (default) | Full project scan |
 | `HEAD` / `staged` | Review changes in diff for security issues |
 
@@ -53,12 +52,10 @@ Tier selection (default: `standard`):
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, trust zones
-- Wiki: `agent-memory wiki references "<target keywords>"` → prior security audits, known vulnerabilities
-- Specs: `agent-memory wiki constraints --category debug` → known vulnerability patterns
-- Role knowledge: `agent-memory wiki references "<topic>" --category coding` → pick relevant items → `agent-memory wiki reference <id>`
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<target keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `debug` and `coding` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<target keywords>"` → module boundaries, trust zones.
 
 When prior security audit sessions of the same target exist, check their findings first to avoid re-reporting already-documented issues.
 

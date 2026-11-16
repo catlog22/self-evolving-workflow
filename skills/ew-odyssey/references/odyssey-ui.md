@@ -1,12 +1,6 @@
----
-name: ew-odyssey-ui
-prepare: odyssey-ui
-session-mode: inherited
----
-
 # Workflow: Odyssey UI
 
-6-dimension visual experience audit — survey design context → audit dimensions → divergent exploration → fix → verify → generalize.
+6-dimension visual experience audit — survey design context → audit dimensions → divergent exploration → fix → verify → generalize. Follow [shared phases](odyssey-base.md) and [runtime adapters](runtime-adapters.md).
 
 ---
 
@@ -113,11 +107,11 @@ Discover routes: new component to audit → S_AUDIT; fixable sibling → S_FIX.
 
 ### Actions
 
-**A_SURVEY** — (1) Design system inventory: scan for design tokens, CSS variables, theme imports. (2) Current state analysis: styling patterns, layout strategy, component hierarchy. (3) CLI-assisted: `evolve delegate --role analyze --mode analysis` (`run_in_background: true`) — survey tokens, spacing, typography, hierarchy, consistency. (4) Evidence phase=survey. Update §2. Mark G1.
+**A_SURVEY** — (1) Design system inventory: scan for design tokens, CSS variables, theme imports. (2) Current state analysis: styling patterns, layout strategy, component hierarchy. (3) CLI-assisted: `evolve delegate "Survey design tokens, spacing, typography, hierarchy, and visual consistency for {target}" --to codex --mode analysis`. (4) Evidence phase=survey. Update §2. Mark G1.
 
 Commit: `"odyssey-ui({slug}): SURVEY — design context survey complete"`
 
-**A_AUDIT** — Spawn 6 parallel Agents (one per dimension, or `--dimensions` subset; see Dimensions table). Each returns `[{title, severity, file, line, description, suggestion, dimension}]`. Merge → evidence phase=audit. Write `audit_result`. Update §3 severity matrix. Mark G2.
+**A_AUDIT** — Run 6 parallel subagents (one per dimension, or `--dimensions` subset; join all before advancing — see [runtime adapters](runtime-adapters.md)). Each returns `[{title, severity, file, line, description, suggestion, dimension}]`. Merge → evidence phase=audit. Write `audit_result`. Update §3 severity matrix. Mark G2.
 
 **GATE: all-dimensions-audited** — all 6 dimensions (or `--dimensions` subset) completed with structured findings, merged into severity matrix, evidence phase=audit logged per dimension. Zero dimensions reviewed is BLOCKED (W002 partial from agent failure is a warning).
 
@@ -125,13 +119,13 @@ Commit: `"odyssey-ui({slug}): AUDIT — dimension audit complete"`
 
 **A_DIVERGE** — Goes beyond defect fixing — "what would make this delightful?"
 
-**Step 1 — 2 parallel Agents:**
+**Step 1 — 2 parallel subagents** *(joined before consolidating)*:
 - **Polish Agent**: shadows, borders, transitions, hover, feedback, empty states, skeleton loading, scroll behavior.
 - **Delight Agent**: motion design, progressive disclosure, smart defaults, contextual hints, celebratory feedback, personality in copy.
 
 Each returns `[{idea, category (polish|delight), impact, effort, description, inspiration}]`.
 
-**Step 2 — CLI-assisted:** `evolve delegate --role analyze --mode analysis` (`run_in_background: true`) — polish opportunities, micro-interactions, visual rhythm, delight moments.
+**Step 2 — CLI-assisted:** `evolve delegate "Explore polish opportunities, micro-interactions, visual rhythm, and delight moments for {target}" --to codex --mode analysis`.
 
 **Step 3 — Consolidate:** merge audit findings + divergent ideas → prioritized list (severity × impact × effort). Evidence phase=diverge. Update §4. Mark G3.
 
@@ -139,11 +133,11 @@ Each returns `[{idea, category (polish|delight), impact, effort, description, in
 
 Commit: `"odyssey-ui({slug}): DIVERGE — divergent exploration complete"`
 
-**A_FIX** — Skip if `--skip-fix`. (1) Exhaustive fix: ALL findings/ideas by priority tier (critical → high → medium → low + high-impact ideas). After each tier, re-review — new findings append. (2) Each fix → evidence phase=fix. (3) Normal: request_user_input per-fix | `-y`: auto-proceed, record `deferred`.
+**A_FIX** — Skip if `--skip-fix`. (1) Exhaustive fix: ALL findings/ideas by priority tier (critical → high → medium → low + high-impact ideas). After each tier, re-review — new findings append. (2) Each fix → evidence phase=fix. (3) Normal: structured prompt per-fix | `-y`: auto-proceed, record `deferred`.
 
 Commit: `"odyssey-ui({slug}): FIX — {tier} tier addressed"`
 
-**A_VERIFY** — (1) Run tests (lint, unit, visual regression). (2) `evolve delegate --role review --mode analysis` (`run_in_background: true`) — visual correctness, interaction states, accessibility, responsive. (3) `needs_rework` → S_FIX; `verified` → mark G4. Update §5, write `confirmation`.
+**A_VERIFY** — (1) Run tests (lint, unit, visual regression). (2) `evolve delegate "Review UI fixes for {target} across visual correctness, interaction states, accessibility, and responsiveness" --to codex --mode analysis`. (3) `needs_rework` → S_FIX; `verified` → mark G4. Update §5, write `confirmation`.
 
 **GATE: zero-remaining-verified** — every prioritized finding and idea is fixed and verified, individually classified (issue / decision), or skipped via `--skip-fix`; tests pass (lint, unit, visual regression); confirmation written; no unaddressed actionable findings; understanding.md §5 updated. `needs_rework` routes back to FIX.
 
@@ -161,15 +155,14 @@ Audit findings + diverge ideas (severity >= medium OR impact = high).
 
 ## Knowledge Persistence (§8)
 
-Include verified reusable findings in the Run summary and harvest the completed Session through Agent Memory closeout.
-
+Include verified reusable findings in the Run summary and harvest the completed Session through `evolve workflows show knowledge` (`evolve closeout session` → `evolve wiki propose`).
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Design pattern | Component pattern + applicable scenarios + token references | `stage spec → ui` |
-| Interaction spec | State definitions + transition rules + feedback patterns | `stage spec → ui` |
-| Accessibility rule | WCAG requirement + implementation approach | `stage spec → ui` |
-| Reusable generalization pattern | Pattern signature + application scope | `stage spec → coding` |
+| Design pattern | Component pattern + applicable scenarios + token references | `evolve closeout session` → `evolve wiki propose` (`category: ui`) |
+| Interaction spec | State definitions + transition rules + feedback patterns | `evolve closeout session` → `evolve wiki propose` (`category: ui`) |
+| Accessibility rule | WCAG requirement + implementation approach | `evolve closeout session` → `evolve wiki propose` (`category: ui`) |
+| Reusable generalization pattern | Pattern signature + application scope | `evolve closeout session` → `evolve wiki propose` (`category: coding`) |
 
 ---
 
@@ -196,8 +189,8 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Decision Point | Normal | `-y` |
 |---------------|--------|------|
-| A_FIX confirmation | request_user_input | auto-proceed `deferred` |
-| A_DISCOVER routing | request_user_input | auto-fix w/ template, issue for rest |
+| A_FIX confirmation | structured prompt | auto-proceed `deferred` |
+| A_DISCOVER routing | structured prompt | auto-fix w/ template, issue for rest |
 
 ---
 
@@ -236,15 +229,4 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 ---
 
-## Next Step Routing
-
-| Condition | Next |
-|-----------|------|
-| Discovery issues created | `Open the follow-up findings in the project issue tracker` |
-| Backend/data issue found | `/ew-odyssey <target> --mode planex` |
-| Deep bug investigation | `/ew-odyssey <target> --mode debug` |
-| Code quality review | `/ew-odyssey <changed-files> --mode review` |
-| Document pattern | Review the component and harvest reusable methods through Agent Memory. |
-| Second opinion | `evolve delegate "<review prompt>" --mode analysis` |
-| Design/interaction pattern to persist | `stage spec → ui` |
-| Pending decisions | Filter evidence phase=decision status=pending |
+See [shared base](odyssey-base.md) for generic follow-up routing (`Next Step Routing`). Related transitions: `/ew-odyssey <target> --mode planex` (backend/data), `/ew-odyssey <target> --mode debug` (deep bug), `/ew-odyssey <changed-files> --mode review` (code review).

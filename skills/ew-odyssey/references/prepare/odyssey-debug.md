@@ -36,7 +36,7 @@ goal: true
 
 ## Purpose
 
-Odyssey debug is a full-lifecycle debugging cycle: symptom intake → archaeology → code exploration → hypothesis-driven diagnosis → fix → confirmation → generalization → discovery → knowledge persistence. Unlike standalone `/debug` (which produces only a diagnosis), odyssey-debug carries through to fix, confirm, generalize sibling occurrences, and persist learnings.
+Odyssey debug is a full-lifecycle debugging cycle: symptom intake → archaeology → code exploration → hypothesis-driven diagnosis → fix → confirmation → generalization → discovery → knowledge persistence. Unlike standalone diagnosis (`ew-analyze` / `evolve delegate`), odyssey-debug carries through to fix, confirm, generalize sibling occurrences, and persist learnings.
 
 ## Input Interpretation
 
@@ -60,13 +60,10 @@ Template strategies:
 
 ## Required Context
 
-Context injection (optional, may continue if missing):
+Satisfy the Knowledge Gate (`AGENTS.md`) before searching code:
 
-- Architecture doc: `.workflow/codebase/ARCHITECTURE.md` → module boundaries, ownership
-- Wiki: `agent-memory wiki references "<symptom keywords>" --json` → prior investigations
-- Specs: `agent-memory wiki constraints --category debug --keyword "<symptom>"` → known issues/workarounds
-- Coding specs: `agent-memory wiki constraints --category coding` → patterns relevant to the issue area
-- Role knowledge: `agent-memory wiki references "<topic>" --category debug` → pick relevant items → `agent-memory wiki reference <id>`
+- Wiki & Memory (first): Run MCP `wiki_context` / `memory_search` + `wiki_reference` / `memory_get`, or CLI `evolve context "<symptom keywords>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` (plus `evolve wiki get <id> --resolved --reads ... --from-search ...`) for `debug` and `coding` scope.
+- Code graph (after Knowledge Gate): `evolve code search "<symptom keywords>"` → module boundaries, call graph, ownership.
 
 When prior debug artifacts of the same scope exist, check their root cause first to avoid re-investigating an already-confirmed root cause.
 
@@ -100,6 +97,6 @@ Use the artifact identities in the contract above. For `session.json` and `explo
 
 ## Gate Intent
 
-- `discovery-complete`: archaeology and/or exploration phases have logged evidence, understanding.md §2-§3 are updated, and discovery goal (G2) is marked. Archaeology partial results via W003 are acceptable; explore skip via W006 is acceptable if no CLI tools are available.
+- `discovery-complete`: archaeology and/or exploration phases have logged evidence, understanding.md §2-§3 are updated, and discovery goal (G2) is marked. Log W003 on partial archaeology failure or W006 when no CLI exploration executor is available, and record what was covered.
 - `diagnosis-confirmed`: all hypotheses are tested with evidence logged (phase=diagnosis), root cause is confirmed with reproduction or code/log evidence (or INCONCLUSIVE after 3-strike escalation), and understanding.md §4-§5 are written. Zero hypotheses tested is BLOCKED.
 - `fix-confirmed`: fix is implemented and tests pass, CLI review completed, `confirmation.overall` is set, understanding.md §6 is written, and verify goal (G3) is marked. `needs_rework` routes back to FIX. Skippable only when `skip_fix == true`.

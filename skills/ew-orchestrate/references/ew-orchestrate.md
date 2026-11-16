@@ -18,7 +18,7 @@ Match the intent to the smallest Evolve chain that can produce and verify the re
 | Create, list or close tracking items | Use the project's issue tracker with the user's authorization. |
 | View progress or continue | Read evolve session list or evolve session status; resume the exact Session. |
 | Query, review or harvest knowledge | Follow the internal [knowledge route](knowledge-route.md). |
-| Rebuild the project code index | agent-memory code build |
+| Rebuild the project code index | evolve code build |
 | Provision Skill packages | evolve skills install |
 | Create or merge a requested worktree | Use Git worktree and merge operations in the selected repository. |
 

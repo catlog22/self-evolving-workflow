@@ -1,10 +1,8 @@
 ---
 name: release-gate
 description: Validate release readiness against active Wiki constraints and emit a structured release-gate/1.0 artifact.
-version: 0.1.1
+version: 0.2.0
 session-mode: run
-required_links:
-  - references/check-checksum.md
 contract:
   contract_version: 2.1
   consumes: []
@@ -15,12 +13,18 @@ contract:
       role: primary
       alias: latest-release-gate
       required: true
+  gates:
+    entry: []
+    exit:
+      - artifact_sha256 format verified
+      - knowledge and production freeze checks recorded in outputs/release-gate.json
 ---
 
 # Release Gate
 
-1. Resolve active Wiki constraints with `agent-memory wiki constraints --task release --category review --trace`.
-2. Search Wiki references for the release query with `agent-memory wiki references "<query>" --task release --trace` and read the selected stable IDs.
-3. Follow [the checksum verification guide](references/check-checksum.md) to validate `artifact_sha256`.
-4. When `environment=production`, search Memory with `agent-memory memory search "<query>" --scene release --trace`, read the returned memory ID, and follow [the freeze window protocol](references/freeze-window.md). Block the release when an active production freeze is found.
-5. Write `outputs/release-gate.json` with `schema_version: "release-gate/1.0"`, `environment`, `artifact_sha256`, `decision`, `reasons`, `consulted_knowledge_ids`, and `consulted_memory_ids`.
+1. **Knowledge Gate**: Follow the project Knowledge Gate before inspecting files or deciding:
+   - In a Run, use Run MCP `wiki_context` / `wiki_reference` / `memory_get`, or CLI `evolve context "<query>" --task release --session <session-id> --include-memory --reads "<run-dir>/knowledge-reads.json"` (single receipt source per Run), then inspect governing IDs with `--from-search <search-id>`.
+   - Outside a Run, use `evolve context "<query>" --task release --include-memory` (or `node dist/workflow-cli.js` in this checkout).
+2. **Checksum Verification**: Verify `artifact_sha256` matches `^sha256:[a-f0-9]{64}$` and record the active release checksum Wiki constraint ID in `consulted_knowledge_ids`.
+3. **Production Freeze Check**: When `environment=production`, confirm via `evolve context` / `memory_search` + `memory_get` (and matching `evolve wiki get <id> --resolved`) whether any active production freeze record applies. If active, set `decision` to `blocked`, include the consulted memory/wiki IDs, and specify a rollback or hold action.
+4. **Output & Seal**: Write `outputs/release-gate.json` (`_meta` matching `release-gate/1.0`, `environment`, `artifact_sha256`, `decision`, `reasons`, `consulted_knowledge_ids`, `consulted_memory_ids`), summarize findings in `report.md` if required, and seal via `evolve run complete`.

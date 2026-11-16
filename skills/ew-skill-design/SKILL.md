@@ -1,28 +1,30 @@
 ---
 name: ew-skill-design
 disable-model-invocation: true
-description: Design, migrate, or validate a Evolve project Skill with linked
-  Markdown, a Session/Run contract where needed, and reproducible host cases.
-allowed-tools:
-  - Bash
-  - Edit
-  - Glob
-  - Grep
-  - Read
-  - Write
+description: Design, migrate, or validate an Evolve project Skill with linked Markdown, a Session/Run contract where needed, and reproducible host cases.
 session-mode: none
-version: 0.5.93
+version: 0.6.0
 ---
 
 # Evolve Skill Design
 
-Use the requested outcome and the target project's conventions to design or validate `skills/<id>/SKILL.md` and its package. This Skill is entered explicitly when the Agent Memory knowledge route classifies a verified candidate as `skill-design`, or when the user directly requests a new Skill. A route decision alone never starts this Skill. When migrating an existing Skill, inventory its entry points, parameters, outputs, and recovery paths before moving guidance. Keep those interfaces in the design and exercise them in acceptance cases.
+Use this Skill when `evolve closeout` / knowledge routing classifies a structural or multi-file candidate as `skill-design`, or when authoring/migrating `skills/<id>/SKILL.md`. Single-evidence behavioral fixes route to `workflow-evolve` instead.
 
-1. Resolve the project's knowledge and applicable constraints. Record the Skill's triggers, expected artifacts, effects, and success cases. Choose Session/Run when the task needs durable progression, decisions, or artifact handoff. A standalone Skill can use the host's completion receipt. Reuse any Run already assigned to the authoring task.
-2. Put dispatch rules and short instructions in `SKILL.md`. Move conditional procedures into package-relative Markdown links. Put scripts and role instructions beside the Skill when it owns them. Use [the package contract guide](references/package-contract.md) when choosing the lifecycle or declaring Run inputs, outputs, and linked documents.
-3. Inspect the package as the host will see it. Validate the intended Git revision and test the main workflow, one existing success case, and each affected recovery or conditional branch. For a plan or review request, deliver the design or identified gaps. For authoring, leave the requested files and verification results in the workspace.
-4. For changes motivated by a finished Session, use its Memory retrospective to ground the change. Follow [the replay and release procedure](references/validation.md) to verify the actual loaded version and preserve a rollback path.
+## Workflow
 
-## Agent Memory design-task handoff
+1. **Resolve context & lifecycle**:
+   - Run the project Knowledge Gate (`evolve context` / `node dist/workflow-cli.js context`).
+   - Inventory existing entry points, flags, inputs, outputs, and recovery paths when migrating a Skill.
+   - Choose `session-mode: run` when durable progression, coordinator decisions, or artifact handoff is needed; otherwise use `session-mode: none`.
+2. **Enforce Progressive Disclosure (`SKILL.md` vs `references/`)**:
+   - Keep `SKILL.md` focused on: frontmatter (`name`, `description`, `session-mode`, `contract`, `required_links`), trigger/routing table, non-negotiable invariants, and short common steps.
+   - Move mode details, schemas, checklists, and examples into package-relative `.md` links (see [the package contract guide](references/package-contract.md)). Never use cross-package `../` links.
+   - Keep every entry in `required_links` minimal and literally linked in `SKILL.md`.
+3. **Validate & verify**:
+   - Follow [the replay and release procedure](references/validation.md) to validate the committed Git revision and exercise the main flow, one passing case, and affected recovery paths.
 
-When entered from `agent-memory closeout route`, read the generated task with `agent-memory skill-design task <task-id>`. Return a `skill-design/1.0` envelope containing `task_id` and a replayable `draft`. Keep the target Skill entry, evidence sources, baseline hash, priority, and conditional links explicit. The caller runs `agent-memory skill-design review <design-id>`, `skill-design replay`, and `skill-design apply` after the design response is returned. Do not edit the target Skill during design generation.
+## Evolve design-task handoff
+
+- When entered from `evolve closeout route`, inspect the task with `evolve skill-design task <task-id>` and run `evolve skill-design run <task-id>` (or `node dist/workflow-cli.js` in this checkout).
+- Return a `skill-design/1.0` envelope (`task_id` + replayable `draft` naming the target entry, evidence sources, baseline hash, priority, and conditional links).
+- Do not edit the target Skill during draft generation; the caller runs `evolve skill-design review <design-id>`, `replay`, and `apply`.

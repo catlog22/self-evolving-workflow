@@ -1,7 +1,3 @@
-
-> **Agent timeout**: `spawn_agent` 异步执行且无内置超时 — 除明确短任务外一律 `spawn_agent` 后立即 `wait_agent({ timeout_ms: 3600000 })`（上限 1 小时）阻塞等待，绝不依赖 30000 默认值；`timed_out: true` 且 Agent 未完成时再次 `wait_agent` 续等，不丢弃。批量场景使用 `spawn_agents_on_csv({ max_runtime_seconds: 3600, ... })`。
-
-> **Plan tracking**: codex 无 TaskCreate/TaskUpdate/TodoWrite 任务板。进度清单用 `update_plan({ explanation?, plan: [{ step, status }] })` 维护（整体提交步骤数组，status: `pending` | `in_progress` | `completed`），权威状态始终在 session 工件中；依赖/认领（addBlockedBy/owner）是工件字段，不是工具参数。
 # Command: iterate
 
 ## Two Entry Points
@@ -23,8 +19,8 @@ If `k > session.max_iterations`: force converge to Phase 4 (safety net).
 
 ### Step 2: Call aco.py select
 
-```
-Bash: python <skill_root>/scripts/aco.py --session {run_dir}/work/team --run-dir <run_dir> select --iter <k>
+```text
+python <skill_root>/scripts/aco.py --session {run_dir}/work/team --run-dir <run_dir> select --iter <k>
 ```
 
 Parse stdout JSON. Expected:
@@ -45,33 +41,31 @@ Parse stdout JSON. Expected:
 }
 ```
 
-On error -> log to issues.md, request_user_input (retry / abort).
+On error -> log to issues.md and ask user (`ask_question` / `request_user_input`) to retry or abort.
 
 For a Run, `select --iter <k>` persists `assignments/<k>.json` before dispatch. Re-run the same command after an interruption to recover the original IDs and start nodes. Use the roster and task mapping to reuse live jobs and completed artifacts. Create a worker only for an assignment that still needs one.
 
-### Step 3: Create ant tasks
+### Step 3: Record ant assignments in Evolve roster
 
-For each assignment:
+Register each `ANT-<k>-<i>` assignment via `evolve team assign` (and update the host progress plan if available). Assignment IDs `ANT-<k>-<i>` are persisted in `assignments/<k>.json` and tracked by the Evolve team roster (`evolve team assign` / `evolve team list`).
 
+### Step 4: Dispatch N ant workers in parallel
+
+Dispatch one worker per assignment in parallel using the host's subagent/swarm mechanism (`invoke_subagent` or `swarm` in Antigravity; `spawn_agent` in Codex) with the payload below, and join/wait for all dispatched workers before advancing:
+
+```text
+## Role Assignment
+role: ant
+role_spec: <skill_root>/roles/ant/role.md
+session: <session_path>
+session_id: <run-id>
+run_dir: <exact run_dir from the birth packet or team-session.json.run.run_dir>
+requirement: <config.ant_prompt.objective>
+inner_loop: false
+
+## Assignment
+<assignment JSON>
 ```
-update_plan({
-  subject: "ANT-<k>-<i>: explore from <start_node>",
-  description: "Session: <session_path>\nAssignment: <assignment JSON>\nObjective: <config.ant_prompt.objective>"
-})
-update_plan({ taskId: <new>, owner: "ant" })
-```
-
-Set the task ID to match `ANT-<k>-<i>` (or record mapping in `.msg/meta.json` if framework auto-assigns IDs).
-
-### Step 4: Spawn N ant workers in parallel
-
-For each assignment, spawn one team-worker:
-
-```
-spawn_agent({ task_name: "ant_<k>_<i>", message: "Spawn ant <ANT-k-i>", fork_turns: "none", agent_type: "team_worker" })
-```
-
-All N spawns in a single message (parallel).
 
 ### Step 5: Update session state
 
@@ -96,34 +90,9 @@ Check `ANT-<k>-*` task statuses. If any still in_progress: not yet complete, do 
 
 If all completed -> proceed.
 
-### Step 2: (Conditional) Spawn scorer
+### Step 2: (Conditional) Dispatch scorer
 
-If `config.scoring.mode == "llm"`:
-
-```
-spawn_agent({
-  subagent_type: "team-worker",
-  team_name: "swarm",
-  name: "scorer-<k>",
-  run_in_background: true,
-  prompt: `## Role Assignment
-role: scorer
-role_spec: <skill_root>/roles/scorer/role.md
-session: <session_path>
-session_id: <run-id>
-run_dir: <exact run_dir from the birth packet or team-session.json.run.run_dir>
-team_name: swarm
-requirement: score iteration <k> ants
-inner_loop: false
-
-## Context
-Iteration to score: <k>
-Output file: {run_dir}/work/team/scores/iter-<k>-scores.json
-Read all artifacts: {run_dir}/outputs/ant-<k>-*.json`
-})
-```
-
-STOP and await scorer callback. On callback resume at Step 3.
+If `config.scoring.mode == "llm"`, dispatch a `scorer` worker (`role_spec: <skill_root>/roles/scorer/role.md`) with iteration `<k>`, output path `{run_dir}/work/team/scores/iter-<k>-scores.json`, and input glob `{run_dir}/outputs/ant-<k>-*.json`, then wait/join for completion before Step 3.
 
 The callback must identify `SCORE-<k>` and the same iteration. Check that the output covers all ant artifacts for this iteration before invoking `update`. Once the controller has committed the iteration, replay with the same scoring decision and inputs.
 
@@ -194,7 +163,7 @@ After each iteration:
 
 | Condition | Handling |
 |-----------|----------|
-| Ant task failed | Mark task failed; if >50% failed in iter -> halt, request_user_input |
+| Ant task failed | Mark task failed; if >50% failed in iter -> halt and ask user via structured prompt |
 | Ant produced no artifact | Script's update will skip it; if all skipped -> error -> halt |
 | `aco.py update` fails | Retry once; if persistent -> halt with error report |
 | Scorer worker fails | Record the failure. For an intentional self-score fallback in a Run, use `update --iter <k> --allow-score-fallback` and record that choice for replay. |

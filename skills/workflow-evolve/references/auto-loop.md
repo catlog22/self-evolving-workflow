@@ -1,20 +1,23 @@
-# Automatic loop
+# Automatic Loop
 
-The loop is deterministic around four external calls. The runner executes the real task, Agent Memory reviews history, Agy discusses and confirms the proposed change, and Git worktrees replay the baseline and candidate.
+The loop orchestrates four steps per round: baseline/candidate runner execution, history review, Agy discussion/confirmation, and isolated Git worktree replay.
 
-## Round order
+## Round Order
 
-1. Read the current `HEAD` and verify that the target Skill package has no uncommitted changes.
-2. Run every scenario with the current Skill. At least one scenario must reproduce the known failure and one must already pass.
-3. Review history with `agent-memory session review <id>` or `agent-memory evolve review <execution-id> --project <id>`. An explicit `--history` JSON file is accepted when no committed receipt exists. Keep the returned signals, Skill reference, Skill reads and `knowledge_reads` evidence in the round directory.
-4. Ask Agy for one minimal, evidence-linked draft. Agy returns `approved`, `priority`, `instruction`, `when`, `evidence` and `needs_revision`. Reject a draft that lacks a stable source or changes an unrelated behavior. Retry only up to `--max-retries`.
-5. Create the draft through `agent-memory evolve draft`. Replay it with `agent-memory evolve replay` against the accumulated scenario set. The replay must keep every baseline pass green and make every baseline failure pass.
-6. Ask Agy to confirm the replay receipt. The confirmation includes the draft ID, candidate commit, scenario observations and loaded Skill documents. `approved: false` stops the round without applying the candidate.
-7. With `--auto`, apply the receipt. Run the same scenarios from the applied commit. If any scenario fails, immediately call `agent-memory evolve rollback <receipt-id>` and record the failed verification. Without `--auto`, leave the confirmed receipt pending.
-8. Persist the round state and continue until the requested count, a zero-signal review, an Agy rejection, or retry exhaustion stops the loop.
+1. **Preflight**: Read `HEAD` and verify the target Skill package has no uncommitted changes.
+2. **Baseline**: Run all scenarios against the current Skill (must include >= 1 failing case and >= 1 passing case).
+3. **History review**:
+   - In Evolve Runs/Sessions, `evolve-loop.mjs` invokes `node dist/cli.js session review <id>` (or `evolve session review <id>`).
+   - For standalone executions without a Session, pass `--execution <id> --project <id>` or `--history <transcript-evidence/1.0 JSON>`.
+   - Record returned signals, Skill reference, Skill reads, and `knowledge_reads` in the round directory.
+4. **Draft via Agy**: Request one minimal, evidence-linked change (`approved`, `priority`, `instruction`, `when`, `evidence`, `needs_revision`). Reject drafts lacking a traceable source or altering unrelated behavior; retry up to `--max-retries`.
+5. **Replay**: Create the draft and replay it against the accumulated scenarios (`evolve skills draft` / `evolve skills replay`, or `dist/cli.js evolve draft` / `replay` inside `evolve-loop.mjs`). All baseline passes must stay green and baseline failures must pass.
+6. **Confirm via Agy**: Submit draft ID, candidate commit, scenario results, and loaded Skill documents. `approved: false` halts without applying.
+7. **Apply & Verify**: With `--auto`, apply the confirmed receipt and re-run scenarios on the applied commit; on any failure, immediately `rollback` and record the failure. Without `--auto`, leave the confirmed receipt pending.
+8. **Persist & Loop**: Save round state and continue until `--iterations` completes or a stop condition triggers.
 
-## State and stop conditions
+## State and Stop Conditions
 
-`state.json` is the only machine state source. Each round records `base`, `draft`, `replay`, `history`, Agy responses, application status and verification observations. Stop with `completed` after the requested count, `agy_rejected` after bounded Agy retries, `confirmation_rejected` after replay review, or `rolled_back` after an applied verification failure. A process error is `failed` and keeps the round directory for recovery.
-
-The loop resolves Session IDs from the supplied inputs, records exact reads behind each search, and applies drafts with an Agy confirmation receipt. A history source is mandatory. `--allow-empty-history` serves an explicitly history-free fixture and records that exception in the round state.
+- `state.json` is the single machine state source per run (`base`, `draft`, `replay`, `history`, Agy responses, apply status, verification results).
+- Terminal statuses: `completed`, `agy_rejected`, `confirmation_rejected`, `rolled_back`, or `failed` (keeps round directory for recovery).
+- History evidence is mandatory (`--allow-empty-history` is reserved for explicitly history-free test fixtures and recorded in `state.json`).

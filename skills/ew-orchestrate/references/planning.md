@@ -1,137 +1,41 @@
----
-name: ew-orchestrate
-description: Intent-to-chain planner over the canonical Session/Run lifecycle
-argument-hint: "<intent> [-y] [-c] [--amend]"
-contract:
-refs:
-  - path: ew-orchestrate.md
-goal: true
----
+# Planning & Chain Creation
 
-# Prepare: Evolve
+本文件定义意图分类（`S_CLASSIFY`）、建链（`S_CREATE`）与分解（`S_DECOMPOSE`）协议。分类目录见 [意图分类目录](ew-orchestrate.md)，长链策略见 [自动与 Goal 策略](auto-policy.md)，分派/恢复命令见 [执行循环](orchestrator-run-loop.md)。
 
-Evolve 是意图到链的规划器。本文件定义 **公共接口**、**分类协议**、**建链协议** 和 **分解协议**。
-需要分类时查阅[意图分类目录](ew-orchestrate.md)，需要分派或恢复时查阅[执行循环](orchestrator-run-loop.md)。
+## Classification Protocol
 
-## Public Flags
-
-| Flag | 行为 |
-|------|------|
-| `-y` | 自动确认低风险分类和 proposal；不越高风险、低置信度、边界歧义、drift 熔断 |
-| `-c` | 继续唯一 live compatible Session（`evolve-session/1.0`）；多候选必须询问；有 open decision gate 时进入 audited recovery |
-| `--amend` | 修改唯一 live Session 的目标；剩余文本为 change request |
-
-其余文本全部视为 intent。Platform、roadmap、quality、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
-
-## Classification Protocol（A_CLASSIFY）
-
-读取 deferred `workflows/ew-orchestrate.md`，执行意图分类：
-
-1. **Exact match**：`continue/next/go/继续` → state_continue
-2. **Semantic match**：LLM 语义理解匹配 task_type（见意图分类目录）
-3. **Selection priorities**：issue_id > team > UI/design > multi-step > single-step > companion fallback
-4. **State validation（W003）**：execute 无 plan → 警告并前置 plan；test 未执行 → 警告并前置 execute
-5. **Classification evidence（必须）**：记录匹配了哪个 pattern、排除了哪些备选、confidence level。无记录的分类不可进入 A_CREATE
-
-输出：`{ task_type, scope, issue_id, phase_ref, urgency }`
-
-## Chain Creation Protocol（A_CREATE）
-
-### 1. Specs 预检
-
-建链前通过 Agent Memory 读取适用的 Wiki 约束，并记录搜索及精确读取。
-
-### 2. Skill 名预校验
-
-通过 evolve skills 列出内置步骤，并用 evolve skills validate <command> 核对目标项目提交中的步骤契约。
-
-### 3. 组装 chain 定义
-
-```json
-{
-  "intent": "<intent>",
-  "engine": "coordinator",
-  "quality_mode": "standard",
-  "auto_mode": false,
-  "boundary_contract": {
-    "in_scope": [], "out_of_scope": [], "constraints": [], "definition_of_done": ""
-  },
-  "steps": [
-    { "command": "ew-analyze", "args": "--session {session}", "stage": "analyze", "goal_ref": "G1", "retry_max": 2 },
-    { "command": "ew-execute", "args": "--session {session}", "stage": "execute", "goal_ref": "G1", "retry_max": 2 },
-    { "command": "ew-review", "args": "--session {session}", "stage": "review", "retry_max": 2 }
-  ],
-  "decision_points": [],
-  "decomposition": {
-    "execution_criteria": [],
-    "goals": [
-      { "id": "G1", "goal": "...", "done_when": "...", "lifecycle": ["execute", "review"], "status": "pending" }
-    ],
-    "changelog": []
-  }
-}
-```
-
-- `engine: coordinator` 是兼容持久化字段，不是 Session 类型或策略
-- `{session}` `{intent}` 占位符由运行时替换
-- `decision_points` 只为读取/继续 legacy Session 保留；新链使用可执行 Skill step
-
-### 4. 创建
-
-`evolve session open "{intent}" --id ew-{slug} [--definition-of-done "<text>"] [--chain <argument-free commands...>] --participant {actor_id} --actor {actor_id} --request-id {open_request_id} --reason "<reason>" [--evidence <ref> ...] --json`
-
-chain 可随 `session open --chain` 建入无参数 steps；带 domain args 的 step 随后必须用 fenced `session chain insert --arg` 写入，使用与 actor 相同的 participant、fresh request ID 和 open receipt 返回的 exact `orchestration_revision`。无临时 chain-file。随后进入共享执行循环（orchestrator-run-loop.md）。
-
-## Decomposition Protocol（A_DECOMPOSE）
-
-设 `decomposition_owner = "ew-orchestrate"`。下游步骤读取确认后的任务边界。
-
-1. 分类意图广度：narrow / 单步 / {init} 链 → 跳过分解
-2. broad/medium → 最多问 3 轮：Scope / Constraints / Definition of Done（`-y` 不跳过广泛歧义）
-3. 派生 `execution_criteria` + `goals`（每个含 `done_when` + `evidence` + `lifecycle`）
-4. `boundary_contract` 随 `session open` 建入；goals 装入 chain 的 `decomposition` 元数据
-5. 需要终结目标审计时，追加 audit/verify Skill step（拥有 Run，可按 contract 产出 proposal）
-
-### Goal 绑定提示
-
-分解完成后输出 `/goal` 绑定提示词（不阻塞）：
-
-```
-📋 任务分解完成。可随时设定目标：
-/goal 完成以游子目标：
-- G1: {goal} — 完成条件: {done_when}
-- G2: ...
-达成条件: session.json 中 goals[*].status == "done" 且 chain[*].status ∈ {completed,skipped}
-```
-
-## Minimum Chain Rules
+1. **Exact match**: `continue` / `next` / `go` / `继续` → `S_CONTINUE`。
+2. **Semantic match**: 对照 [意图分类目录](ew-orchestrate.md) 匹配最小充分链路（`issue_id > team > UI/design > multi-step > single-step > ew-companion`）。
+3. **前置校验**: `ew-execute` 缺少计划时前置 `ew-plan`；未完成自检与审查前不得结束链路。
+4. **留痕要求**: 必须记录匹配证据、排除的备选方案与置信度；无记录不可进入 `S_CREATE`。
 
 | 意图证据 | 初始链 |
-|---------|--------|
-| 窄修复/变更 | analyze → plan → execute → review/test（按需） |
-| 广泛重写/迁移 | analyze-macro → scope decision → plan/roadmap |
-| 头脑风暴/探索 | brainstorm → 仅 Skill-proposed continuation |
-| 压力测试/grill | grill → 仅 Skill-proposed continuation |
-| 正式规格 | blueprint → plan |
-| 已有 compatible Session | 不重建；进入共享循环 |
+| --- | --- |
+| 窄修复 / 变更 | `ew-analyze` → `ew-plan` → `ew-execute` → `ew-review`（按需） |
+| 广泛重写 / 迁移 | `ew-analyze`（宏分析）→ scope decision → `ew-plan` / 多波次分解 |
+| 头脑风暴 / 探索 | `ew-brainstorm` → 仅按 Skill 提议续接 |
+| 压力测试 / 深度审查 | `ew-analyze`（边界分析）或 `ew-review` → 仅按 Skill 提议续接 |
+| 正式规格 | `ew-brainstorm` → `ew-analyze` → `ew-plan` |
+| 已有 compatible Session | 不重建，直接进入共享执行循环 |
 
-Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风险，非用户 flag。
+## Decomposition Protocol (`S_DECOMPOSE`)
 
-## resolvePhase 优先级
+1. narrow / 单步链跳过分解，直接生成最小隐式 `boundary_contract`（`in_scope: [intent]`、`definition_of_done: "step completed with passing gates"`）。
+2. broad/medium 意图（影响 >=3 个模块、需跨包接口变更、或范围/约束/完成标准中 >=2 项不明确）最多询问 3 轮；`-y` 不跳过广泛歧义。
+3. 派生面向结果的 `boundary_contract` 与 `goals`（禁止用生命周期阶段充当目标，每个目标含 `id`、`goal`、`boundary`、`done_when`、`evidence`、`lifecycle`、`status: "pending"`）。
+4. 多里程碑拆分仅在多 release 证据时启用；有分解时在 `session complete` 前追加 `post-goal-audit` 决策门。
 
-1. `intent_analysis.phase_ref`（结构化提取）
-2. 正则匹配 "phase N" 或裸数字
-3. 项目状态推断：in-progress execute → 首个未完成 phase → 最新 artifact phase
-4. `analyze-plan-execute` 链 → null（用 `{run_dir}`）
-5. 所有命令均 phase-independent → null
-6. 询问用户
+## Chain Creation (`S_CREATE`)
 
-## Invariants（Evolve 特有）
+1. **Knowledge Gate**: 建链前通过 `evolve context "<query>" --include-memory`（源码仓库内为 `node dist/workflow-cli.js`）检索适用 Wiki 约束并记录读取。
+2. **Skill 契约校验**: 通过 `evolve skills` 与 `evolve skills validate <command>` 确认目标项目提交中的步骤契约。
+3. **创建 Session 与 Chain**:
+   - 无参步骤可用 `evolve session open "<intent>" --id ew-<slug> [--definition-of-done "<text>"] [--chain <commands...>] --actor <actor> --request-id <req_id> --reason "<reason>"`。
+   - 带领域参数、`--goal-ref`、`--stage` 或 `--decision-ref` 的步骤，使用 open 返回的 `orchestration_revision` 通过 `evolve session chain insert` 逐条写入（禁止写入临时 chain 文件或直接编辑协议状态；Session 状态统一存储在 `.agent-memory/` SQLite 数据库中）。
+   - 分解完成后可在回复中简要列出 `G1..Gn` 子目标及其 `done_when` 供用户确认（**不要**输出 `/goal` 斜杠命令，以免与宿主 `/goal` 冲突）。
 
-1. **One chain, executor-neutral** — 执行始终派发 run-executor（默认行为），不产生 Session 分型
-2. **Session before execution** — session.json 经 `session open --chain` 创建后才执行（`orchestration_revision` CAS 保护所有 mutation）
-3. **Creator owns decomposition** — Evolve 创建 boundary_contract + goals；后续 orchestrator 只消费不覆盖
-4. **Classification evidence** — 分类必须留痕（匹配 pattern、排除备选、confidence）
-5. **Verdict 驱动链推进** — 由 fenced `evolve run complete ... --advance --verdict done|done_with_concerns` 驱动 chain step 完成；链终结后 `session complete`
-6. **禁止以上游文消耗为由中断执行** — harness 自动处理 context compression
-7. **控制权优先级** — Evolve 拥有 initial chain 选择 + proposal disposition；Skill 拥有领域判断；Runtime 独占 mutation authority
+## Phase Resolution 优先级
+
+1. 结构化 `phase_ref` 或明确 `"phase N"` / 编号。
+2. 当前项目进行中的执行状态或最新未完成阶段。
+3. 多步链默认由 `{run_dir}` 隔离工作；若仍无法确定目标阶段，使用宿主结构化提问工具（Antigravity 为 `ask_question`）向用户确认。
