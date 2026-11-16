@@ -8,7 +8,7 @@ Under `evolve-session/1.0`, goal, boundary, decomposition and pending-tail chang
 1. Read the Evolve capability receipt and retain the Session ID and current revision.
 2. Resolve exactly one compatible Session through read-only recall, then read `evolve session status --session {session_id}`.
 3. Retain exact `session_id + orchestration_revision` (plus `run_revision` for run-target mutations) and one authorized `actor_id`; pass it to `--actor` (`--participant` defaults to it). Never infer current authority from Session status.
-4. Snapshot current Session objective, completion criteria, sealed Run handoffs, pending chain, decisions and revision. Apply amendments to an open Session.
+1. Snapshot current Session objective, `definition_of_done`, `boundary_contract`, `goals[]`, `amendments[]`, sealed Run handoffs, pending chain, decisions, and revision via `evolve session status` / `evolve run brief`. Apply amendments to an open Session.
 
 ## 2. Parse and Assess
 
@@ -34,7 +34,7 @@ or `evolve session chain insert --session {session_id} --step-id <id> --command 
 
 ## 4. Commit the Amendment
 
-After confirmation, record the new objective and completion criteria with `evolve session amend "<objective>" --definition-of-done "<criteria>" --session <session> --actor <actor> --expected-orchestration-revision <revision> --evidence <confirmation>`. Apply the approved pending-tail changes and dispatch with the current fence:
+3. After confirmation, record the new objective and completion criteria with `evolve session amend "<objective>" --definition-of-done "<criteria>" --session <session> --actor <actor> --expected-orchestration-revision <revision> --evidence <confirmation>` (Runtime appends `CHG-NNN` automatically to `Session.amendments[]`). Apply approved pending-tail changes (supporting `--retry-max <n>` and `--decision-only` on `session chain insert`) and dispatch with the current fence:
 
 `evolve run next --session {session_id} --actor {actor_id} --expected-orchestration-revision {orchestration_revision}`
 

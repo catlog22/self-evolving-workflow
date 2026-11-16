@@ -62,15 +62,16 @@ Unless `verificationTool == "Skip"` or zero tasks completed, run one scoped smok
 
 ## Step 8: Write Outputs & `report.md`
 
-Write `outputs/execution.json` (`plan_ref`, `status: completed|partial|blocked`, `waves[]`, `completed_tasks[]`, `blocked_tasks[]`), `outputs/task-results.json`, `outputs/change-manifest.json`, plus `outputs/self-check.json`.
+Write `outputs/execution.json` (`_meta: { kind: "artifact", schema: "artifacts/1.0", role: "primary", alias: "current-execution" }`, `plan_ref`, `status: completed|partial|blocked`, `waves[]`, `completed_tasks[]`, `blocked_tasks[]`), `outputs/task-results.json`, `outputs/change-manifest.json`, plus `outputs/self-check.json` (each JSON carrying matching `_meta`).
 
 Write `report.md` with fixed sections (`Summary`, `Conclusion/Verdict`, `Discussion/Retrospective`, `Artifacts`, `Handoff/Next`), inline GateRecords for `execution-complete` and `self-check-passed`, and frontmatter:
 - `verdict`: `ready` (all succeeded), `ready_with_concerns` (non-critical blocked or smoke gaps), `blocked` (critical failure), `failed` (execution errored).
-- `next`: `[{ command: ew-review, reason: implementation complete, needs: [current-execution] }]`.
+- `next`: `[{ command: ew-verify, reason: implementation complete, needs: [current-execution] }]`.
 
-## Step 9: Knowledge Staging & Wrap-Up
+## Step 9: Knowledge Staging & Seal
 
-Inspect `evidence/summaries/*.md`, deduplicate new patterns/pitfalls against Step 3 rules, and stage reusable findings through `report.md` frontmatter (`constraints`/`decisions`) and the [knowledge route](../../../references/knowledge-route.md) at closeout. Never write Wiki files directly.
+Inspect `evidence/summaries/*.md`, deduplicate new patterns/pitfalls against Step 3 rules, and stage reusable findings through `report.md` frontmatter (`constraints`/`decisions`) for closeout via `ew-knowledge` (`evolve workflows show knowledge`). Never write Wiki files directly.
+Seal via fenced `evolve run complete <run_id> --session <session> --actor <actor> --expected-orchestration-revision <rev> --expected-run-revision <rev> --gate execution-complete --gate self-check-passed --summary "<summary>" --verdict done|done_with_concerns` (recover blocked/failed attempts via `evolve run check` + `evolve run transition`).
 
 ---
 

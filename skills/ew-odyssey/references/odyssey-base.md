@@ -77,7 +77,7 @@ Evaluate every analytical stage + `S_GENERALIZE` across three checks: **Coverage
 
 1. Finalize `understanding.md` summary/learnings per the mode's `## Knowledge Persistence` table; resolve pending decisions and audit `phase_goals[]` (`pending -> done|skipped|failed`, `phase_goals_all_done = true` iff all confirmed).
 2. Set `current_state = "END"` in `outputs/session.json`, emit the mode's Completion Summary, and seal atomically with fenced `evolve run complete` including verified reusable findings in `--summary`.
-3. Follow `evolve workflows show knowledge` (repo: `skills/ew-orchestrate/references/knowledge-route.md`) — stage candidates post-seal via `evolve closeout session <session-id>` and `evolve wiki propose` / `apply` (never direct corpus writes).
+3. Follow `evolve workflows show knowledge` (repo: `skills/ew-knowledge/SKILL.md`) — stage candidates post-seal via `evolve closeout session <session-id>` and `evolve wiki propose` / `apply` (never direct corpus writes).
 
 </shared_actions>
 

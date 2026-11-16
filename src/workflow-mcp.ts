@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { InputError, requireText, searchLimit } from './common.js';
 import { MemoryStore } from './memory.js';
 import { Wiki } from './wiki.js';
-import { wikiLookupScope, type WikiLookupScope, type WikiPrior } from './workflow-knowledge.js';
+import { buildWikiPrior, wikiLookupScope } from './workflow-knowledge.js';
 import { WorkflowStore } from './workflow-runtime.js';
 
 const text = { type: 'string' };
@@ -22,14 +22,6 @@ const tools = [
   definition('memory_search', 'Search the local Agent Memory store and record the search for this Run.', { query: text }, ['query']),
   definition('memory_get', 'Read the exact Memory record selected from this Run’s search results.', { id: text }, ['id']),
 ];
-
-function wikiPrior(page: NonNullable<ReturnType<Wiki['getReference']>>, mode: WikiPrior['mode'], lookupScope: WikiLookupScope, searchId: string) {
-  return {
-    id: page.id, title: page.title, mode, content: page.body, sources: page.sources,
-    scope: page.entry?.scope ?? [], categories: page.entry?.categories, repositories: page.entry?.repositories,
-    lookup_scope: lookupScope, source_search_id: searchId,
-  };
-}
 
 export async function serveWorkflowRun(store: WorkflowStore, session: string, run: string, db?: string) {
   store.brief(session, run);
@@ -68,7 +60,7 @@ export async function serveWorkflowRun(store: WorkflowStore, session: string, ru
                     source: 'wiki_references', query, filters: lookupScope, returnedIds: references.map(item => item.id),
                   });
                   for (const page of constraints) {
-                    const prior = wikiPrior(page, 'constraint', lookupScope, searchId);
+                    const prior = buildWikiPrior(page, 'constraint', lookupScope, searchId);
                     receipt.bindConstraint({ knowledgeId: prior.id, content: prior.content, scope: prior.scope, categories: prior.categories });
                     pin(prior);
                   }
@@ -84,7 +76,7 @@ export async function serveWorkflowRun(store: WorkflowStore, session: string, ru
                   const lookupScope = wikiLookupScope(search.filters);
                   const page = wiki.getReference(id, lookupScope, { knowledgeReads: receipt, fromSearchId: search.search_id });
                   if (!page || page.id !== id) throw new InputError('Wiki reference is no longer available in the recorded scope: ' + id);
-                  pin(wikiPrior(page, 'reference', lookupScope, search.search_id));
+                  pin(buildWikiPrior(page, 'reference', lookupScope, search.search_id));
                   result = page;
                 });
                 break;

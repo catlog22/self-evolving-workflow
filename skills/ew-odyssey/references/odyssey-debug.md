@@ -14,8 +14,8 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see [shared phase
 
 ## Boundary
 
-**In scope:** Single bug/issue full loop — symptom → root cause → fix → confirm → generalize.
-**Out of scope:** Features → `--mode planex` | Quality review → `--mode review` | UI → `--mode ui` | Architecture → `/ew-orchestrate` (`ew-plan`)
+**In scope:** Multi-iteration bug-hunt and generalization campaigns — symptom → root cause → fix → confirm → generalize → discover adjacent defects.
+**Out of scope:** Bounded orchestration-chain diagnosis or simple <=2-file fixes → `ew-orchestrate` (`ew-debug` / `ew-companion`) | Features → `--mode planex` | Quality review → `--mode review` | UI → `--mode ui`
 
 ---
 

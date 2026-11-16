@@ -17,6 +17,7 @@ contract:
     required: false
     schema: artifacts/1.0
     role: primary
+    accepts_negative_evidence: true
   - kind: priors
     alias: session-priors
     required: false

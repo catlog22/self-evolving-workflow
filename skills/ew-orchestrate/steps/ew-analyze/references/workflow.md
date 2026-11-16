@@ -40,8 +40,8 @@ In macro mode, Step 5 sets `scope_verdict`:
 
 ### Step 1: Setup & Scoping
 
-1. **Upstream typed artifacts**: read only via injected alias->path (`current-guidance`, `current-blueprint`, `latest-debug`), never guess latest by mtime. Keep locked constraints fixed; prioritize open constraints/questions. Reuse `architecture_template_evidence` when present without re-searching.
-2. **Project knowledge**: query `wiki_context` / `memory_search` for the topic and open selected entries with `wiki_reference` / `memory_get`. In CLI-only hosts, run `evolve context "<query>" --session <session> --include-memory --reads "<run-dir>/knowledge-reads.json"` and open selected IDs with `--reads ... --from-search ...`.
+1. **Upstream typed artifacts**: read only via injected alias->path (`upstream-context`, `current-blueprint`, `latest-debug`), never guess latest by mtime. Keep locked constraints fixed; prioritize open constraints/questions. Reuse `architecture_template_evidence` when present without re-searching.
+2. **Project knowledge**: reuse `session-priors` when the scope matches; otherwise query `wiki_context` / `memory_search` and open hits with `wiki_reference` / `memory_get`. In CLI-only hosts, run `evolve context "<query>" --session <session> --include-memory --reads "<run_dir>/knowledge-reads.json"` and open selected IDs with `--reads ... --from-search ...`.
 3. **Domain terminology & prior runs**: align with `arch` Wiki references, record new term candidates in `report.md`, and skip already-decided areas from same-milestone analyses.
 
 **Quick routing (`-q`)**: jump directly to Step 6.
@@ -73,7 +73,7 @@ Launch exploration subagent(s) (`invoke_subagent` with `research` or host subage
 - **L2 Depth**: top 3-5 files, 2-3 call/data-flow layers (`call_chains[]`, `data_flows[]`)
 - **L3 Anchors**: 20-50 line `file:line` snippets (`code_anchors[]`)
 
-Write `evidence/exploration-codebase.json` (single) or `evidence/explorations/{perspective}.json` (multi-perspective, up to 4).
+Write merged anchors to `evidence/exploration-codebase.json` (plus optional per-perspective files `evidence/explorations/{perspective}.json` when running multi-perspective up to 4 parallel subagents).
 
 **2.2 Cross-perspective analysis** (mandatory independent pass):
 Run >=1 `evolve delegate "<exploration context prompt>" --to codex|agy --mode analysis` (pass `--session <session> --run <run>` when using `--to codex` inside a bound Run; note `--to agy` runs standalone without `--session`/`--run`). Append `researchContext` as non-binding recommendations if present. For multi-perspective runs, fan out up to 4 parallel subagents/`evolve delegate` calls and wait/join all before continuing.
@@ -101,21 +101,22 @@ Score each dimension 1-5 (`Feasibility`, `Impact`, `Risk`, `Complexity`, `Depend
 ### Step 5: Synthesis & Conclusion
 
 1. **Intent Coverage Matrix**: verify every original intent item is `✅ Addressed`, `🔀 Transformed`, or `❌ Missed` (each ❌ requires an extra round or user-confirmed deferral).
-2. **Write `outputs/findings.json`** (declared in `SKILL.md`): merge validated `technical_solutions[]` into prioritized recommendations, record Decision Trail, `architecture_template_evidence`, `scope_verdict`, and `recommendation`. Run **interactive recommendation review** (accepted/modified/rejected, skipped in `-y`).
-3. **Seal `session-priors`**: ensure every used Wiki entry was opened via `wiki_reference` (or CLI `--reads`).
+2. **Write `outputs/findings.json`** (with `_meta: { kind: "findings", schema: "findings/1.0", role: "primary", alias: "current-analysis" }`, `outputs/risk-matrix.json` when scored): merge validated `technical_solutions[]` into prioritized recommendations, record Decision Trail, `architecture_template_evidence`, `scope_verdict`, and `recommendation`. Run interactive recommendation review (skipped in `-y`).
+3. **Seal `session-priors`**: Runtime auto-snapshots `outputs/priors.json` from opened Wiki entries (`wiki_reference` / `wiki_context`, or CLI `knowledge-reads.json` Wiki reads at completion).
 4. **Update `report.md`**: conclusion, recommendations, Decision Trail, Intent Coverage Matrix, session stats.
 
 ### Step 6: Decision Extraction (Always runs — main step in `-q`)
 
 1. Identify 3-5 undecided domain gray areas (SEE / CALL / RUN / READ / ORGANIZE), skipping upstream locked items.
-2. Let user select areas to discuss (`-y` skips selection or defaults concisely; choosing "Skip" writes empty decision lists).
+2. Let user select areas to discuss (`-y` skips interactive prompts and auto-resolves discussion rounds from code evidence; choosing "Skip" writes empty decision lists).
 3. Discuss selected areas with Option A/B/C trade-offs (respect upstream milestone boundaries; new out-of-scope features go to `Deferred`).
 4. Write `findings.json#decisions[]` as `{title, class: locked|free|deferred, context, options[], chosen, reason}` (attach `researchContext` hints to `free` items if present).
-5. With user confirmation (or `-y`), log `deferred` decisions to the issue tracker (`status: deferred, priority: 5, severity: low, source: analyze, tags: [deferred, analyze]`).
+5. Record `deferred` decisions in `findings.json#decisions[]` and `report.md` (only invoke an external issue tracker with explicit user authorization).
 
 ### Wrap-up
 
-Write `report.md` with frontmatter (`verdict: ready`, `summary`, `constraints`, `decisions`, `concerns`, `next: [{ command: ew-plan, reason: ..., needs: [current-analysis] }]`) and sections (`## Summary`, `## Conclusion/Verdict`, `## Discussion/Retrospective`, `## Artifacts`, `## Handoff/Next`). Use `{{aref:current-analysis#/...}}` instead of copying JSON values. Follow [knowledge route](../../../references/knowledge-route.md) for sealing and candidate staging.
+Write `report.md` with frontmatter (`verdict: ready`, `summary`, `constraints`, `decisions`, `concerns`, `next: [{ command: ew-plan, reason: ..., needs: [current-analysis] }]`) and sections (`## Summary`, `## Conclusion/Verdict`, `## Discussion/Retrospective`, `## Artifacts`, `## Handoff/Next`). Use `{{aref:current-analysis#/...}}` instead of copying JSON values.
+Seal via fenced `evolve run complete <run_id> --session <session> --actor <actor> --expected-orchestration-revision <rev> --expected-run-revision <rev> --gate exploration-done --gate discussion-round --gate scoring-complete --gate intent-covered --summary "<summary>" --verdict done|done_with_concerns` (for `-q` / `--gaps`, confirm `outputs/findings.json` and pass the exit gates with quick/gap mode evidence summary; recover blockers via `evolve run check` + `evolve run transition`). Hand off closeout candidate staging afterward to `ew-knowledge` (`evolve workflows show knowledge`).
 
 ---
 

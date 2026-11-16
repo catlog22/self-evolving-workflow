@@ -1,6 +1,8 @@
 import { posix } from 'node:path';
+import { contentSha256 } from './knowledge-reads.js';
 import { InputError, requireText } from './common.js';
 import { isRepositoryId, isWikiCategory, type WikiContext } from './wiki-entry.js';
+import type { Wiki } from './wiki.js';
 import { workflowRecord, workflowStrings } from './workflow-skills.js';
 
 export type WikiLookupScope = Pick<WikiContext, 'repository' | 'task' | 'paths' | 'categories'>;
@@ -17,6 +19,19 @@ export interface WikiPrior {
   lookup_scope: WikiLookupScope;
   source_search_id: string;
   content_sha256: string;
+}
+
+export function buildWikiPrior(
+  page: NonNullable<ReturnType<Wiki['getEntry']>>,
+  mode: WikiPrior['mode'],
+  lookupScope: WikiLookupScope,
+  searchId: string,
+): WikiPrior {
+  return {
+    id: page.id, title: page.title, mode, content: page.body, sources: page.sources,
+    scope: page.entry?.scope ?? [], categories: page.entry?.categories, repositories: page.entry?.repositories,
+    lookup_scope: lookupScope, source_search_id: searchId, content_sha256: contentSha256(page.body),
+  };
 }
 
 export function wikiLookupScope(value: unknown = {}): WikiLookupScope {

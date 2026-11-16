@@ -88,8 +88,8 @@ test('All shipped step and mode contracts resolve in the installed Git packages'
   const f = fixture('evolve-runtime-contracts-', ['ew-impeccable']);
   try {
     const names = f.evolve('skills').map(item => item.command);
-    assert.equal(names.length, 15);
-    assert.equal(names.filter(name => name.startsWith('ew-')).length, 14);
+    assert.equal(names.length, 24);
+    assert.equal(names.filter(name => name.startsWith('ew-')).length, 23);
     for (const name of names) {
       const binding = f.evolve('skills', 'validate', name);
       assert.match(binding.commit, /^[0-9a-f]{40}$/);
@@ -297,6 +297,121 @@ test('Evolve delegate resolves JS stubs and Windows shims, binds Run MCP for Cod
       'delegate', 'Bound agy should fail', '--to', 'agy', '--session', 'delegate-check', '--run', run.run_id,
     ], { AGY_EXECUTABLE: stub }), /Use Codex for a bound Evolve worker/);
     assert.throws(() => execWithEnv(['delegate', 'Bad flag', '--resume', 'abc']), /Unknown option '--resume'/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Short workflow aliases and long-chain continuity safeguards operate end-to-end', () => {
+  const f = fixture('evolve-continuity-', ['ew-knowledge', 'ew-impeccable', 'ew-skill-design']);
+  try {
+    assert.match(f.run(process.execPath, [cli, 'workflows', 'show', 'orchestrate']), /Evolve chain catalog/);
+    assert.match(f.run(process.execPath, [cli, 'workflows', 'show', 'knowledge']), /^name: ew-knowledge$/m);
+    assert.equal(f.evolve('skills', 'validate', 'odyssey').skill_id, 'ew-odyssey');
+    assert.equal(f.evolve('skills', 'validate', 'impeccable').skill_id, 'ew-impeccable');
+    assert.equal(f.evolve('skills', 'validate', 'skill-design').skill_id, 'ew-skill-design');
+
+    f.write('wiki-rule.json', JSON.stringify({
+      operation: 'create', entry: 'entries/continuity-rule', title: 'Continuity Rule', mode: 'constraint',
+      body: 'Preserve goal contracts across retries.',
+    }));
+    f.agent('wiki', 'apply', f.agent('wiki', 'propose', 'wiki-rule.json', '--evidence', 'fixture:continuity').id);
+
+    const session = 'long-chain';
+    const opened = f.evolve(
+      'session', 'open', 'Implement resilient gate', '--id', session, '--actor', 'test',
+      '--definition-of-done', 'Verified implementation', '--auto', '--goal-mode',
+      '--boundary-contract', JSON.stringify({ in_scope: ['src/auth.ts'], out_of_scope: ['docs/'] }),
+      '--goals', JSON.stringify([{ id: 'G1', goal: 'Fix auth gate', done_when: 'ew-verify passes' }]),
+    );
+    assert.equal(opened.continuation.authority, 'automatic');
+    const amended = f.evolve(
+      'session', 'amend', 'Implement and verify resilient gate', ...f.fence(session, opened.orchestration_revision),
+      '--evidence', 'user-confirmed', '--reason', 'Clarified verification scope',
+    );
+    assert.equal(amended.amendment_id, 'CHG-001');
+
+    let rev = amended.orchestration_revision;
+    const insertedSteps = [
+      { id: 'anl-1', cmd: 'ew-analyze', args: ['--session', '{session}'] },
+      { id: 'pln-1', cmd: 'ew-plan', args: ['--session', '{session}'] },
+      { id: 'exe-1', cmd: 'ew-execute', args: [], retryMax: 2 },
+      { id: 'ver-1', cmd: 'ew-verify', args: [] },
+    ];
+    for (const s of insertedSteps) {
+      const res = f.evolve('session', 'chain', 'insert', ...f.fence(session, rev),
+        '--step-id', s.id, '--command', s.cmd, ...s.args.map(a => `--arg=${a}`),
+        ...(s.retryMax ? ['--retry-max', String(s.retryMax)] : []));
+      rev = res.orchestration_revision;
+    }
+    rev = f.evolve('session', 'chain', 'insert', ...f.fence(session, rev),
+      '--step-id', 'gate-1', '--decision-only', '--decision-ref', 'post-goal-audit').orchestration_revision;
+
+    // Step 1: ew-analyze with CLI knowledge-reads.json emitting outputs/priors.json & argument placeholder expansion.
+    const anl = f.next(session, rev);
+    assert.deepEqual(anl.task.args, ['--session', session]);
+    assert.equal(anl.boundary_contract.in_scope[0], 'src/auth.ts');
+    assert.equal(anl.goals[0].id, 'G1');
+    assert.equal(anl.amendments[0].id, 'CHG-001');
+    readBound(f, session, anl);
+    f.saveArtifact(anl, 'findings.json', { findings: ['ok'] });
+    f.agent('context', 'continuity', '--reads', join(anl.run_dir, 'knowledge-reads.json'));
+    const sealedAnl = f.finish(session, anl, 'Analyzed', anl.gates.exit.flatMap(g => ['--gate', g]), anl.orchestration_revision);
+    assert.ok(sealedAnl.artifact_publication.aliases['session-priors']);
+
+    // Step 2: ew-plan consumes current-analysis even if sealed with done_with_concerns.
+    const pln = f.next(session, sealedAnl.orchestration_revision);
+    readBound(f, session, pln);
+    f.saveArtifact(pln, 'plan.json', { tasks: ['T1'] });
+    const sealedPln = f.finish(session, pln, 'Planned', pln.gates.exit.flatMap(g => ['--gate', g]), pln.orchestration_revision);
+
+    // Step 3: ew-execute fails once (retry 1), succeeds with done_with_concerns + evidence attachment.
+    const exeAttempt1 = f.next(session, sealedPln.orchestration_revision);
+    const failedExe = f.evolve('run', 'transition', exeAttempt1.run_id, 'failed', ...f.fence(session, exeAttempt1.orchestration_revision),
+      '--expected-run-revision', String(exeAttempt1.revision), '--reason', 'Flaky attempt');
+    const exeAttempt2 = f.next(session, failedExe.orchestration_revision);
+    const failedExe2 = f.evolve('run', 'transition', exeAttempt2.run_id, 'failed', ...f.fence(session, exeAttempt2.orchestration_revision),
+      '--expected-run-revision', String(exeAttempt2.revision), '--reason', 'Second failure hits retry_max');
+    assert.throws(() => f.next(session, failedExe2.orchestration_revision), /Retry limit exceeded for step: exe-1/);
+
+    // Insert a fresh bounded step exe-2 and complete it with done_with_concerns + sibling evidence artifact.
+    const insExe2 = f.evolve('session', 'chain', 'insert', ...f.fence(session, failedExe2.orchestration_revision),
+      '--step-id', 'exe-2', '--command', 'ew-execute', '--after-step', 'exe-1');
+    const skipped = f.evolve('session', 'chain', 'skip', ...f.fence(session, insExe2.orchestration_revision),
+      '--step-id', 'exe-1', '--evidence', 'Superseded by exe-2');
+    const exe2 = f.next(session, skipped.orchestration_revision);
+    readBound(f, session, exe2);
+    f.saveArtifact(exe2, 'execution.json', { status: 'partial' });
+    f.saveArtifact(exe2, 'change-manifest.json', { files: ['src/auth.ts'] });
+    const sealedExe = f.finish(session, exe2, 'Executed with gaps', ['--verdict', 'done_with_concerns',
+      ...exe2.gates.exit.flatMap(g => ['--gate', g])], exe2.orchestration_revision);
+
+    // Step 4: ew-verify accepts negative evidence + automatically receives sibling change-manifest.json.
+    const ver = f.next(session, sealedExe.orchestration_revision);
+    assert.ok(Object.values(ver.upstream).some(item => item.path === 'outputs/change-manifest.json'));
+    readBound(f, session, ver);
+    f.saveArtifact(ver, 'verification.json', { status: 'passed' });
+    const sealedVer = f.finish(session, ver, 'Verified implementation', ver.gates.exit.flatMap(g => ['--gate', g]), ver.orchestration_revision);
+    assert.equal(sealedVer.continuation.action, 'decide');
+    assert.equal(sealedVer.continuation.decision_ref, 'post-goal-audit');
+
+    // Step 5: decision-only gate rejects low-confidence auto proceed without evidence, reopens target step on fix, then seals.
+    assert.throws(() => f.evolve('run', 'decide', 'post-goal-audit', '--verdict', 'proceed', '--confidence', '45',
+      '--summary', 'Low confidence', ...f.fence(session, sealedVer.orchestration_revision)), /Confidence below 60/);
+    const fixDec = f.evolve('run', 'decide', 'post-goal-audit', '--verdict', 'fix', '--target-step', 'ver-1',
+      '--summary', 'Re-verify after adjustment', ...f.fence(session, sealedVer.orchestration_revision));
+    assert.equal(fixDec.continuation.action, 'next');
+    const ver2 = f.next(session, fixDec.orchestration_revision);
+    readBound(f, session, ver2);
+    f.saveArtifact(ver2, 'verification.json', { status: 'passed' });
+    const sealedVer2 = f.finish(session, ver2, 'Re-verified cleanly', ver2.gates.exit.flatMap(g => ['--gate', g]), ver2.orchestration_revision);
+    const procDec = f.evolve('run', 'decide', 'post-goal-audit', '--verdict', 'proceed', '--confidence', '92',
+      '--summary', 'All goals satisfied', ...f.fence(session, sealedVer2.orchestration_revision));
+    assert.equal(procDec.continuation.action, 'complete');
+    const filteredOpen = f.evolve('session', 'list', '--status', 'open', '--query', 'resilient');
+    assert.equal(filteredOpen.length, 1);
+    const doneSession = f.evolve('session', 'complete', ...f.fence(session, procDec.orchestration_revision));
+    assert.equal(doneSession.status, 'completed');
   } finally {
     f.cleanup();
   }

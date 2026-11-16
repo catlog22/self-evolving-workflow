@@ -19,7 +19,7 @@ Impeccable 4.1.3 for Self-Evolving Workflow. Its design playbooks and tools are 
 
 Invoke via your host's Skill or slash command (`audit <target>` / `shape <feature>`), or ask the host to read `skills/ew-impeccable/SKILL.md` with your target.
 
-For a bound Evolve Run, use the command and target in its packet, read this entry and the selected playbook with `evolve run skill-read`, and run scripts from that revision at the project root. Record verification in the Run report (`evolve workflows show orchestrate`).
+For a bound Evolve Run, use the command and target in its packet, read this entry and the selected playbook with `evolve run skill-read`, and run scripts from that revision at the project root. Record verification in the Run report (`evolve workflows show session-run`).
 
 1. **Knowledge Gate first**: In this repository, satisfy `AGENTS.md` Knowledge Gate (`evolve context ...` or Run MCP `wiki_context`) before opening project files or running `context.mjs`; `PRODUCT.md`, `DESIGN.md`, and `.impeccable/*` are command-authorized workspace outputs.
 

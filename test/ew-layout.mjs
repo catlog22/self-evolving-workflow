@@ -6,10 +6,14 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(fileURLToPath(import.meta.url));
 const project = dirname(root);
 const orchestrator = join(project, 'skills', 'ew-orchestrate');
-const steps = ['ew-brainstorm', 'ew-analyze', 'ew-plan', 'ew-execute', 'ew-review'];
+const knowledge = join(project, 'skills', 'ew-knowledge');
+const steps = [
+  'ew-init', 'ew-brainstorm', 'ew-grill', 'ew-blueprint', 'ew-roadmap', 'ew-analyze', 'ew-plan', 'ew-execute',
+  'ew-verify', 'ew-test', 'ew-auto-test', 'ew-review', 'ew-debug', 'ew-retrospective',
+];
 const retiredCompanionName = ['maestro', 'companion'].join('-');
 const topLevelForbidden = ['maestro', 'maestro-odyssey', 'maestro-skill-design', 'maestro-next', 'maestro-ralph', retiredCompanionName,
-  'analyze', 'plan', 'execute', 'brainstorm', 'review', ...steps];
+  'workflow-closeout', 'init', 'analyze', 'plan', 'execute', 'brainstorm', 'grill', 'blueprint', 'roadmap', 'verify', 'test', 'auto-test', 'review', 'debug', 'retrospective', ...steps];
 
 function markdown(path) {
   assert.ok(existsSync(path), `Missing Markdown file: ${relative(project, path)}`);
@@ -27,10 +31,8 @@ const entry = markdown(join(orchestrator, 'SKILL.md'));
 assert.match(entry, /^name: ew-orchestrate$/m);
 assert.match(entry, /argument-hint:.*--goal <goal>/);
 assert.match(entry, /<goal_long_chain>/);
-assert.match(entry, /<knowledge_route>/);
 assert.match(entry, /<companion_route>/);
 assert.match(entry, /references\/goal\.md/);
-assert.match(entry, /references\/knowledge-route\.md/);
 assert.match(entry, /references\/companion-route\.md/);
 for (const step of steps) assert.match(entry, new RegExp(`steps/${step}/SKILL\\.md`));
 
@@ -39,10 +41,16 @@ for (const marker of ['内部路由', 'ew-companion` 步骤', 'Session/Run', 'ew
   assert.match(companionRoute, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
 
-const knowledgeRoute = markdown(join(orchestrator, 'references', 'knowledge-route.md'));
-for (const marker of ['统一 Wiki', 'closeout', 'mode: constraint', 'mode: reference', 'wiki propose', 'workflow-evolve']) {
+const knowledgeEntry = markdown(join(knowledge, 'SKILL.md'));
+assert.match(knowledgeEntry, /^name: ew-knowledge$/m);
+const knowledgeRoute = markdown(join(knowledge, 'references', 'knowledge-route.md'));
+for (const marker of ['统一 Wiki', 'Closeout', 'mode: constraint', 'mode: reference', 'wiki/']) {
   assert.match(knowledgeRoute, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
+markdown(join(knowledge, 'references', 'closeout-protocol.md'));
+markdown(join(knowledge, 'references', 'wiki-maintenance.md'));
+assert.equal(existsSync(join(orchestrator, 'references', 'knowledge-route.md')), false,
+  'Knowledge route should not live inside ew-orchestrate');
 
 const goal = markdown(join(orchestrator, 'references', 'goal.md'));
 for (const marker of ['evolve-session/1.0', 'goal_ref', 'session complete', 'pending-tail']) assert.match(goal, new RegExp(marker));
@@ -72,7 +80,7 @@ for (const file of walk(orchestrator)) {
     `Independent knowledge route remains: ${relative(project, file)}`);
 }
 
-for (const file of [orchestrator, join(project, 'skills', 'ew-odyssey'), join(project, 'skills', 'ew-skill-design'),
+for (const file of [orchestrator, knowledge, join(project, 'skills', 'ew-odyssey'), join(project, 'skills', 'ew-skill-design'),
   join(project, 'skills', 'ew-impeccable')].flatMap(walk)) {
   if (!file.endsWith('.md')) continue;
   const directory = dirname(file);

@@ -113,4 +113,4 @@ Seal the Run via:
 evolve run complete <run_id> --session <session_id> --actor <actor_id> --expected-orchestration-revision <orchestration_revision> --expected-run-revision <run_revision> --summary "<observed review summary>" --verdict done|done_with_concerns
 ```
 
-Use `--verdict done_with_concerns` when actionable findings remain. Stage any reusable review constraints or defect patterns after sealing through the [knowledge route](../../../references/knowledge-route.md).
+Use `--verdict done_with_concerns` when actionable findings remain. Stage any reusable review constraints or defect patterns after sealing through `ew-knowledge` (`evolve workflows show knowledge`).

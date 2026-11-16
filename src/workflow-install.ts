@@ -46,7 +46,7 @@ function shippedSkills() {
 function selectSkills(shipped: string[], requested: string[]) {
   const selected = requested.length ? [...new Set(requested.map(workflowName))] : shipped;
   if (selected.some(name => !shipped.includes(name))) throw new InputError('Choose a shipped Skill package');
-  if (selected.some(name => name === 'ew-odyssey' || name === 'workflow-closeout') && !selected.includes('ew-orchestrate')) {
+  if (selected.includes('ew-odyssey') && !selected.includes('ew-orchestrate')) {
     return ['ew-orchestrate', ...selected];
   }
   return selected;

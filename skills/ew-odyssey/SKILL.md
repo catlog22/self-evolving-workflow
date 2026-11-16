@@ -11,7 +11,7 @@ contract:
 version: 0.6.0
 ---
 
-For Evolve Session/Run dispatch, decisions, and recovery, inspect `evolve workflows show orchestrate` (repo source: `skills/ew-orchestrate/references/orchestrator-run-loop.md`).
+For Evolve Session/Run dispatch, decisions, and recovery, inspect `evolve workflows show session-run` (repo source: `skills/ew-orchestrate/references/orchestrator-run-loop.md`).
 
 ## Mode documents
 

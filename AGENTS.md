@@ -28,21 +28,21 @@ For a CLI lookup in a Run, use `evolve context "<query>" --session <session-id> 
 
 - Inspect the applicable constraints and open governing hits by exact ID with `evolve wiki get <id> --resolved` or `evolve memory get <id>`. In a Run, use its bound tools or the same `--reads` receipt with `--from-search <search-id>` so the exact read is recorded.
 - Refine an empty or irrelevant query before exploring. Proceed after inspecting a successful zero-result response to the refined query. Follow any initialization or recovery hint and retry. Re-query when the task enters a new subsystem, an approach needs a decision, or the same fix fails twice.
-- Seal verified outputs and evidence through Evolve. Follow the [knowledge route](skills/ew-orchestrate/references/knowledge-route.md) to stage reusable findings through Agent Memory. Review candidates before promotion. Zero candidates is a valid outcome. Keep previous project knowledge directories as migration inputs.
+- Seal verified outputs and evidence through Evolve. Follow [ew-knowledge](skills/ew-knowledge/SKILL.md) to stage reusable findings through Agent Memory. Review candidates before promotion. Zero candidates is a valid outcome. Keep previous project knowledge directories as migration inputs.
 
 ## Workflow Routing
 
 | Intent | Entry |
 | --- | --- |
 | Ordinary orchestration and goal chains | [ew-orchestrate](skills/ew-orchestrate/SKILL.md) |
+| Knowledge governance, closeout, Wiki review, and migration | [ew-knowledge](skills/ew-knowledge/SKILL.md) |
 | Iterative audit, debugging, improvement or review | [ew-odyssey](skills/ew-odyssey/SKILL.md) |
 | Parallel ACO exploration and scoring | [Swarm](skills/team-swarm/SKILL.md) |
 | Frontend design, audit, and polish | [ew-impeccable](skills/ew-impeccable/SKILL.md) |
 | Skill authoring, migration, and package validation | [ew-skill-design](skills/ew-skill-design/SKILL.md) |
 | Release readiness validation against Wiki constraints | [release-gate](skills/release-gate/SKILL.md) |
 | Session/Run, artifact and recovery commands | [Evolve controller](skills/ew-orchestrate/references/orchestrator-run-loop.md) |
-| Historical review and knowledge governance | [Agent Memory knowledge route](skills/ew-orchestrate/references/knowledge-route.md) |
-| Closeout compatibility entry to knowledge governance | [workflow-closeout](skills/workflow-closeout/SKILL.md) |
+| Historical review and Wiki governance rules | [ew-knowledge route](skills/ew-knowledge/references/knowledge-route.md) |
 | Evidence-driven Skill improvement | [Workflow Evolve](skills/workflow-evolve/SKILL.md) |
 | External Codex or Agy execution | `evolve delegate --help` and the controller guide |
 

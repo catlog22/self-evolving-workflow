@@ -25,6 +25,8 @@ const options = {
   'expected-orchestration-revision': string, 'expected-run-revision': string,
   'definition-of-done': string, chain: strings, 'step-id': string, command: string, arg: strings, 'after-step': string,
   'decision-ref': string, 'goal-ref': string, stage: string, gate: strings, from: string, verdict: string, summary: string,
+  'boundary-contract': string, goals: string, auto: bool, 'goal-mode': bool, status: string, query: string,
+  'retry-max': string, 'decision-only': bool, 'target-step': string, confidence: string,
   to: string, tool: string, role: string, mode: string, model: string, cd: string, 'prompt-file': string, path: string,
   project: string, global: bool, apply: bool, 'knowhow-only': bool,
   scope: string, host: string, skill: strings, yes: bool,
@@ -211,20 +213,34 @@ async function runWorkflowCli(argv: string[]) {
     return { actor, requestId: values['request-id'], revision: revision(values['expected-orchestration-revision']),
       runRevision: revision(values['expected-run-revision']), evidence: values.evidence, reason: values.reason };
   };
+  const parseJsonOption = (raw: string | undefined, label: string) => {
+    if (raw === undefined) return undefined;
+    try { return JSON.parse(raw); } catch { throw new InputError('Invalid JSON for ' + label); }
+  };
   const makeStep = (command: string, step: string): WorkflowStep => ({
-    id: step, command, args: values.arg ?? [], decision_ref: values['decision-ref'],
+    id: step, command, args: values.arg ?? [],
+    ...(values['decision-only'] ? { kind: 'decision' as const } : {}),
+    ...(values['retry-max'] === undefined ? {} : { retry_max: revision(values['retry-max']) }),
+    decision_ref: values['decision-ref'],
     goal_ref: values['goal-ref'], stage: values.stage,
   });
   try {
     if (group === 'session') {
-      if (action === 'list' || action === 'resume-view') return print(store.list());
+      if (action === 'list' || action === 'resume-view') {
+        const status = values.status === undefined ? undefined : select(values.status, ['open', 'completed'] as const, 'Session status');
+        return print(store.list({ status, query: values.query }));
+      }
       if (action === 'status') return print(store.status(id()));
       if (action === 'amend') return print(store.amend(id(), requireText(args[0], 'amended objective'),
         values['definition-of-done'], mutation()));
       if (action === 'open') {
         const chain = [...values.chain ?? [], ...args.slice(1)].flatMap(value => value.split(/[\s,]+/)).filter(Boolean);
         const steps = chain.map((command, index) => ({ id: command + '-' + (index + 1), command, args: [] }));
-        const session = store.open(id(), requireText(args[0], 'objective'), values['definition-of-done'] ?? '', steps, mutation());
+        const boundaryContract = parseJsonOption(values['boundary-contract'], '--boundary-contract');
+        const goals = parseJsonOption(values.goals, '--goals');
+        const policy = values.auto || values['goal-mode'] ? { auto_mode: Boolean(values.auto), goal_mode: Boolean(values['goal-mode']) } : undefined;
+        const session = store.open(id(), requireText(args[0], 'objective'), values['definition-of-done'] ?? '', steps, mutation(),
+          { boundaryContract, goals, policy });
         if (existsSync(join(root, '.git'))) {
           try {
             await new CodeGraph(root).refresh();
@@ -236,8 +252,8 @@ async function runWorkflowCli(argv: string[]) {
       }
       if (action === 'chain') {
         const change = select(args[0], ['insert', 'replace', 'skip'], 'chain action');
-        return print(store.chain(id(), change, makeStep(change === 'skip' ? '' : requireText(values.command, 'command'),
-          workflowId(values['step-id'], 'step ID')), values['after-step'], mutation()));
+        const cmd = change === 'skip' || values['decision-only'] ? '' : requireText(values.command, 'command');
+        return print(store.chain(id(), change, makeStep(cmd, workflowId(values['step-id'], 'step ID')), values['after-step'], mutation()));
       }
       if (action === 'complete') return print(store.completeSession(id(), mutation()));
     }
@@ -256,7 +272,11 @@ async function runWorkflowCli(argv: string[]) {
         action === 'cancel' ? 'cancelled' : select(args[1], ['running', 'blocked', 'failed'], 'Run status'),
         requireText(values.reason ?? values.summary, 'transition reason'), mutation()));
       if (action === 'decide') return print(store.decide(id(), workflowId(args[0], 'decision ID'),
-        select(values.verdict, ['proceed', 'fix', 'escalate'], 'decision'), requireText(values.summary, 'decision summary'), mutation()));
+        select(values.verdict, ['proceed', 'fix', 'escalate'], 'decision'), requireText(values.summary, 'decision summary'), mutation(),
+        {
+          targetStepId: values['target-step'] === undefined ? undefined : workflowId(values['target-step'], 'target step ID'),
+          confidence: values.confidence === undefined ? undefined : Number(values.confidence),
+        }));
     }
     if (group === 'team') {
       if (action === 'list') return print(store.teamList(id(), runId()));

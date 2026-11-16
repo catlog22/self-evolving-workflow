@@ -52,7 +52,7 @@ Launch a planner subagent (or 2+1 topology; join all subagents before Step 4). *
 - **Guardrails**: simple <=4 tasks, medium <=8, large (>3 modules) <=16; 1 feature = 1 substantial task (15-60m, batch <5m trivial edits); `depends_on` only for real output dependencies; vertical UI slices with >=1 `[UI-observable]` criterion per delivery wave.
 - **Every `TASK-NNN.json` must include**:
   1. `read_first[]`: target modified files + source-of-truth/pattern files.
-  2. `convergence.criteria`: concrete grep/test/CLI verifiable assertions (zero subjective words like "looks correct").
+  2. `convergence_criteria`: concrete grep/test/CLI verifiable assertions (zero subjective words like "looks correct").
   3. `action` & `implementation`: exact signatures, keys, values, import paths (never "align X with Y").
   4. `architecture_template_refs`: only resolved `template_id` values present in `plan.json.shared_context.architecture_templates`.
 - **`--gaps` tasks**: `type: fix`, retaining `issue_id` (update matched issues to `planned`) and `finding_refs[]`.
@@ -61,7 +61,7 @@ Launch a planner subagent (or 2+1 topology; join all subagents before Step 4). *
 
 1. Launch a mandatory **plan checker subagent** (joined before continuing) to verify requirement coverage, DAG acyclicity, grep-verifiable convergence, `read_first[]` completeness, concrete actions, same-wave write non-collision, UI coverage, and valid `architecture_template_evidence` (`kind=template`, `reference_only=true`, resolved IDs only, absent from knowledge consumption fields). Run up to 3 revision loops on criticals.
 2. Score 5 dimensions (`requirements_coverage`, `task_quality`, `dependency_correctness`, `estimation_accuracy`, `collision_safety`) weighted by `completeness .30`, `specificity .25`, `structural_validity .20`, `user_validation .15`, `consistency .10`, plus >=1 mandatory **Pressure Pass** on the highest-complexity task.
-3. Run [boundary review](../../../references/boundary-grill.md) if boundary/write conflicts arise.
+3. Run boundary review (`skills/ew-orchestrate/references/boundary-grill.md`) if boundary/write conflicts arise, writing `boundary_grill[]` inside `outputs/plan.json` (never raw Markdown inside `.json`).
 4. Block before Step 4.5 if coverage <40%, missing `read_first`/`convergence`, no pressure pass, cycle, or invalid template ref (unless user confirms into `residual_risks`).
 5. **Collision Detection (Step 4.5, skip if `standalone`)**: intersect new `task.files[]` (write targets only, not `read_first[]`) against existing milestone plans -> write `outputs/collision-report.json`.
 
@@ -79,14 +79,14 @@ Present objective, task/wave counts, key dependencies, confidence %, weakest dim
 
 ### Wrap-up
 
-Write `report.md` with frontmatter (`verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next: [{ command: ew-execute, reason: plan ready, needs: [current-plan] }]`) and sections `Summary`, `Conclusion/Verdict`, `Discussion/Retrospective`, `Artifacts`, `Handoff/Next`. Reference `current-plan` via `{{aref:...}}` rather than copying JSON. Follow [knowledge route](../../../references/knowledge-route.md) and `report.md` frontmatter staging (`constraints`/`decisions`).
+Write `outputs/plan.json` (carrying `_meta: { kind: "plan", schema: "plan/1.0", role: "primary", alias: "current-plan" }`) and `TASK-NNN.json` / `waves.json` / `dependency-graph.json` / `collision-report.json` / `plan-check.json` (all with matching `_meta`). Write `report.md` with frontmatter (`verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next: [{ command: ew-execute, reason: plan ready, needs: [current-plan] }]`) and sections `Summary`, `Conclusion/Verdict`, `Discussion/Retrospective`, `Artifacts`, `Handoff/Next`. Reference `current-plan` via `{{aref:...}}` rather than copying JSON. Seal via fenced `evolve run complete <run_id> --session <session> --actor <actor> --expected-orchestration-revision <rev> --expected-run-revision <rev> --gate context-collected --gate plan-generated --gate plan-checked --gate plan-confirmed --summary "<summary>" --verdict done|done_with_concerns` (recover blockers via `evolve run check` + `evolve run transition`). Hand off candidate staging/review to `ew-knowledge` (`evolve workflows show knowledge`) while keeping `report.md` frontmatter staging (`constraints`/`decisions`).
 
 ---
 
 ## Revise (`--revise`) & Check (`--check`)
 
-- **`--revise`**: locate `--dir` or latest milestone plan (`E004` if none), parse instructions (or prompt via structured choice), run planner subagent (joined) to update affected tasks in place while preserving upstream `architecture_template_evidence`, re-run Step 4 + 4.5, confirm, and overwrite in place.
-- **`--check <dir>`**: read-only load of `plan.json` + tasks (`E005` if missing) -> run checker, dependency, collision, and milestone alignment checks -> print pass/warn/fail summary without editing files.
+- **`--revise`**: locate `--dir` or bound `current-plan` (`E004` if none), parse instructions (or prompt via structured choice), run planner subagent (joined) to update affected tasks in place while preserving upstream `architecture_template_evidence`, re-run Step 4 + 4.5, confirm, and write updated `outputs/plan.json` + tasks before sealing.
+- **`--check <dir>`**: read-only inspection (`E005` if missing) -> run checker, dependency, collision, and milestone alignment checks -> print pass/warn/fail summary without editing repository files (when run inside a bound Run, emit `outputs/plan-check.json` and read-only `outputs/plan.json` copy to satisfy contract gates before sealing).
 
 ## Error Codes
 

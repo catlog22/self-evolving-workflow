@@ -11,21 +11,29 @@ required_links:
   - references/workflow.md
 contract:
   consumes:
-  - kind: guidance
-    alias: current-guidance
+  - kind: context-package
+    alias: upstream-context
     required: false
-    schema: guidance/1.0
-    role: primary
+    schema: context-package/1.0
+    role: attachment
+    accepts_negative_evidence: true
   - kind: blueprint
     alias: current-blueprint
     required: false
     schema: blueprint/1.0
     role: primary
+    accepts_negative_evidence: true
   - kind: diagnosis
     alias: latest-debug
     required: false
     schema: diagnosis/1.0
     role: primary
+    accepts_negative_evidence: true
+  - kind: priors
+    alias: session-priors
+    required: false
+    schema: priors/1.0
+    role: evidence
   produces:
   - path: outputs/findings.json
     kind: findings
@@ -58,5 +66,5 @@ session-mode: run
 
 Read [preparation](references/prepare.md), then follow the [analysis workflow](references/workflow.md).
 
-- Read [boundary review](../../references/boundary-grill.md) when a responsibility conflict is found.
+- Follow `skills/ew-orchestrate/references/boundary-grill.md` when a responsibility conflict is found (write findings into `findings.json#boundary_grill[]` + `report.md`; never append raw Markdown into `.json`).
 - Read [issue gap analysis](references/issue-gaps-analyze.md) for the --gaps branch.

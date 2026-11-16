@@ -589,6 +589,7 @@ test('standalone Skill completion survives a failed harvest and is reconciled on
   await assert.rejects(invoke([...args, '--status', 'cancelled']), /Skill completion changed/);
   assert.deepEqual(await invoke([...args, '--session', 'maestro-1']), { ignored: 'session-owned', session: 'maestro-1' });
   assert.deepEqual(await invoke([...args, '--skill', 'workflow-closeout']), { ignored: 'maintenance-skill' });
+  assert.deepEqual(await invoke([...args, '--skill', 'ew-knowledge']), { ignored: 'maintenance-skill' });
 });
 
 test('Session retrospective grounds Skill additions in its original evidence', async t => {

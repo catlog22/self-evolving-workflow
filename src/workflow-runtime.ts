@@ -3,7 +3,8 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileS
 import { dirname, join } from 'node:path';
 import { InputError, openDb, requireText, transaction } from './common.js';
 import { contentSha256, KnowledgeReads, validateKnowledgeReads, type KnowledgePriorReuse, type KnowledgeReadsReceipt } from './knowledge-reads.js';
-import { wikiLookupScope, type WikiLookupScope, type WikiPrior } from './workflow-knowledge.js';
+import { Wiki } from './wiki.js';
+import { buildWikiPrior, wikiLookupScope, type WikiLookupScope, type WikiPrior } from './workflow-knowledge.js';
 import { workflowName } from './workflow-names.js';
 import {
   bindWorkflowSkill, readWorkflowLink, readWorkflowMarkdown, workflowBlob, workflowHash, workflowHeader, workflowMeta,
@@ -12,10 +13,40 @@ import {
 
 type StepStatus = 'pending' | 'running' | 'completed' | 'skipped';
 type RunStatus = 'running' | 'blocked' | 'failed' | 'cancelled' | 'sealed';
+export interface BoundaryContract {
+  in_scope?: string[];
+  out_of_scope?: string[];
+  constraints?: string[];
+  definition_of_done?: string;
+}
+export interface SessionGoal {
+  id: string;
+  goal: string;
+  boundary?: string;
+  done_when?: string;
+  evidence?: string;
+  lifecycle?: string[];
+  status?: string;
+}
+export interface SessionAmendment {
+  id: string;
+  recorded_at: string;
+  previous_objective: string;
+  objective: string;
+  definition_of_done?: string;
+  evidence: string[];
+  reason?: string;
+}
+export interface SessionPolicy {
+  auto_mode?: boolean;
+  goal_mode?: boolean;
+}
 export interface WorkflowStep {
   id: string;
   command: string;
   args: string[];
+  kind?: 'step' | 'decision';
+  retry_max?: number;
   decision_ref?: string;
   stage?: string;
   goal_ref?: string;
@@ -24,6 +55,7 @@ interface Step extends WorkflowStep {
   status: StepStatus;
   run_id?: string;
   decision?: 'proceed' | 'fix' | 'escalate';
+  confidence?: number;
 }
 interface Run {
   id: string;
@@ -66,6 +98,10 @@ interface Session {
   id: string;
   objective: string;
   definition_of_done: string;
+  boundary_contract?: BoundaryContract;
+  goals?: SessionGoal[];
+  amendments?: SessionAmendment[];
+  policy?: SessionPolicy;
   status: 'open' | 'completed';
   revision: number;
   created_at: string;
@@ -111,19 +147,27 @@ function findStep(session: Session, id: string) {
   return step;
 }
 
+function isDecisionOnlyStep(step: Pick<WorkflowStep, 'kind' | 'command' | 'decision_ref'>) {
+  return step.kind === 'decision' || (!step.command && Boolean(step.decision_ref));
+}
+
 function activeDecision(session: Session) {
-  return session.steps.find(step => step.status === 'completed' && step.decision_ref &&
+  const gated = session.steps.find(step => step.status === 'completed' && step.decision_ref &&
     (step.decision === undefined || step.decision === 'escalate'));
+  if (gated) return gated;
+  const firstPending = session.steps.find(step => step.status === 'pending');
+  return firstPending && isDecisionOnlyStep(firstPending) ? firstPending : undefined;
 }
 
 function nextAction(session: Session) {
+  const authority = session.policy?.auto_mode ? 'automatic' : 'manual';
   const active = session.runs.find(run => run.status === 'running' || run.status === 'blocked');
   const decision = activeDecision(session);
-  if (session.status === 'completed') return { action: 'end' };
-  if (active) return { action: active.status === 'running' ? 'execute' : 'recover', run_id: active.id };
-  if (decision) return { action: 'decide', decision_ref: decision.decision_ref };
-  if (session.steps.some(step => step.status === 'pending')) return { action: 'next' };
-  return { action: 'complete' };
+  if (session.status === 'completed') return { action: 'end', authority };
+  if (active) return { action: active.status === 'running' ? 'execute' : 'recover', run_id: active.id, authority };
+  if (decision) return { action: 'decide', decision_ref: decision.decision_ref, authority };
+  if (session.steps.some(step => step.status === 'pending')) return { action: 'next', authority };
+  return { action: 'complete', authority };
 }
 
 function safeFile(root: string, path: string) {
@@ -233,12 +277,17 @@ export class WorkflowStore {
     return { ...session, orchestration_revision: session.revision, continuation: nextAction(session) };
   }
 
-  list() {
+  list(filter?: { status?: 'open' | 'completed'; query?: string }) {
+    const query = filter?.query?.trim().toLowerCase();
     return this.db.prepare('SELECT body FROM sessions ORDER BY id').all().map(row => {
       const session = JSON.parse(String(row.body)) as Session;
       return { id: session.id, objective: session.objective, status: session.status,
-        orchestration_revision: session.revision, steps: session.steps, continuation: nextAction(session) };
-    });
+        orchestration_revision: session.revision, steps: session.steps,
+        ...(session.goals ? { goals: session.goals } : {}),
+        ...(session.policy ? { policy: session.policy } : {}),
+        continuation: nextAction(session) };
+    }).filter(item => (!filter?.status || item.status === filter.status) &&
+      (!query || item.id.toLowerCase().includes(query) || item.objective.toLowerCase().includes(query)));
   }
 
   private save(session: Session) {
@@ -278,9 +327,11 @@ export class WorkflowStore {
     });
   }
 
-  open(id: string, objective: string, definition: string, steps: WorkflowStep[], change: Mutation) {
+  open(id: string, objective: string, definition: string, steps: WorkflowStep[], change: Mutation, options?: {
+    boundaryContract?: BoundaryContract; goals?: SessionGoal[]; policy?: SessionPolicy;
+  }) {
     workflowId(id, 'Session ID');
-    return this.change(id, 'session.open', change, { objective, definition, steps }, () => {
+    return this.change(id, 'session.open', change, { objective, definition, steps, ...options }, () => {
       if (this.find(id) || existsSync(join(this.root, '.workflow', 'sessions', id))) throw new InputError('Session ID already exists: ' + id);
       const existing = new Set<string>();
       const chain = steps.map(step => {
@@ -289,10 +340,13 @@ export class WorkflowStore {
           throw new InputError('Duplicate chain step or decision: ' + step.id);
         }
         existing.add(step.id);
-        return { ...step, command: workflowName(step.command), status: 'pending' as const };
+        return { ...step, command: step.command ? workflowName(step.command) : '', status: 'pending' as const };
       });
       const session: Session = {
         schema_version: 'evolve-session/1.0', id, objective: requireText(objective, 'objective'), definition_of_done: definition,
+        ...(options?.boundaryContract ? { boundary_contract: options.boundaryContract } : {}),
+        ...(options?.goals ? { goals: options.goals } : {}),
+        ...(options?.policy ? { policy: options.policy } : {}),
         created_at: new Date().toISOString(), revision: 0, status: 'open', steps: chain, runs: [], aliases: {}, artifacts: {},
       };
       this.save(session);
@@ -303,6 +357,14 @@ export class WorkflowStore {
   private validateStep(step: WorkflowStep) {
     workflowId(step.id, 'step ID');
     if (step.decision_ref) workflowId(step.decision_ref, 'decision ID');
+    if (step.retry_max !== undefined && (!Number.isSafeInteger(step.retry_max) || step.retry_max < 1)) {
+      throw new InputError('retry_max must be a positive integer');
+    }
+    if (isDecisionOnlyStep(step)) {
+      if (!step.decision_ref) throw new InputError('Decision-only steps require a decision ID');
+      if (step.command) throw new InputError('Decision-only steps cannot bind a Skill command');
+      return;
+    }
     bindWorkflowSkill(this.root, step.command);
     if (/^ew-odyssey-(security|defensive)$/.test(workflowName(step.command)) && step.args.includes('--fix')) {
       throw new InputError('This Odyssey mode uses a read-only audit');
@@ -318,7 +380,15 @@ export class WorkflowStore {
       const previous = session.objective;
       session.objective = requireText(objective, 'amended objective');
       if (definition !== undefined) session.definition_of_done = requireText(definition, 'definition of done');
-      return { previous_objective: previous, objective: session.objective, definition_of_done: session.definition_of_done };
+      const amendments = (session.amendments ??= []);
+      const amendment: SessionAmendment = {
+        id: 'CHG-' + String(amendments.length + 1).padStart(3, '0'),
+        recorded_at: new Date().toISOString(), previous_objective: previous, objective: session.objective,
+        ...(definition !== undefined ? { definition_of_done: session.definition_of_done } : {}),
+        evidence: change.evidence, ...(change.reason ? { reason: change.reason } : {}),
+      };
+      amendments.push(amendment);
+      return { amendment_id: amendment.id, previous_objective: previous, objective: session.objective, definition_of_done: session.definition_of_done };
     });
   }
 
@@ -334,7 +404,7 @@ export class WorkflowStore {
         if ((after && index === 0) || index < (firstPending < 0 ? session.steps.length : firstPending)) {
           throw new InputError('Insert the step in the pending chain');
         }
-        session.steps.splice(index, 0, { ...step, command: workflowName(step.command), status: 'pending' });
+        session.steps.splice(index, 0, { ...step, command: step.command ? workflowName(step.command) : '', status: 'pending' });
       } else {
         const original = findStep(session, step.id);
         if (original.status !== 'pending') throw new InputError('Select a pending step');
@@ -344,7 +414,7 @@ export class WorkflowStore {
           if (replacement.decision_ref && session.steps.some(item => item.id !== step.id && item.decision_ref === replacement.decision_ref)) {
             throw new InputError('Decision already exists');
           }
-          session.steps[current] = { ...replacement, command: workflowName(replacement.command) };
+          session.steps[current] = { ...replacement, command: replacement.command ? workflowName(replacement.command) : '' };
         } else {
           if (!change.evidence?.length) throw new InputError('Supply evidence for a skipped step');
           original.status = 'skipped';
@@ -366,6 +436,11 @@ export class WorkflowStore {
       skill_ref: run.skill, gates: run.skill.gates, upstream_aliases: run.input_aliases,
       upstream: Object.fromEntries(run.inputs.map(id => [id, session.artifacts[id]])),
       skill_reads: this.readProof(run), retry_of_run_id: run.retry_of_run_id,
+      ...(session.boundary_contract ? { boundary_contract: session.boundary_contract } : {}),
+      ...(session.goals ? { goals: session.goals } : {}),
+      ...(session.amendments ? { amendments: session.amendments } : {}),
+      ...(session.policy ? { policy: session.policy } : {}),
+      ...(run.knowledge_reads ? { knowledge_reads: run.knowledge_reads } : {}),
     };
   }
 
@@ -374,13 +449,18 @@ export class WorkflowStore {
       if (nextAction(session).action !== 'next') throw new InputError('Workflow continuation does not dispatch a Run');
       const step = session.steps.find(item => item.status === 'pending')!;
       if (stepId && step.id !== stepId) throw new InputError('Run creation must follow the pending chain');
+      const attempts = session.runs.filter(item => item.step_id === step.id && item.status !== 'running').length;
+      if (step.retry_max !== undefined && attempts >= step.retry_max) {
+        throw new InputError('Retry limit exceeded for step: ' + step.id);
+      }
       const command = workflowName(step.command);
       const skill = bindWorkflowSkill(this.root, command);
       const missing = skill.gates.entry.filter(gate => !gates.includes(gate));
       if (missing.length) throw new InputError('Missing entry gates: ' + missing.join(', '));
+      const args = step.args.map(arg => arg.replaceAll('{session}', session.id).replaceAll('{intent}', session.objective));
       const run: Run = {
         id: 'run-' + randomUUID(), owner: change.actor, step_id: step.id, status: 'running', revision: 0, skill,
-        task: { command, args: step.args, goal: session.objective },
+        task: { command, args, goal: session.objective },
         inputs: [], input_aliases: {}, reads: {},
         ...(step.run_id ? { retry_of_run_id: step.run_id } : {}),
       };
@@ -394,8 +474,11 @@ export class WorkflowStore {
         }
         run.inputs.push(artifact.id);
         if (slot.alias) run.input_aliases[slot.alias] = artifact.id;
-        if (slot.kind === 'plan') run.inputs.push(...Object.values(session.artifacts)
-          .filter(item => item.run_id === artifact.run_id && item.role === 'attachment').map(item => item.id));
+        if (slot.role === 'primary') {
+          run.inputs.push(...Object.values(session.artifacts)
+            .filter(item => item.run_id === artifact.run_id && (item.role === 'attachment' || item.role === 'evidence'))
+            .map(item => item.id));
+        }
       }
       run.inputs = [...new Set(run.inputs)];
       session.runs.push(run);
@@ -467,6 +550,28 @@ export class WorkflowStore {
     };
   }
 
+  private cliWikiPriors(knowledge: KnowledgeReadsReceipt | undefined) {
+    if (!knowledge || (!knowledge.constraints_bound.length && !knowledge.reads.some(item => item.kind === 'wiki'))) return;
+    if (!existsSync(join(this.root, 'wiki'))) return;
+    const wiki = new Wiki(this.root);
+    const priors: WikiPrior[] = [];
+    for (const bound of knowledge.constraints_bound) {
+      const page = wiki.getEntry(bound.knowledge_id);
+      if (page && contentSha256(page.body) === bound.content_sha256) {
+        priors.push(buildWikiPrior(page, 'constraint', {}, ''));
+      }
+    }
+    for (const read of knowledge.reads) {
+      if (read.kind !== 'wiki' || priors.some(item => item.id === read.id)) continue;
+      const page = wiki.getEntry(read.id);
+      if (!page) continue;
+      const search = knowledge.searches.find(item => item.search_id === read.from_search_id);
+      const lookupScope = wikiLookupScope(search?.filters ?? {});
+      priors.push(buildWikiPrior(page, page.entry?.mode === 'constraint' ? 'constraint' : 'reference', lookupScope, read.from_search_id ?? ''));
+    }
+    return priors.length ? priors : undefined;
+  }
+
   private outputs(session: Session, run: Run, gates: string[]) {
     const directory = this.runDir(session.id, run.id);
     const errors = this.readProof(run).missing.map(path => 'Required Skill read: ' + path);
@@ -477,10 +582,29 @@ export class WorkflowStore {
       const bytes = item.result && safeFile(directory, item.path);
       if (!item.result || !bytes || workflowHash(bytes) !== item.result.sha256) errors.push('Swarm assignment evidence: ' + item.id);
     }
+    const trace = safeFile(directory, 'knowledge-reads.json');
+    if (trace && run.knowledge_reads) errors.push('Select a single Run knowledge receipt source');
+    const knowledge = trace ? validateKnowledgeReads(JSON.parse(trace.toString('utf8'))) : run.knowledge_reads;
+    if (trace && knowledge?.priors_reuse) errors.push('Run reuse evidence comes from bound artifact reads');
+    const receipt = run.priors_reuse?.length
+      ? { ...(knowledge ?? new KnowledgeReads().toJSON()), priors_reuse: run.priors_reuse } : knowledge;
+    const reportBytes = safeFile(directory, 'report.md');
+    if (reportBytes) {
+      const reportMeta = workflowHeader(reportBytes.toString('utf8'));
+      if (Array.isArray(reportMeta.next)) {
+        for (const item of reportMeta.next) {
+          if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).command === 'string') {
+            const cmd = (item as Record<string, string>).command;
+            try { bindWorkflowSkill(this.root, cmd); } catch { errors.push('Invalid report.md next command: ' + cmd); }
+          }
+        }
+      }
+    }
     const publications: Publication[] = [];
     for (const slot of run.skill.produces) {
-      const priors = slot.alias === 'session-priors' && slot.kind === 'priors' && slot.schema === 'priors/1.0'
-        && slot.path === 'outputs/priors.json' ? run.wiki_priors : undefined;
+      const isPriorsSlot = slot.alias === 'session-priors' && slot.kind === 'priors' && slot.schema === 'priors/1.0'
+        && slot.path === 'outputs/priors.json';
+      const priors = isPriorsSlot ? (run.wiki_priors?.length ? run.wiki_priors : this.cliWikiPriors(knowledge)) : undefined;
       const generated = priors?.length ? Buffer.from(JSON.stringify({
         _meta: { alias: slot.alias, kind: slot.kind, schema: slot.schema, role: slot.role },
         source_run_id: run.id,
@@ -507,12 +631,6 @@ export class WorkflowStore {
       }
       if (!discovered && slot.required) errors.push('Required artifact: ' + slot.path);
     }
-    const trace = safeFile(directory, 'knowledge-reads.json');
-    if (trace && run.knowledge_reads) errors.push('Select a single Run knowledge receipt source');
-    const knowledge = trace ? validateKnowledgeReads(JSON.parse(trace.toString('utf8'))) : run.knowledge_reads;
-    if (trace && knowledge?.priors_reuse) errors.push('Run reuse evidence comes from bound artifact reads');
-    const receipt = run.priors_reuse?.length
-      ? { ...(knowledge ?? new KnowledgeReads().toJSON()), priors_reuse: run.priors_reuse } : knowledge;
     return { errors, publications, knowledge: receipt };
   }
 
@@ -571,19 +689,46 @@ export class WorkflowStore {
     });
   }
 
-  decide(id: string, decisionId: string, verdict: 'proceed' | 'fix' | 'escalate', summary: string, change: Mutation) {
-    return this.mutate(id, 'run.decide', change, { decisionId, verdict, summary }, session => {
+  decide(id: string, decisionId: string, verdict: 'proceed' | 'fix' | 'escalate', summary: string, change: Mutation,
+    options?: { targetStepId?: string; confidence?: number }) {
+    return this.mutate(id, 'run.decide', change, { decisionId, verdict, summary, ...options }, session => {
       const step = activeDecision(session);
       if (step?.decision_ref !== decisionId) throw new InputError('Select the pending decision');
-      if (verdict === 'fix' && /^ew-odyssey-(security|defensive)$/.test(workflowName(step.command))) {
+      if (options?.confidence !== undefined && (options.confidence < 0 || options.confidence > 100 || !Number.isFinite(options.confidence))) {
+        throw new InputError('Confidence score must be between 0 and 100');
+      }
+      if (session.policy?.auto_mode && verdict === 'proceed' && options?.confidence !== undefined && options.confidence < 60 && !change.evidence?.length) {
+        throw new InputError('Confidence below 60 requires explicit evidence or escalation');
+      }
+      if (verdict === 'fix' && step.command && /^ew-odyssey-(security|defensive)$/.test(workflowName(step.command))) {
         throw new InputError('Route read-only audit findings to a separate remediation step');
       }
       step.decision = verdict;
-      if (verdict === 'fix') {
-        step.status = 'pending';
-        delete step.decision;
+      if (options?.confidence !== undefined) step.confidence = options.confidence;
+      if (verdict === 'proceed' && isDecisionOnlyStep(step)) {
+        step.status = 'completed';
+      } else if (verdict === 'escalate' && isDecisionOnlyStep(step)) {
+        step.status = 'completed';
+      } else if (verdict === 'fix') {
+        const decisionIdx = session.steps.indexOf(step);
+        if (options?.targetStepId) {
+          const targetIdx = session.steps.findIndex(item => item.id === options.targetStepId);
+          if (targetIdx < 0 || targetIdx > decisionIdx || isDecisionOnlyStep(session.steps[targetIdx])) {
+            throw new InputError('Select a prior executable step to reopen for fixes: ' + options.targetStepId);
+          }
+          for (let i = targetIdx; i <= decisionIdx; i++) {
+            session.steps[i].status = 'pending';
+            delete session.steps[i].decision;
+          }
+        } else {
+          if (isDecisionOnlyStep(step)) {
+            throw new InputError('Specify --target-step <step-id> when returning fix from a decision-only step');
+          }
+          step.status = 'pending';
+          delete step.decision;
+        }
       }
-      return { decision_ref: decisionId, verdict, summary };
+      return { decision_ref: decisionId, verdict, summary, ...(options?.confidence !== undefined ? { confidence: options.confidence } : {}) };
     });
   }
 

@@ -18,16 +18,19 @@ contract:
     required: false
     schema: review-findings/1.0
     role: primary
+    accepts_negative_evidence: true
   - kind: fix-directions
     alias: latest-fix-directions
     required: false
     schema: fix-directions/1.0
     role: attachment
+    accepts_negative_evidence: true
   - kind: diagnosis
     alias: latest-debug
     required: false
     schema: diagnosis/1.0
     role: primary
+    accepts_negative_evidence: true
   - kind: priors
     alias: session-priors
     required: false

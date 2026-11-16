@@ -31,7 +31,9 @@ Per conflict (max 3 conflicts × 3 questions = 9 total):
 
 ## Output
 
-Append to calling command's primary output (`outputs/findings.json` for `ew-analyze`, `outputs/plan.json` for `ew-plan`, plus `report.md`):
+Record results as structured fields without corrupting JSON outputs:
+- Add `boundary_grill: [{ id, type, conflict, resolution, evidence }]` inside `{run_dir}/outputs/findings.json` (`ew-analyze`) or `{run_dir}/outputs/plan.json` (`ew-plan`). **Never append raw Markdown text into `.json` files.**
+- Also include the summary table inside `{run_dir}/report.md`:
 
 ```markdown
 ## Boundary Grill Results
@@ -40,7 +42,7 @@ Append to calling command's primary output (`outputs/findings.json` for `ew-anal
 |---|------|----------|------------|----------|
 ```
 
-Resolved `DEC` amends Locked decisions; unresolved items are recorded as Deferred with `boundary_grill: true`.
+Resolved `DEC` amends Locked decisions; unresolved items are recorded with `status: "deferred"` and `boundary_grill: true`.
 
 ## Constraints
 

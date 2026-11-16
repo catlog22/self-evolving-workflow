@@ -24,7 +24,7 @@ export interface Completion {
 
 type SkillCompletionStatus = 'succeeded' | 'failed' | 'cancelled';
 const terminalStatuses = new Set<unknown>(['succeeded', 'failed', 'cancelled']);
-const maintenanceSkills = new Set(['workflow-closeout', 'workflow-evolve']);
+const maintenanceSkills = new Set(['ew-knowledge', 'workflow-closeout', 'workflow-evolve']);
 
 interface Candidate {
   id: string;

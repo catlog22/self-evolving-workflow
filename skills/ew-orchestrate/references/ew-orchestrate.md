@@ -1,27 +1,44 @@
 # Evolve chain catalog
 
-Match the intent to the smallest Evolve chain that can produce and verify the requested result. Confirm the boundary, completion criteria and required handoffs before opening the Session. The execution guide owns dispatch and recovery.
+Match the intent to the smallest Evolve chain that can produce and verify the requested result. Confirm the boundary, completion criteria, and required handoffs before opening the Session. The execution guide owns dispatch and recovery.
 
-| Intent | Route |
-| --- | --- |
-| Mechanically clear operation with a direct check | ew-companion |
-| Explore alternatives or challenge a proposal | ew-brainstorm → ew-analyze when scope evidence is needed |
-| Investigate behavior or evaluate existing code | ew-analyze |
-| Produce requirements, a roadmap or an implementation plan | ew-brainstorm or ew-analyze → ew-plan |
-| Implement or refactor with known scope | ew-plan → ew-execute → ew-review |
-| Inspect changes or verify a completed implementation | ew-review |
-| Design, fix and verify a UI change | ew-analyze → ew-plan → ew-execute → ew-review, or the explicit Odyssey UI mode |
-| Diagnose a defect, verify the fix and look for related cases | Explicit Odyssey Debug mode |
-| Audit quality, supply-chain risk or defensive fallbacks | Explicit Odyssey mode appropriate to the audit |
-| Explore and score multiple search paths | team-swarm when the user requests a Swarm |
-| Analyze and fix a tracked issue | ew-analyze --gaps → ew-plan --gaps → ew-execute → ew-review. Keep the issue ID in the task and update its tracker after verification. |
-| Create, list or close tracking items | Use the project's issue tracker with the user's authorization. |
-| View progress or continue | Read evolve session list or evolve session status; resume the exact Session. |
-| Query, review or harvest knowledge | Follow the internal [knowledge route](knowledge-route.md). |
-| Rebuild the project code index | evolve code build |
-| Provision Skill packages | evolve skills install |
-| Create or merge a requested worktree | Use Git worktree and merge operations in the selected repository. |
+## Exact-Match Short-Circuits
 
-Use evolve skills validate for each selected step. A project-provided step can participate when it is committed and declares its Skill contract. Record step arguments with the chain so the next host resumes the same task.
+- **`status` / `状态` / `dashboard`** -> **Read-only short-circuit (no chain creation)**: run `evolve session status --session <id>` (or `evolve session list --status open`), present the result, and stop for user input without inferring or launching a chain.
+- **`continue` / `next` / `go` / `继续` / `下一步`** -> Resume the unique open Session (`nextAction`).
+  - **Cold-start fallback (no open Session exists)**: check `.agent-memory/`, `wiki/`, and `.codegraph/` -> if uninitialized, route to `ew-init`; if a bound `current-roadmap` / `current-blueprint` exists, propose the first pending Session/spec scope; otherwise route through `ew-analyze` / `ew-plan` or ask what to build (`S_FALLBACK`).
 
-Resolve a phase or issue from the user's exact identifier, the chosen Session or the project tracker. Carry `goal_ref` on long-chain steps and add an explicit decision wherever verification needs a coordinator verdict. After the Session completes, process reusable evidence through the knowledge route.
+## Semantic Intent -> Route Matrix
+
+| Intent | Exact Route | Prerequisites & Thresholds |
+| --- | --- | --- |
+| Read-only Q&A, factual lookup, or status check | `END` (no Session) | Zero repository mutations needed |
+| Small bounded edit + direct verification (1 concern, <=2 files) | `ew-companion` | No downstream typed artifact, gate, or multi-step coordination |
+| Initialize or onboard project (greenfield / brownfield / legacy) | `ew-init` → `ew-roadmap` or `ew-blueprint` | Skip interactive Q&A when `--from` supplies `upstream-context` |
+| Explore open alternatives or compare approaches | `ew-brainstorm` | Proposes continuation only when durable artifacts are needed |
+| Pressure-test an idea/proposal against codebase reality | `ew-grill` | Grounded Socratic branches; runs before `ew-brainstorm` / `ew-plan` |
+| Formal multi-phase spec package (Brief -> PRD -> Arch -> Epics) | `ew-blueprint` | Pure spec outputs; feeds `ew-roadmap` or `ew-plan` |
+| Decompose multi-release requirements into a Session DAG | `ew-roadmap` | Only split >1 Session when hard runtime coupling holds |
+| Investigate codebase or analyze existing plan (`-q`, macro, `--gaps`) | `ew-analyze` | Pass `-q` for fast decision extraction; `--gaps` for backlog gaps |
+| Plan or revise an implementation (`--gaps`, `--tdd`, `--revise`) | `ew-plan` | Produces `current-plan`; use `--gaps` after failed review/verify/debug/test |
+| Execute an existing confirmed `current-plan` | `ew-execute` | Requires bound `current-plan` (if missing, run `ew-plan` first or `ew-companion`) |
+| Implement or refactor with known scope (`>2` files) | `ew-analyze -q` (if impact unclear) → `ew-plan` → `ew-execute` → `ew-verify` → `ew-review` | Omit `ew-analyze -q` when scope and patterns are already settled |
+| Independently verify requirement & wiring coverage | `ew-verify` | **Requires bound `current-plan` + `current-execution`** (`required: true`) |
+| Run conversational UAT, `--smoke`, or `--frontend-verify` browser check | `ew-test` | Behavioral acceptance + UAT; consumes verification, execution, or review |
+| Generate and converge layered automated tests (`L0->L3`) | `ew-auto-test` | Suites missing or low coverage; distinct from UAT/browser acceptance |
+| Audit diff, file/dir, or `current-execution` across 4 quality dimensions | `ew-review` | Works standalone (`HEAD`/`staged`/path) OR inside a Session after `ew-execute` |
+| Diagnose broken behavior inside an orchestration chain (`<=2–3` modules) | `ew-debug` → `ew-plan --gaps` → `ew-execute` → `ew-verify` | Single bounded root-cause isolation (`latest-debug` / `latest-fix-directions`) |
+| Heavyweight multi-iteration audit, bug-hunt, or security campaign | `ew-odyssey --mode <debug\|improve\|planex\|review\|security\|defensive\|ui>` (`ew-odyssey-<mode>`) | Explicit standalone iterative loop across entire modules/campaigns |
+| Post-execution four-lens retrospective | `ew-retrospective` | Consumes sealed execution/verification/review artifacts |
+| UI design, rebuild, audit, or finish polish | `ew-impeccable` | Or chain `ew-impeccable` / `ew-plan` → `ew-execute` → `ew-test --frontend-verify` |
+| Explore and score competing hypotheses/paths in parallel | `team-swarm` | Only when user requests Swarm / parallel ACO exploration |
+| Analyze & fix a tracked issue (from user's tracker ID/context) | `ew-analyze --gaps` → `ew-plan --gaps` → `ew-execute` → `ew-verify` | Keep issue reference in tasks; update tracker only with user authorization |
+| Knowledge Gate lookup inside an active Run | Run MCP (`wiki_context` / `wiki_reference`) or CLI `--reads` | Keep Run evidence bound inside `{run_dir}`; do not spawn `ew-knowledge` |
+| Post-seal closeout harvesting, Wiki publish/audit, memory sync, legacy import | `ew-knowledge` (`evolve workflows show knowledge`) | Run after `session complete` or on standalone knowledge requests |
+| Rebuild code index / install Skills / Git worktree | `evolve code build` / `evolve skills install` / `git worktree` | Direct CLI or authorized repo operations |
+
+## Validation & Continuation Rules
+
+1. Validate every selected step contract with `evolve skills validate <command>` before building chains (`ew-knowledge` runs with `session-mode: none`).
+2. Record concrete step arguments cleanly (`{session}` and `{intent}` placeholders are expanded by Runtime on `run next`); use target scope/issue/Session IDs instead of legacy milestone/phase numbering.
+3. Carry `--goal-ref` when decomposing `--goal` chains and insert `--decision-only --decision-ref <gate>` checkpoints where coordinator verdicts are required.
