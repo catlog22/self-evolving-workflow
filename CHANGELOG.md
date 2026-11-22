@@ -2,6 +2,31 @@
 
 All notable changes to `self-evolving-workflow` are documented in this file.
 
+## [0.3.0] - 2026-11-22
+
+### Highlights
+
+- **Compact Search & Provenance Receipts (`src/search-format.ts`, `src/knowledge-reads.ts`, `src/knowledge-cli.ts`)**:
+  - Updated `evolve search` / `evolve kb search` to emit compact JSON by default (plus `--format compact` terse plain text and `--verbose` for full fields), with collision-safe short prefix IDs, `300`-char inline bodies, and `snippet` + `truncated: true` for longer entries.
+  - Added `q-N` query receipts (`q-N:idx`) and batch `evolve kb get <id|q-N:idx>...` / `--pick <n,...>` resolution, automatically linking `from_search_id` when reusing `--reads`.
+  - Refined `search` two-stage path filtering and stripped numeric-pollution tokens for cleaner agent-facing queries.
+- **CodeGraph Resilience & Node 22+ Liftoff (`src/code.ts`, `src/workflow-cli.ts`)**:
+  - Added automatic `--liftoff-only` relaunch on Node `>= 22` for WASM CodeGraph indexing/syncing (`code build|sync`, `search` unindexed local code, `session open|create`), plus stderr progress reporting.
+  - Added `CodeIndexLockedError`, `evolve-write.lock` / `evolve-build.json` incomplete-build detection and recovery, read-lock graceful degradation, prefix-based symbol resolution, and clean Git snapshot incremental sync.
+- **New `ew-prototype` Skill & `ew-odyssey` `arch` Mode**:
+  - Added top-level `skills/ew-prototype/` (`prototype` alias, `session-mode: none`) for throwaway logic/state HTML demos and multi-variant UI exploration before folding into production.
+  - Added `--mode arch` (`odyssey-arch.md`, `prepare/odyssey-arch.md`) to `skills/ew-odyssey` for iterative module deepening, seam decoupling, and boundary hardening.
+- **Visual Reports, Agent Usage Spec & Skill Package Hardening**:
+  - Added `skills/ew-orchestrate/references/visual-report.md` (`--visual` HTML/Mermaid inspection standard) and `skills/ew-orchestrate/references/agent-usage.md` (subagent / swarm / `evolve agent` delegation spec + dedicated `evolve agent --help`).
+  - Enforced strict YAML frontmatter parsing (`strict: true`, `uniqueKeys: true`) in `src/workflow-skills.ts` and refreshed managed instructions and Skill packages (`AGENTS.md`, `agents/`, `skills/`, `workflows/index.json`).
+
+### Verification
+
+- `npm run build`: passed
+- `npm test` (`node --test test/*.test.mjs`): 123/123 passed
+- `npm run test:ew-layout`: passed
+- `npm run test:release-gate-flow`: passed (`candidate_passed: true`, `rollback: verified`)
+
 ## [0.2.0] - 2026-11-18
 
 ### Highlights

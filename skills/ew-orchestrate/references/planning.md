@@ -7,7 +7,16 @@
 1. **Exact match**（详见 [意图分类目录](ew-orchestrate.md)）：
    - `status` / `状态` / `dashboard` → 只读短路径，路由至 `END`（呈现状态后即止，不推断开链）。
    - `continue` / `next` / `go` / `继续` / `下一步` → `S_CONTINUE`：通过 `evolve session list --status open` 校验活跃 Session（`1` 个继续执行，`>1` 个询问选择，`0` 个走冷启动回退规则）。
-2. **Selection priorities**（`S_CLASSIFY` 严格按此顺序求值）：显式 `/ew-swarm`、显式 `/ew-odyssey` 或显式 `/workflow-evolve`（三者均为 `disable-model-invocation: true`，仅用户显式调用时命中，且 `/workflow-evolve` 仅用于修改 Skill/Harness）> Exact match 短路径 > 已有 compatible open Session > tracked issue（`--gaps`）> 前端 UI/设计（`ew-impeccable`，可自动路由）> 多步骤工程链 > 单步强契约任务 > `ew-companion`（已在 Evolve 管理的工程中或显式 `/ew-orchestrate` 下的单关注点 `<= 2` 文件改动）> `END`（零修改纯问答，或未启用 Evolve 编排的项目中的直接独立执行）。
+2. **Selection priorities**（`S_CLASSIFY` 严格按此顺序求值；遵循“最轻足够通道优先”与 Scope Guard，不以文件数 `<= 2` 作为门槛，也不因普通 `implement`/`fix`/`refactor` 动词强制进入重链）：
+   - 显式 `/ew-swarm`、显式 `/ew-odyssey` 或显式 `/workflow-evolve`（三者均为 `disable-model-invocation: true`，仅用户显式调用时命中，且 `/workflow-evolve` 仅用于修改 Skill/Harness）
+   - `>` Exact match 短路径（`status` → `END`，`continue` → `S_CONTINUE`）
+   - `>` 已有 compatible open Session（进入 `S_RUN_LOOP`）
+   - `>` `--goal` / `--auto` 长链或重型多模块/跨包架构工程链（`>= 3` 耦合模块、跨包接口变更、`>= 2` 未定开放问题，或显式要求 `analyze`/`plan`/`execute`/`verify`/`review` 多阶段流水线）
+   - `>` tracked issue（带显式 Issue ID 且需要 `--gaps` 拆解的多步链；单关注点小修复仍可走 `ew-companion`）
+   - `>` 前端 UI/设计（`ew-impeccable`，可自动路由）
+   - `>` 显式单步强契约任务（用户明确点名 `ew-analyze` / `ew-plan` / `ew-review` / `ew-verify` / `ew-test` / `ew-auto-test` / `ew-brainstorm` / `ew-grill` / `ew-blueprint` / `ew-roadmap` / `ew-retrospective`，或已有 `current-plan` 走 `ew-execute`）
+   - `>` `ew-companion`（**默认轻路由**：已在 Evolve 管理的工程中或显式 `/ew-orchestrate` 下的一般难度单关注点开发/修复/重构/验证任务，**不限文件数**，无需下游类型化工件或正式决策门时直接在主上下文单 Run 完成）
+   - `>` `END`（零修改纯问答，或未启用 Evolve 编排的项目中的直接独立执行）。
 3. **契约前置校验**：
    - `ew-verify` 在契约层面强依赖 `current-plan` + `current-execution`；缺任一上游时禁止单排 `ew-verify`（改走 `ew-review`，或先补 `ew-plan` → `ew-execute`）。
    - `ew-execute` 缺 `current-plan` 时前置 `ew-plan`（或降级为 `ew-companion`）。

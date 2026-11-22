@@ -17,12 +17,14 @@ version: 0.7.1
 - [Goal amendment](references/goal.md) — `--amend` pending-tail change protocol.
 - [Boundary grill](references/boundary-grill.md) — embedded mini-review protocol for scope, module, and locked-decision conflicts.
 - [Run loop and recovery](references/orchestrator-run-loop.md) — fenced `evolve` CLI dispatch, CLI reads, host mapping, and recovery.
+- [Agent usage](references/agent-usage.md) — host subagent dispatch, `evolve agent` CLI options, prompt contract, worktree isolation, and retry rules.
+- [Visual review & enhanced reports](references/visual-report.md) — rendered UI visual checks, Mermaid diagrams, and optional self-contained HTML reports (`--visual`).
 - [Companion route](references/companion-route.md) — bounded `ew-companion` fast path.
 - Steps (loaded when dispatched): [ew-companion](steps/ew-companion/SKILL.md), [ew-init](steps/ew-init/SKILL.md), [ew-brainstorm](steps/ew-brainstorm/SKILL.md), [ew-grill](steps/ew-grill/SKILL.md), [ew-blueprint](steps/ew-blueprint/SKILL.md), [ew-roadmap](steps/ew-roadmap/SKILL.md), [ew-analyze](steps/ew-analyze/SKILL.md), [ew-plan](steps/ew-plan/SKILL.md), [ew-execute](steps/ew-execute/SKILL.md), [ew-verify](steps/ew-verify/SKILL.md), [ew-test](steps/ew-test/SKILL.md), [ew-auto-test](steps/ew-auto-test/SKILL.md), [ew-review](steps/ew-review/SKILL.md), [ew-debug](steps/ew-debug/SKILL.md), [ew-retrospective](steps/ew-retrospective/SKILL.md).
 </deferred_reading>
 
 <purpose>
-Route a user intent to the lightest sufficient **task execution** path. For durable multi-step or verifiable edit work in an Evolve-managed project (or when explicitly invoked via `/ew-orchestrate`), open one canonical topic Session (`evolve session create`) and drive it through the shared Run loop (`orchestrator-run-loop.md`). Standalone knowledge governance, closeout harvesting, Wiki publication, and legacy `.workflow/` migration route to `ew-knowledge` (`evolve skill workflows show ew-knowledge`). Modifying Skill packages / Harness behavior itself belongs strictly to explicit `/workflow-evolve` (`disable-model-invocation: true`), never auto-invoked inside task execution.
+Route a user intent to the lightest sufficient **task execution** path. For durable multi-step or verifiable edit work in an Evolve-managed project (or when explicitly invoked via `/ew-orchestrate`), open one canonical topic Session (`evolve session create`) and drive it through the shared Run loop (`orchestrator-run-loop.md`). Standalone knowledge governance, closeout harvesting, Wiki publication, and legacy `.workflow/` migration route to `ew-knowledge` (`evolve skill workflows show ew-knowledge`). Heavyweight multi-iteration campaigns (`arch|debug|improve|planex|review|security|defensive|ui`) belong strictly to explicit `/ew-odyssey --mode <mode>` (`disable-model-invocation: true`, see `references/ew-orchestrate.md`). Modifying Skill packages / Harness behavior itself belongs strictly to explicit `/workflow-evolve` (`disable-model-invocation: true`), never auto-invoked inside task execution.
 </purpose>
 
 ## Routing Boundaries
@@ -32,7 +34,7 @@ Route a user intent to the lightest sufficient **task execution** path. For dura
 </goal_long_chain>
 
 <companion_route>
-Inside an Evolve-initialized workspace (or an explicit `/ew-orchestrate` task), any bounded, mechanically clear task that **modifies workspace files or runs state-changing verification** with a single focus (`<= 2` files) and no typed handoff uses `references/companion-route.md` (`ew-companion` on the canonical Session/Run lifecycle), escalating in the same Session (`run cancel` -> `session step delete` -> `session step add` for `ew-analyze`/`ew-debug` -> `ew-plan` -> `ew-execute` -> `ew-verify`/`ew-review`) if scope expands or self-check fails. Pure read-only Q&A, status/CLI queries, and standalone edits in projects that have not adopted Evolve Session/Run orchestration exit via `END` without opening a Session.
+Inside an Evolve-initialized workspace (or an explicit `/ew-orchestrate` task), any **normal / single-concern task** that modifies workspace files or runs state-changing verification — when scope is localizable and no multi-phase architecture decomposition, downstream typed artifact handoff (`current-plan` / `current-execution`), or formal decision gate (`--goal` / `post-*`) is required — defaults to `references/companion-route.md` (`ew-companion` on the canonical Session/Run lifecycle), **regardless of file count**. Execute directly with full model capability in the single Run (no `ew-analyze`/`ew-plan` ceremony and no default subagent fan-out), escalating in the same Session (`run cancel` -> `session step delete` -> `session step add` for `ew-analyze`/`ew-debug` -> `ew-plan` -> `ew-execute` -> `ew-verify`/`ew-review`) only if unexpected cross-module coupling or root-cause ambiguity emerges. Pure read-only Q&A, status/CLI queries, and standalone edits in projects that have not adopted Evolve Session/Run orchestration exit via `END` without opening a Session.
 </companion_route>
 
 ## Public Flags & Host Mapping
@@ -72,9 +74,9 @@ S_CLASSIFY:
   -> S_CONTINUE  WHEN `continue` / `next` / `go` / `继续` / `下一步`
   -> S_RUN_LOOP  WHEN existing compatible open Session found
   -> S_FALLBACK  WHEN confidence < 60 or target/intent remains ambiguous
-  -> S_COMPANION WHEN single-focus change/check (`<= 2` files) needs no typed handoff or decision gate (references/companion-route.md)
-  -> S_DECOMPOSE -> S_CREATE WHEN multi-step/broad (`>= 3` modules or cross-package or `>= 2` open scope/constraint/DoD questions)
-  -> S_CREATE    WHEN narrow/single-step chain needing typed artifact/gate (or UI design/brief work routing to ew-impeccable)
+  -> S_DECOMPOSE -> S_CREATE WHEN --goal/--auto long-chain OR broad/cross-boundary (`>= 3` coupled modules or cross-package interfaces or `>= 2` open scope/constraint/DoD questions) OR explicit multi-phase pipeline requested
+  -> S_CREATE    WHEN explicit typed step/gate requested (e.g. `analyze`/`plan`/`review`/`verify`/`test`/`blueprint`/`brainstorm`/`grill`, bound `current-plan` for `ew-execute`, tracked issue `--gaps` needing DAG, or UI design/polish routing to `ew-impeccable`)
+  -> S_COMPANION WHEN single-concern / normal-difficulty change, fix, or check needs no typed handoff or decision gate — file count irrelevant (references/companion-route.md)
 
 S_AMEND:
   -> S_RUN_LOOP  WHEN amendment committed and pending chain valid
@@ -100,7 +102,7 @@ S_FALLBACK -> S_CLASSIFY (intent clarified) | S_CONTINUE (Session selected) | EN
 </state_machine>
 
 <task_tracking>
-Keep any host UI plan mirrored (never authoritative over SQLite Session state): initialize steps after `session create`, mark `in_progress` on `run create`, `completed` on `run complete`, and record failure reason on `run transition failed`.
+Keep any host UI plan mirrored (never authoritative over SQLite Session state): initialize steps after `session create`, mark `in_progress` on `run create`, `completed` on `run complete`, and record failure reason on `run transition failed`. At Run/phase boundaries (never mid-phase), apply the `Continue -> /clear -> /handoff -> Subagent -> /compact` context hygiene tree in `references/orchestrator-run-loop.md`.
 </task_tracking>
 
 <success_criteria>

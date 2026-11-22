@@ -102,8 +102,9 @@ test('All shipped step and mode contracts resolve in the installed Git packages'
   const f = fixture('evolve-runtime-contracts-', ['ew-impeccable']);
   try {
     const names = f.evolve('skill').map(item => item.command);
-    assert.equal(names.length, 24);
-    assert.equal(names.filter(name => name.startsWith('ew-')).length, 24);
+    assert.equal(names.length, 25);
+    assert.equal(names.filter(name => name.startsWith('ew-')).length, 25);
+    assert.ok(names.includes('ew-odyssey-arch'));
     for (const name of names) {
       const binding = f.evolve('skill', 'validate', name);
       assert.match(binding.commit, /^[0-9a-f]{40}$/);
@@ -338,18 +339,26 @@ test('Evolve agent exec resolves JS stubs and Windows shims, binds CLI Run conte
     ], { AGY_EXECUTABLE: stub });
     assert.ok(JSON.parse(boundAgy.output).argv.some(arg => arg.includes('Evolve Run context')));
     assert.throws(() => execWithEnv(['agent', 'exec', 'Bad flag', '--resume', 'abc']), /Unknown option '--resume'/);
+    const agentExecHelp = f.run(process.execPath, [cli, 'agent', 'exec', '--help']);
+    assert.match(agentExecHelp, /--prompt-file/);
+    assert.match(agentExecHelp, /agent-usage/);
   } finally {
     f.cleanup();
   }
 });
 
 test('Short workflow aliases and long-chain continuity safeguards operate end-to-end', () => {
-  const f = fixture('evolve-continuity-', ['ew-knowledge', 'ew-impeccable', 'ew-skill-design']);
+  const f = fixture('evolve-continuity-', ['ew-knowledge', 'ew-impeccable', 'ew-skill-design', 'ew-prototype']);
   try {
     assert.match(f.run(process.execPath, [cli, 'skill', 'workflows', 'show', 'orchestrate']), /Evolve chain catalog/);
+    assert.match(f.run(process.execPath, [cli, 'skill', 'workflows', 'show', 'agent-usage']), /Evolve Agent Usage/);
+    assert.match(f.run(process.execPath, [cli, 'skill', 'workflows', 'show', 'visual-report']), /Visual Inspection & Enhanced Report Standard/);
     assert.match(f.run(process.execPath, [cli, 'skill', 'workflows', 'show', 'knowledge']), /^name: ew-knowledge$/m);
+    assert.match(f.run(process.execPath, [cli, 'skill', 'workflows', 'show', 'prototype']), /^name: ew-prototype$/m);
     assert.equal(f.evolve('skill', 'validate', 'odyssey').skill_id, 'ew-odyssey');
     assert.equal(f.evolve('skill', 'validate', 'impeccable').skill_id, 'ew-impeccable');
+    assert.equal(f.evolve('skill', 'validate', 'prototype').skill_id, 'ew-prototype');
+    assert.equal(f.evolve('skill', 'validate', 'ew-prototype').skill_id, 'ew-prototype');
     assert.equal(f.evolve('skill', 'validate', 'skill-design').skill_id, 'ew-skill-design');
     assert.equal(f.evolve('skill', 'validate', 'swarm').skill_id, 'ew-swarm');
     assert.equal(f.evolve('skill', 'validate', 'team-swarm').skill_id, 'ew-swarm');
@@ -534,6 +543,7 @@ test('Project install wraps skills in host folders (.agents, .codex, .claude) an
 
     assert.equal(readFileSync(join(fHosts.root, 'AGENTS.md'), 'utf8').match(/^# Self-Evolving Workflow$/gm)?.length, 1);
     assert.match(readFileSync(join(fHosts.root, 'AGENTS.md'), 'utf8'), /Closeout & Self-Evolution/);
+    assert.match(readFileSync(join(fHosts.root, 'AGENTS.md'), 'utf8'), /agent-usage/);
 
     fHosts.git('add', '.codex', '.claude', '.agents', 'AGENTS.md', 'CLAUDE.md');
     fHosts.git('commit', '-qm', 'Commit multi-host skills');

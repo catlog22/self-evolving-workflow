@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -51,14 +52,90 @@ const usage = [
   'evolve agent providers|list|get|create|send|delete|worktree [options]',
 ].join('\n');
 
+const agentHelp = [
+  'Usage: evolve agent <action> [options]',
+  '',
+  '  exec <prompt>                  Delegate a turn (--to codex|agy|claude, --mode analysis|write)',
+  '  providers                      List supported CLI providers and local availability',
+  '  list                           List agent sessions (--to <provider>, --status <status>)',
+  '  create <prompt>                Start a persistent session (alias: start; --id <id>)',
+  '  get <id>                       Inspect an agent session record (alias: status)',
+  '  send <id> <prompt>             Run a follow-up turn in a persistent session',
+  '  delete <id>                    Close an agent session (alias: close; --remove-worktree)',
+  '  worktree list|remove [<path>]  Inspect or remove Git agent worktrees',
+  '',
+  'Options:',
+  '  --to, --tool <name>            codex (default), agy, claude',
+  '  --mode <mode>                  analysis (default, read-only) | write',
+  '  --model <model>                Model override',
+  '  --cd <dir>                     Working directory relative to --root',
+  '  --prompt-file <path>           Read prompt from file relative to --cd',
+  '  --session <id> --run <id>      Inject bound Evolve Run context (exec/create)',
+  '  --agent-session, --id <id>     Persistent session ID in .evolve/orchestrator.db',
+  '  --worktree <name>              Create/run in isolated Git worktree (--isolate auto-names)',
+  '  --branch <name>                Branch name for created worktree',
+  '  --base-ref <ref>               Base ref for created worktree (default HEAD)',
+  '  --keep-worktree                Preserve auto-created worktree after ephemeral exec',
+  '  --remove-worktree              Remove worktree on agent delete/close (--force, --delete-branch)',
+  '  --stream                       Emit JSONL AgentStreamEvent lines to stdout',
+  '  --timeout <ms>                 Turn timeout in milliseconds',
+  '',
+  'Read the full delegation spec, prompt template, and retry rules:',
+  '  evolve skill workflows show agent-usage',
+].join('\n');
+
 const knowledgeCommands = new Set(['code', 'kb', 'search']);
 const skillEvolutionActions = new Set(['review', 'draft', 'replay', 'apply', 'rollback', 'retire', 'learnings', 'design']);
 
+function needsWasmCodeGraph(group: string | undefined, action: string | undefined, values: Record<string, unknown>): boolean {
+  if (values.help) return false;
+  if (group === 'code') return action === 'build' || action === 'sync';
+  const root = resolve(typeof values.root === 'string' ? values.root : '.');
+  const ready = () => {
+    try {
+      return CodeGraph.hasReadyIndex(root);
+    } catch {
+      return true;
+    }
+  };
+  if (group === 'search') {
+    const scope = typeof values.scope === 'string' ? values.scope : (values.global ? 'global' : 'local');
+    if (scope === 'global') return false;
+    const from = typeof values.from === 'string' ? values.from.split(',').map(item => item.trim()) : ['all'];
+    if (!from.some(item => item === 'code' || item === 'all')) return false;
+    // 已有活跃锁占用时 search 会快速降级只读或跳过代码，避免无谓的 --liftoff-only 子进程重启。
+    return !ready() && !CodeGraph.hasActiveLock(root);
+  }
+  if (group === 'session' && (action === 'open' || action === 'create')) {
+    return existsSync(join(root, '.git')) && !ready();
+  }
+  return false;
+}
+
+function relaunchWithLiftoffIfNeeded(argv: string[]): void {
+  if (process.execArgv.includes('--liftoff-only')) return;
+  if (process.env.EVOLVE_WASM_RELAUNCHED || process.env.CODEGRAPH_NO_RELAUNCH || process.env.EVOLVE_NO_RELAUNCH) return;
+  if (Number(process.versions.node.split('.')[0] ?? 0) < 22) return;
+  const entry = process.argv[1];
+  if (!entry || !existsSync(entry)) return;
+  const preserved = process.execArgv.filter(arg => arg !== '--liftoff-only');
+  const result = spawnSync(process.execPath, ['--liftoff-only', ...preserved, entry, ...argv], {
+    stdio: 'inherit',
+    env: { ...process.env, EVOLVE_WASM_RELAUNCHED: '1' },
+    windowsHide: true,
+  });
+  if (result.error) return;
+  process.exit(result.status ?? (result.signal ? 1 : 0));
+}
+
 async function main(argv: string[]) {
   // 路由保留选项及参数顺序，具体命令仍使用各自的严格参数定义。
-  const { positionals: [group, action] } = parseArgs({
+  const { positionals: [group, action], values } = parseArgs({
     args: argv, options: { ...knowledgeOptions, ...options }, allowPositionals: true, strict: false, tokens: true,
   });
+  if (needsWasmCodeGraph(group, action, values as Record<string, unknown>)) {
+    relaunchWithLiftoffIfNeeded(argv);
+  }
   if (knowledgeCommands.has(group) || (group === 'session' && action === 'review')) {
     return runKnowledgeCli(argv, 'evolve');
   }
@@ -263,6 +340,10 @@ async function runWorkflowCli(argv: string[]) {
   const { positionals, values } = parseArgs({ options, args: argv, allowPositionals: true });
   let [group, action, ...args] = positionals;
   if (group && !['session', 'run', 'agent', 'skill'].includes(group)) throw new InputError('Unknown command: ' + group);
+  if (group === 'agent' && values.help) {
+    process.stdout.write(agentHelp + '\n');
+    return;
+  }
   if (!group || values.help) {
     process.stdout.write(usage + '\n\n' + knowledgeHelp('evolve'));
     return;

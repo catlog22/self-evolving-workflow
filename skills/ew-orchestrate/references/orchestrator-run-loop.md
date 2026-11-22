@@ -18,7 +18,7 @@ Use the bundled `evolve` CLI (in this source checkout, run `node dist/workflow-c
 - **Artifacts**: Read bound inputs via `evolve run read artifact <run> <alias-or-id> --session <session>` (`--scope <JSON>` for `session-priors`). JSON artifacts MUST carry `_meta: { kind, schema, role, alias? }` and Markdown artifacts matching YAML frontmatter; NEVER append raw Markdown into `.json` files.
 - **Knowledge Gate inside a Run** (choose one receipt source per Run):
   - **Bound priors**: Open `session-priors` via `evolve run read artifact <run> session-priors --session <session> --scope '<json>'` ONLY when its recorded `lookup_scopes` covers the current scope.
-  - **CLI lookup**: `evolve search "<topic>" --mode context --session <session> --reads "<run_dir>/knowledge-reads.json"`, then inspect exact IDs via `evolve kb get <id> --reads "<run_dir>/knowledge-reads.json" --from-search <search-id>` (`search --mode context` automatically prioritizes working memories matching the active running Run's `search_profile.memory` types when `--session` is passed, and automatically refreshes stale `.evolve/index.db` if `wiki/` changed; `--session` identifies this Run context, while `--memory-session` filters historical episodic records). For steps declaring `outputs/priors.json`, Runtime snapshots CLI-read Wiki entries cleanly at `run complete` too.
+  - **CLI lookup**: `evolve search "<topic>" --mode context --session <session> --reads "<run_dir>/knowledge-reads.json"` (returns slim single-line JSON — add `--format compact` for plain text or `--verbose` for full metadata — with short unique prefix IDs, unified `search_id` `q-N` + `idx`, inline `content` when `<= 300` chars or `snippet` + `truncated: true` when longer, and a `20`-item / `4000`-char `constraints` cap emitting `constraints_notice` on overflow; `--session` prioritizes working memories matching `search_profile.memory` types and refreshes stale `.evolve/index.db`, while `--memory-session` filters historical episodic records), then inspect governing or truncated entries via `evolve kb get <id|q-N:idx>... --resolved --reads "<run_dir>/knowledge-reads.json"` (or `--pick <n,...>`; reusing `--reads` auto-links `from_search_id`, while `--from-search <search-id|q-N>` overrides explicitly; code symbol IDs `<kind>:<8hex>` return source slices). For steps declaring `outputs/priors.json`, Runtime snapshots CLI-read Wiki entries cleanly at `run complete` too.
   - **In-flight memory recording**: When a Run confirms a non-obvious root cause, workaround, or recurring pitfall, record it immediately via `evolve kb add --kind episodic "<lesson>" --type verified_fix|error --scene <step> --session <session>` alongside `report.md` closeout staging (`ew-knowledge` governs formal Wiki promotion after `session complete`).
 
 ## Verify, Continue and Recover
@@ -36,9 +36,19 @@ Use the bundled `evolve` CLI (in this source checkout, run `node dist/workflow-c
   - `complete` -> `evolve session complete --session <session> --actor <actor> --expected-orchestration-revision <rev>`, then inspect its `closeout_command` and `evolve_reminder` / `evolve_signals`: hand off closeout review/harvesting to standalone `ew-knowledge` (`evolve skill workflows show ew-knowledge`). Never auto-invoke `workflow-evolve` during task execution; only mention `/workflow-evolve` once at session closeout if `evolve_reminder` points to an actual Skill/harness defect rather than ordinary coding friction.
 - **Crash / Stuck-Run Recovery**: Read `evolve session list --status open [--query <text>]`, `evolve session get --session <session>`, `evolve run get <run> --session <session>`, and `evolve run check <run> --session <session>`. Use `evolve run transition <run> running|blocked|failed --session <session> --actor <actor> --expected-orchestration-revision <rev> --expected-run-revision <run_rev> --reason "<why>"` (or `evolve run cancel ...`) with current fences before allocating a retry via `evolve run create`.
 
+### Phase-Boundary Context Hygiene
+
+Decide context transitions **only at Run/phase boundaries** (never mid-phase, where compaction loses the thread). Because Session/Run state and sealed artifacts persist in `.evolve/workflow.db`, evaluate top-to-bottom — **first yes wins**:
+
+1. **Continue**: stay in the current session when the next step needs prior reasoning verbatim as a primary source (e.g., `ew-grill` -> `ew-plan` / `ew-execute`) and smart-zone capacity (~150k tokens) remains.
+2. **`/clear`**: discard disposable exploration or dead ends when prior context is irrelevant to the next phase (cheapest reset; prior session stays resumable).
+3. **`/handoff`**: narrow portability case only — switching harnesses (e.g., Claude -> Codex), changing directory/repo, handing to a colleague, or forking a side task mid-phase. Write the handoff doc to OS temp (`$TMPDIR` / `%TEMP%`, never the workspace), include suggested skills, point to artifacts by path/ID instead of copying them, and redact secrets.
+4. **Subagent**: delegate tightly scoped AFK work (exploration, review, verification) to an isolated subagent context, keeping coordinator context clean.
+5. **`/compact`**: fallback when context stays relevant in the same harness/directory and you must remain in the loop; supply a focus instruction (e.g., `/compact focus on <next step>`) to retain key decisions. (For heavyweight multi-iteration standalone campaigns outside Session orchestration, route explicitly via `/ew-odyssey --mode <arch|debug|improve|planex|review|security|defensive|ui>`.)
+
 ## Host Adapter Mapping
 
-Shared workflow documents describe capabilities neutrally; resolve them to the active host runtime as follows:
+Shared workflow documents describe capabilities neutrally; resolve them to the active host runtime as follows. For external `evolve agent` CLI flags, prompt template (`PURPOSE/TASK/MODE/CONTEXT/EXPECTED/CONSTRAINTS`), worktree isolation, and retry rules, read [Agent usage](agent-usage.md) (`evolve skill workflows show agent-usage`):
 
 | Capability | Antigravity | Codex | Claude |
 | --- | --- | --- | --- |
@@ -67,4 +77,4 @@ Shared workflow documents describe capabilities neutrally; resolve them to the a
 | `ew-review` | `workflow-reviewer` (`workflow_reviewer`) | Single-dimension read-only audit (`correctness`/`security`/`performance`/`architecture`) |
 | `ew-debug` | `workflow-debugger` (`workflow_debugger`) | Isolated hypothesis investigation & 3-strike root-cause diagnosis |
 | `ew-retrospective` | `workflow-analyzer` (`workflow_analyzer`) | Parallel 4-lens read-only retrospective (`technical`/`process`/`quality`/`decision`) |
-| `ew-companion` | `workflow-executor` (`workflow_executor`) | Optional scoped subagent for bounded single-concern execution |
+| `ew-companion` | Direct main-agent execution (`workflow-executor` optional only when isolation is needed) | Single-Run direct execution for single-concern tasks without subagent fan-out |
