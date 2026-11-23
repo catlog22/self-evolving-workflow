@@ -16,7 +16,8 @@ Match the intent to the smallest Evolve chain that can produce and verify the re
 
 ## Routing Preference & Scope Guard
 
-- **Prefer the lightest sufficient route**: default normal-difficulty, single-concern development, localized bug-fix, and direct-verification tasks to `ew-companion` rather than splitting into multi-agent sub-steps (`ew-analyze` -> `ew-plan` -> `ew-execute`).
+- **Converge Session creation & reuse Topic Sessions**: do NOT open a new Session for read-only diagnostics, probe scripts, sensitivity calculations, or trivial 1-turn micro-edits that need no durable Run audit (`END` instead). When durable tracking IS warranted, check `evolve session list --status open` first and reuse a compatible open Topic Session (`session step add` + `run create`) rather than spawning a fresh Session per turn.
+- **Prefer the lightest sufficient route**: default non-trivial, single-concern development, localized bug-fix, and deliverable-verification tasks to `ew-companion` rather than splitting into multi-agent sub-steps (`ew-analyze` -> `ew-plan` -> `ew-execute`).
 - **File count is irrelevant**: a cohesive change across multiple files (e.g., updating callers, wiring an option, fixing a bug plus its tests) still belongs to `ew-companion` as long as no multi-phase architecture uncertainty, cross-package interface redesign, downstream typed artifact handoff, or formal decision gate (`--goal`) is needed.
 - **Scope guard**: action keywords (`implement`, `add`, `fix`, `refactor`) identify semantic intent only and do NOT force heavy multi-step chains when `ew-companion` suffices. Escalate to `ew-analyze` / `ew-plan` / `ew-execute` / `ew-verify` / `ew-review` only for genuine multi-module uncertainty (`>= 3` coupled modules or cross-package interfaces), `--goal` chains, or explicit user requests for those specialist stages.
 
@@ -24,9 +25,9 @@ Match the intent to the smallest Evolve chain that can produce and verify the re
 
 | Intent | Exact Route | Prerequisites & Thresholds |
 | --- | --- | --- |
-| Read-only Q&A, factual lookup, status check, or standalone task in a non-Evolve project | `END` (no Session) | Zero repository mutations, or project has not opted into Evolve Session/Run orchestration |
-| Normal / single-concern edit, feature, localized fix, refactor, or direct verification (file count irrelevant) | `ew-companion` | Default in Evolve-managed workspace (or explicit `/ew-orchestrate`) when no downstream typed artifact, formal gate, or `>= 3`-module architectural split is needed |
-| Initialize or onboard project (greenfield / brownfield / legacy) | `ew-init` → `ew-roadmap` or `ew-blueprint` | Skip interactive Q&A when `--from` supplies `upstream-context` |
+| Read-only Q&A, factual lookup, status check, zero-mutation diagnostics/probes/calculations, trivial 1-turn micro-edits (no durable audit needed), or standalone task in a non-Evolve project | `END` (no Session) | Zero production/deliverable mutations (or trivial 1-turn tweak needing no Run tracking), or project has not opted into Evolve Session/Run orchestration |
+| Non-trivial single-concern edit, feature, localized fix, refactor, or deliverable verification needing durable Run tracking (file count irrelevant) | `ew-companion` | Default in Evolve-managed workspace (or explicit `/ew-orchestrate`) when production/deliverable changes warrant Run tracking without downstream typed artifacts, formal gates, or `>= 3`-module split; reuse matching open Topic Session first |
+| Initialize or onboard project (greenfield / brownfield / legacy; optional `--visual`) | `ew-init` → `ew-roadmap` or `ew-blueprint` | Skip interactive Q&A when `--from` supplies `upstream-context`; `--visual` adds `visual-report.html` |
 | Explore open alternatives or compare approaches | `ew-brainstorm` | Proposes continuation only when durable artifacts are needed |
 | Pressure-test an idea/proposal against codebase reality | `ew-grill` | Grounded Socratic branches; runs before `ew-brainstorm` / `ew-plan` |
 | Settle a state-model, logic, or UI-layout question with a runnable throwaway prototype | `ew-prototype` | Standalone model-invoked Skill (`session-mode: none`) when paper debate cannot settle a design; feeds validated decisions back to `ew-grill` / `ew-brainstorm` / `ew-plan` |
@@ -39,7 +40,7 @@ Match the intent to the smallest Evolve chain that can produce and verify the re
 | Independently verify requirement & wiring coverage | `ew-verify` | **Requires bound `current-plan` + `current-execution`** (`required: true`) |
 | Run conversational UAT, `--smoke`, or `--frontend-verify` browser check | `ew-test` | Behavioral acceptance + UAT; consumes verification, execution, or review |
 | Generate and converge layered automated tests (`L0->L3`) | `ew-auto-test` | Suites missing or low coverage; distinct from UAT/browser acceptance |
-| Audit diff, file/dir, or `current-execution` across 4 quality dimensions | `ew-review` | Works standalone (`HEAD`/`staged`/path) OR inside a Session after `ew-execute` |
+| Audit diff, file/dir, or `current-execution` across 4 quality dimensions (and UI visual truth / `--visual`) | `ew-review` | Works standalone (`HEAD`/`staged`/path) OR inside a Session after `ew-execute` |
 | Diagnose broken behavior inside an orchestration chain (`<= 2` modules) | `ew-debug` → `ew-plan --gaps` → `ew-execute` → `ew-verify` | Single bounded root-cause isolation (`latest-debug` / `latest-fix-directions`); `>= 3` modules escalate via `S_DECOMPOSE` (missing-seam blockers recommend `ew-analyze` or explicit `/ew-odyssey --mode arch`) |
 | Heavyweight multi-iteration architecture, audit, bug-hunt, or security campaign | `ew-odyssey --mode <arch\|debug\|improve\|planex\|review\|security\|defensive\|ui>` (`ew-odyssey-<mode>`) | **Explicit user `/ew-odyssey` invocation only** (`disable-model-invocation: true`); multi-iteration loop across subsystems/campaigns |
 | Post-execution four-lens retrospective | `ew-retrospective` | Consumes sealed execution/verification/review artifacts |

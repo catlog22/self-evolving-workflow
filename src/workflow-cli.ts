@@ -23,7 +23,7 @@ const strings = { type: 'string', multiple: true } as const;
 const bool = { type: 'boolean' } as const;
 const options = {
   root: string, db: string, id: string, session: string, run: string, actor: string, participant: string,
-  'request-id': string, reason: string, evidence: strings, json: bool, help: { ...bool, short: 'h' }, advance: bool,
+  'request-id': string, reason: string, evidence: strings, json: bool, help: { ...bool, short: 'h' }, advance: bool, next: bool,
   'expected-orchestration-revision': string, 'expected-run-revision': string,
   'definition-of-done': string, chain: strings, 'step-id': string, command: string, arg: strings, 'after-step': string,
   'decision-ref': string, 'goal-ref': string, stage: string, gate: strings, from: string, verdict: string, summary: string,
@@ -37,14 +37,15 @@ const options = {
 } as const;
 
 const usage = [
-  'evolve session create <objective> --id <id> [--chain <commands>] --actor <id>',
+  'evolve session create <objective> --id <id> [--chain <commands>] [--actor <id>]',
   'evolve session get|update|complete --session <id>',
   'evolve session list|resume-view',
   'evolve session step add|update|delete --session <id> --step-id <id>',
-  'evolve run create|get|check|read|update|complete|cancel|decide --session <id>',
+  'evolve run create|get|check|read|update|cancel --session <id>',
+  'evolve run complete <run> --summary <text> [--verdict done|done_with_concerns] [--gate <gate>] [--next] --session <id>',
   'evolve run skill-read <run> [<path> --from <from>] --session <id>',
   'evolve run artifact-read <run> <alias> --session <id> [--scope <Wiki scope JSON>]',
-  'evolve run decide <decision-id> --verdict proceed|fix|escalate --summary <text> [--confidence <0-100>] [--target-step <step-id>] [--evidence <ref>] --session <id> --actor <id>',
+  'evolve run decide <decision-id> --verdict proceed|fix|escalate --summary <text> [--confidence <0-100>] [--target-step <step-id>] [--evidence <ref>] --session <id> [--actor <id>]',
   'evolve run task controller|add|update|delete|list --session <id> --run <id>',
   'evolve skill install|upgrade [<package>...] [--scope project|user] [--host codex|claude|agy|all] [--yes]',
   'evolve skill status|validate|workflows [show <id>]',
@@ -405,8 +406,10 @@ async function runWorkflowCli(argv: string[]) {
   const id = () => workflowId(values.session ?? values.id, 'Session ID');
   const runId = () => workflowId(values.run ?? args[0], 'Run ID');
   const mutation = (): Mutation => {
-    const actor = workflowId(values.actor ?? values.participant, 'actor');
-    if (values.participant && values.participant !== actor) throw new InputError('Participant must match the actor');
+    if (values.actor !== undefined && values.participant !== undefined && values.actor !== values.participant) {
+      throw new InputError('Participant must match the actor');
+    }
+    const actor = workflowId(values.actor ?? values.participant ?? process.env.EVOLVE_ACTOR ?? 'agent', 'actor');
     return { actor, requestId: values['request-id'], revision: revision(values['expected-orchestration-revision']),
       runRevision: revision(values['expected-run-revision']), evidence: values.evidence, reason: values.reason };
   };
@@ -463,8 +466,15 @@ async function runWorkflowCli(argv: string[]) {
       if (action === 'skill-read') return print(store.readSkill(id(), runId(), values.from, target));
       if (action === 'artifact-read') return print(store.readArtifact(id(), runId(), requireText(target, 'artifact ID or alias'),
         wikiLookupScope(values.scope === undefined ? undefined : JSON.parse(values.scope))));
-      if (action === 'complete') return print(store.completeRun(id(), runId(), requireText(values.summary, 'Run summary'),
-        select(values.verdict ?? 'done', ['done', 'done_with_concerns'], 'verdict'), gates, mutation()));
+      if (action === 'complete') {
+        const completed = store.completeRun(id(), runId(), requireText(values.summary, 'Run summary'),
+          select(values.verdict ?? 'done', ['done', 'done_with_concerns'], 'verdict'), gates, mutation());
+        if (values.next && completed.continuation.action === 'next') {
+          const nextRun = store.next(id(), { actor: completed.receipt.actor }, gates);
+          return print({ ...completed, next_run: nextRun });
+        }
+        return print(completed);
+      }
       if (action === 'transition' || action === 'cancel') return print(store.transition(id(), runId(),
         action === 'cancel' ? 'cancelled' : select(args[1], ['running', 'blocked', 'failed'], 'Run status'),
         requireText(values.reason ?? values.summary, 'transition reason'), mutation()));

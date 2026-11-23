@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from '../dist/common.js';
 import { test } from 'node:test';
@@ -573,6 +573,74 @@ test('Skill search_profile binds to Run packets and prioritizes matching episodi
     const exact = f.agent('kb', 'get', 'mem-error', '--reads', tracePath, '--from-search', memorySearch.search_id);
     assert.equal(exact.kind, 'episodic');
     assert.ok(exact.knowledge_reads.reads.some(item => item.kind === 'memory' && item.id === 'mem-error'));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Streamlined CLI omits actor/revisions/skill-read, cleans empty cancelled runs, and chains complete --next', () => {
+  const f = fixture('evolve-streamlined-');
+  try {
+    const session = 'streamlined';
+    const opened = f.evolve('session', 'create', 'Streamlined chain', '--id', session, '--chain', 'ew-analyze,ew-plan');
+    assert.equal(opened.receipt.actor, 'agent');
+
+    const run1 = f.evolve('run', 'create', '--session', session);
+    assert.equal(run1.run_id, 'run-001');
+    assert.equal(run1.receipt.actor, 'agent');
+    assert.equal(run1.skill_entry_path, 'skills/ew-orchestrate/steps/ew-analyze/SKILL.md');
+    assert.equal(existsSync(join(run1.run_dir, 'outputs')), true);
+    assert.ok(run1.skill_reads.missing.length > 0);
+
+    f.saveArtifact(run1, 'findings.json', { findings: ['ok'] });
+    const gates = run1.gates.exit.flatMap(g => ['--gate', g]);
+    const checked = f.evolve('run', 'check', run1.run_id, '--session', session, ...gates);
+    assert.equal(checked.completion_preflight.ready, true);
+    assert.ok(checked.skill_reads.missing.length > 0);
+
+    const completed = f.evolve('run', 'complete', run1.run_id, '--session', session,
+      '--summary', 'Analyzed without skill-read', ...gates, '--next');
+    assert.equal(completed.status, 'sealed');
+    assert.equal(completed.receipt.actor, 'agent');
+    assert.ok(completed.skill_reads.missing.length > 0);
+    assert.equal(completed.next_run.run_id, 'run-002');
+    assert.equal(completed.next_run.task.command, 'ew-plan');
+    assert.equal(completed.next_run.skill_entry_path,
+      completed.next_run.skill_ref.package_path + '/' + completed.next_run.skill_ref.entry);
+    assert.equal(existsSync(join(completed.next_run.run_dir, 'outputs')), true);
+
+    f.saveArtifact(completed.next_run, 'plan.json', { steps: ['S1'] });
+    const planGates = completed.next_run.gates.exit.flatMap(g => ['--gate', g]);
+    const completedPlan = f.evolve('run', 'complete', completed.next_run.run_id, '--session', session,
+      '--summary', 'Planned cleanly', ...planGates, '--next');
+    assert.equal(completedPlan.status, 'sealed');
+    assert.equal(completedPlan.continuation.action, 'complete');
+    assert.equal(completedPlan.next_run, undefined);
+
+    const sealedSession = f.evolve('session', 'complete', '--session', session);
+    assert.equal(sealedSession.status, 'completed');
+    assert.equal(sealedSession.receipt.actor, 'agent');
+
+    const compSession = 'companion-cleanup';
+    f.evolve('session', 'create', 'Companion test', '--id', compSession, '--chain', 'ew-companion');
+    const compEmpty = f.evolve('run', 'create', '--session', compSession);
+    assert.equal(compEmpty.skill_entry_path, 'skills/ew-orchestrate/steps/ew-companion/SKILL.md');
+    assert.equal(existsSync(join(compEmpty.run_dir, 'outputs')), false);
+    mkdirSync(join(compEmpty.run_dir, 'outputs'), { recursive: true });
+    const cancelledEmpty = f.evolve('run', 'cancel', compEmpty.run_id, '--session', compSession, '--reason', 'No edits needed');
+    assert.equal(cancelledEmpty.status, 'cancelled');
+    assert.equal(existsSync(compEmpty.run_dir), false);
+
+    const compWithFile = f.evolve('run', 'create', '--session', compSession);
+    mkdirSync(join(compWithFile.run_dir, 'outputs'), { recursive: true });
+    writeFileSync(join(compWithFile.run_dir, 'outputs', 'note.txt'), 'preserve me');
+    const cancelledWithFile = f.evolve('run', 'cancel', compWithFile.run_id, '--session', compSession, '--reason', 'Escalate with notes');
+    assert.equal(cancelledWithFile.status, 'cancelled');
+    assert.equal(existsSync(compWithFile.run_dir), true);
+    assert.equal(existsSync(join(compWithFile.run_dir, 'outputs', 'note.txt')), true);
+
+    assert.throws(() => f.evolve('run', 'create', '--session', compSession, '--actor', 'a', '--participant', 'b'),
+      /Participant must match the actor/);
   } finally {
     f.cleanup();
   }

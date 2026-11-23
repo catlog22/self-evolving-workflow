@@ -2,6 +2,28 @@
 
 All notable changes to `self-evolving-workflow` are documented in this file.
 
+## [0.3.1] - 2026-11-23
+
+### Highlights
+
+- **Sequential Run IDs & Lazy Run Directories (`src/workflow-runtime.ts`)**:
+  - Replaced `run-<uuid>` generation in `WorkflowStore.next()` with Session-scoped sequential IDs (`run-001`, `run-002`, ...) via `nextRunId()`, preserving compatibility with historical `run-<uuid>` records and skipping existing/orphan directories.
+  - Made `run_dir/outputs/` creation lazy in `next()` and `brief()` (pre-created only when `produces` declares a `required: true` slot), and automatically cleaned up empty `cancelled` Run directories that have no files or `knowledge_reads`.
+  - Added `skill_entry_path` to Run packets so hosts can read bound Skill entry documents directly.
+- **Streamlined Run State Progression & CLI Ergonomics (`src/workflow-runtime.ts`, `src/workflow-cli.ts`)**:
+  - Decoupled `evolve run read skill` from blocking `run complete` (`readProof` missing links remain informational in `skill_reads`), keeping `run read skill` as an optional pinned-commit reader.
+  - Made `--actor` (defaulting to `EVOLVE_ACTOR` or `'agent'`) and `--expected-orchestration-revision` / `--expected-run-revision` optional in single-coordinator flows while keeping strict `REVISION_CONFLICT` checks whenever revision fences are supplied, and ensured omitted `--request-id` + omitted revision mutations do not collide in the `requests` idempotency cache.
+  - Added `evolve run complete --next` to seal the current Run and immediately dispatch the next pending Run in one CLI call.
+- **Converged Session Thresholds & Topic Reuse (`skills/ew-orchestrate/`)**:
+  - Tightened `END` vs `ew-companion` thresholds in `SKILL.md`, `ew-orchestrate.md`, `planning.md`, `companion-route.md`, `orchestrator-run-loop.md`, `auto-policy.md`, `goal.md`, and `steps/ew-companion/SKILL.md`: zero-deliverable-mutation diagnostics/probes and trivial 1-turn tweaks route to `END`; multi-turn topic work reuses `open` Topic Sessions via `session step add` and defers `session complete` until topic wrap-up.
+
+### Verification
+
+- `npm run build`: passed
+- `npm test` (`node --test test/*.test.mjs`): 124/124 passed
+- `npm run test:ew-layout`: passed
+- `npm run test:release-gate-flow`: passed (`candidate_passed: true`, `rollback: verified`)
+
 ## [0.3.0] - 2026-11-22
 
 ### Highlights
