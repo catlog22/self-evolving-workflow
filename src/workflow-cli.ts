@@ -14,10 +14,12 @@ import {
   type WorktreeSpec,
 } from './orchestrator.js';
 import { WorkflowStore, workflowId, type Mutation, type WorkflowStep } from './workflow-runtime.js';
+import { memoryModelSettings } from './memory-config.js';
+import { startMemoryHookWorker } from './memory-hook-jobs.js';
 import { bindWorkflowSkill, commandNames, discoverWorkflowCommands, validateWorkflowSkill } from './workflow-skills.js';
 import { wikiLookupScope } from './workflow-knowledge.js';
 import {
-  exportPlugins, installPlugins, installSkills, installStatus, installWorkflow,
+  bundlePackageVersion, exportPlugins, installPlugins, installSkills, installStatus, installWorkflow,
   pluginStatus, syncProjectSkills, workflowDocument, workflowDocuments,
 } from './workflow-install.js';
 
@@ -136,6 +138,10 @@ function relaunchWithLiftoffIfNeeded(argv: string[]): void {
 }
 
 async function main(argv: string[]) {
+  if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-V')) {
+    process.stdout.write(bundlePackageVersion() + '\n');
+    return;
+  }
   // 路由保留选项及参数顺序，具体命令仍使用各自的严格参数定义。
   const { positionals: [group, action], values } = parseArgs({
     args: argv, options: { ...knowledgeOptions, ...options }, allowPositionals: true, strict: false, tokens: true,
@@ -507,7 +513,18 @@ async function runWorkflowCli(argv: string[]) {
         const cmd = change === 'skip' || values['decision-only'] ? '' : requireText(values.command, 'command');
         return print(store.chain(id(), change, makeStep(cmd, workflowId(values['step-id'], 'step ID')), values['after-step'], mutation()));
       }
-      if (action === 'complete') return print(store.completeSession(id(), mutation()));
+      if (action === 'complete') {
+        const completed = store.completeSession(id(), mutation(), values.project);
+        // Completion and the immutable outbox commit before any model work.
+        // Failure to dispatch cannot roll back a completed task.
+        try {
+          const settings = memoryModelSettings(root);
+          if (settings.baseUrl && settings.model) await startMemoryHookWorker(root, true);
+        } catch (error) {
+          console.warn('Knowledge closeout queued; worker dispatch failed: ' + (error instanceof Error ? error.message : String(error)));
+        }
+        return print(completed);
+      }
     }
     if (group === 'run') {
       const gates = values.gate ?? [];
