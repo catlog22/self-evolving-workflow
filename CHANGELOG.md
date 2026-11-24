@@ -2,6 +2,29 @@
 
 All notable changes to `self-evolving-workflow` are documented in this file.
 
+## [0.5.0] - 2026-11-24
+
+### Highlights
+
+- **Asymptotic Knowledge Decay, Usage Tracking & Bounded Exploration (`src/knowledge-decay.ts`, `src/memory.ts`, `src/wiki.ts`, `src/kb.ts`, `src/search.ts`)**:
+  - Added bounded exponential time decay (`floor = 0.3`, type-specific half-lives `constraint: 180d`, `reference: 60d`, `episodic: 30d`, quantized to whole days) with logarithmic consumption rejuvenation (`read_count`) so frequently opened knowledge resists forgetting while search exposure (`search_hits`) alone never inflates rank.
+  - Added persistent `memory_usage` and `wiki_usage` tables that track `content_hash`, `content_changed_at`, `search_hits`, and `read_count` across `wiki.build()` rebuilds (cleaning deleted pages on full rebuilds) while keeping explicit `readOnly` queries side-effect-free.
+  - Added `applyBoundedExploration()` for non-paginated top-K search results (`limit >= 4`) to surface under-exposed relevant candidates without breaking multi-page pagination coverage.
+- **Zero-LLM Heuristic Conflict Detection & Governed Resolution (`src/knowledge-conflict.ts`, `src/closeout.ts`, `src/wiki-entry.ts`, `src/wiki-change.ts`, `src/search-format.ts`)**:
+  - Implemented bilingual (`en`/`zh`) normative stance detection (`detectStance()`) and non-ordinal value divergence checks (`classifyKnowledgeRelation()`, `findHeuristicConflicts()`, `findCorpusConflicts()`) with scope-overlap filtering.
+  - Wired heuristic conflict checks into `KnowledgeStore.add()`, `harvestCompletion()` (`compareReferences()`), and `proposeWikiChange()` / `Wiki` ranking (`confidence: 'contested'` and `needs_review` penalties plus `[CONTESTED]` / `[NEEDS_REVIEW]` badges in compact and JSON outputs).
+- **Read-Only Knowledge Audit Command & Closed-Loop Tests (`src/knowledge-lint.ts`, `src/knowledge-cli.ts`, `test/knowledge-lifecycle.test.mjs`, `test/knowledge-closed-loop.test.mjs`)**:
+  - Added `evolve kb lint [--scope project|global|local] [--format compact]` to report freshness distributions, potential conflicts, exact duplicates, `needs_review`/`contested` entries, broken `[[wikilink]]`s, orphan pages, missing repository path anchors, and exposure concentration (`P0`/`P1`/`P2`).
+  - Added unit and 6 end-to-end closed-loop tests covering storage, search, decay, conflict discovery, governed retirement/deletion, and post-cleanup verification.
+
+### Verification
+
+- `npm run build`: passed
+- `npm test` (`node --test test/*.test.mjs`): 138/138 passed
+- `npm run test:ew-layout`: passed
+- `npm run test:release-gate-flow`: passed (`candidate_passed: true`, `rollback: verified`)
+- `npm pack --dry-run`: 347 files, 8.5 MB unpacked
+
 ## [0.4.0] - 2026-11-24
 
 ### Highlights
