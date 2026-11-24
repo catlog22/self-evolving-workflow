@@ -2,6 +2,30 @@
 
 All notable changes to `self-evolving-workflow` are documented in this file.
 
+## [0.7.0] - 2026-11-24
+
+### Highlights
+
+- **Unified Search Fixes, CodeGraph Protection & Chinese Cross-Source Ranking (`src/kb.ts`, `src/search.ts`, `src/knowledge-cli.ts`, `src/code.ts`, `src/wiki-tokens.ts`, `src/wiki.ts`, `src/upstream/tokenize.ts`)**:
+  - Fixed `.workflow/repository.json` / `.evolve/repository.json` auto-detection suppressing episodic memories in `evolve search` (`merged`), `evolve kb search`, and `evolve kb list`, and crashing `evolve search --from code` unless `--repository` is explicitly supplied.
+  - Added default internal directory isolation (`.evolve/`, `.agent-memory/`, `.workflow/`) in `CodeGraph.search()` and idempotent `.git/info/exclude` management on `build`/`sync`, plus read-only snapshot opening (`openReadOnlyGraph()`) and `autoRefresh` safeguards (`AUTO_REFRESH_MAX_DB_BYTES`, `AUTO_REFRESH_MAX_FILES`, `AUTO_REFRESH_MAX_DIRTY_PATHS`) for large or heavily dirty repositories while preserving incomplete-build recovery.
+  - Fixed Chinese stop-word filtering in `tokenizeWiki()` (with `tok:v2` index fingerprint bump) and `buildFtsQuery()`, added scale-invariant multi-concept query coverage weighting in `merged` RRF fusion, and tightened bounded exploration `minRelevanceRatio` to `0.65`.
+- **Durable Native Session Closeout Outbox, Version-Bound Feedback & Knowledge Diagnostics (`src/native-closeout.ts`, `src/storage-migration.ts`, `src/workflow-runtime.ts`, `src/knowledge-reads.ts`, `src/closeout.ts`, `src/memory-config.ts`, `src/history-signals.ts`, `src/knowledge-cli.ts`, `src/workflow-cli.ts`)**:
+  - Made `evolve session complete` atomically freeze sealed Run reports, artifacts, decisions, and session memories into a durable `native_closeouts` outbox and dispatch background extraction; added `evolve kb closeouts`, `evolve kb harvest pending`, and classified candidates (`constraint`, `workflow_issue`, `deterministic_check`).
+  - Added `evolve kb feedback` (bound to exact consumed read hashes without fabricated feedback), `evolve kb doctor`, `evolve kb migrate-storage`, and `evolve --version` / `-V`.
+  - Decoupled the semantic LLM cursor in `src/history-signals.ts` so unchanged failed entries retry cleanly and unread history backfills when `--llm` is enabled.
+- **Unified Managed Instructions & Strengthened Knowledge Gate (`rules/AGENTS.md`, `AGENTS.md`, `src/workflow-install.ts`, `skills/`, `wiki/entries/release-guide.md`)**:
+  - Rendered managed host instructions from single-source `rules/AGENTS.md` and refreshed instructions during Skill/Plugin installs; explicitly restored `git`/release/maintenance and mid-conversation scope-change triggers in Knowledge Gate instructions.
+  - Streamlined closeout and memory recording directives across `ew-knowledge`, `ew-orchestrate`, `ew-odyssey`, and `workflow-evolve`, and added the project release guide Wiki entry (`wiki/entries/release-guide.md`).
+
+### Verification
+
+- `npm run build`: passed
+- `npm test` (`node --test test/*.test.mjs`): 151/151 passed
+- `npm run test:ew-layout`: passed
+- `node dist/workflow-cli.js skill validate --all`: 32/32 passed
+- `npm pack --dry-run`: 353 files, 8.6 MB unpacked
+
 ## [0.6.0] - 2026-11-24
 
 ### Highlights
