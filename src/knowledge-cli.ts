@@ -321,6 +321,7 @@ interface CliWikiContext {
   paths?: string[];
   categories?: string[];
   repository?: string;
+  repositoryExplicit?: boolean;
   keyword?: string;
   includePathScoped?: boolean;
 }
@@ -368,11 +369,13 @@ function cliWikiContext(values: Record<string, unknown>, root: string): CliWikiC
   const file = typeof values['context-file'] === 'string' ? readContextFile(values['context-file']) : {};
   const paths = Array.isArray(values.path) ? values.path as string[] : file.paths;
   const categories = Array.isArray(values.category) ? values.category as string[] : file.categories;
-  const repository = typeof values.repository === 'string' ? values.repository : file.repository ?? detectRepositoryId(root);
+  const explicitRepository = typeof values.repository === 'string' ? values.repository : file.repository;
+  const repository = explicitRepository ?? detectRepositoryId(root);
   return {
     task: typeof values.task === 'string' ? values.task : file.task,
     paths, categories,
     repository,
+    repositoryExplicit: explicitRepository !== undefined,
     keyword: typeof values.keyword === 'string' ? values.keyword : file.keyword,
     includePathScoped: typeof values['include-path-scoped'] === 'boolean'
       ? values['include-path-scoped'] : file.includePathScoped,
@@ -688,6 +691,7 @@ export async function runKnowledgeCli(argv: string[], invocation: 'evolve' = 'ev
       if (!selected.length || selected.some(item => !['kb', 'code', 'all'].includes(item))) throw new InputError('from must select kb, code or all');
       const mode = values.mode ?? 'merged';
       if (mode !== 'merged' && mode !== 'context') throw new InputError('mode must be merged or context');
+      const useKb = selected.some(item => item === 'kb' || item === 'all');
       const hasCode = scope !== 'global' && selected.some(item => item === 'code' || item === 'all');
       let preferredMemoryTypes: string[] | undefined;
       if (mode === 'context' && values.session && existsSync(workflowDbPath(root))) {
@@ -696,10 +700,12 @@ export async function runKnowledgeCli(argv: string[], invocation: 'evolve' = 'ev
       }
       const queryText = requireText([action, ...args].join(' '), 'query');
       const result = await unifiedSearch({
-        kb: selected.some(item => item === 'kb' || item === 'all') ? openKnowledge() : undefined,
+        kb: useKb ? openKnowledge() : undefined,
         code: hasCode ? new CodeGraph(root, { autoRefresh: true }) : undefined,
       }, queryText, {
-        ...filters, from, mode, preferredMemoryTypes,
+        ...filters,
+        repository: useKb || contextValues.repositoryExplicit ? filters.repository : undefined,
+        from, mode, preferredMemoryTypes,
         session: mode === 'context' ? undefined : filters.session,
         memorySession: values['memory-session'],
         contextScope: {
