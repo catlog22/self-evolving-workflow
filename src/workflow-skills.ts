@@ -134,7 +134,15 @@ export function readWorkflowLink(root: string, skill: WorkflowSkill, from: strin
   return readWorkflowMarkdown(root, skill, linkPath(from, destination));
 }
 
-export const projectSkillRoots = ['skills', '.agents/skills', '.codex/skills', '.claude/skills'] as const;
+export const projectSkillRoots = [
+  'skills',
+  '.agents/skills',
+  '.codex/skills',
+  '.claude/skills',
+  '.agents/plugins/self-evolving-workflow/skills',
+  '.codex/plugins/self-evolving-workflow/skills',
+  '.claude/plugins/self-evolving-workflow/skills',
+] as const;
 
 export function findWorkflowPackageTree(
   root: string,

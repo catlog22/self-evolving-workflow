@@ -2,6 +2,26 @@
 
 All notable changes to `self-evolving-workflow` are documented in this file.
 
+## [0.4.0] - 2026-11-24
+
+### Highlights
+
+- **Multi-Host Plugin & Marketplace Support (`.claude-plugin/`, `.codex-plugin/`, `.antigravity-plugin/`, `.agents/plugins/marketplace.json`)**:
+  - Added repository-level plugin and marketplace manifests plus shared `rules/AGENTS.md` and `assets/logo.svg` for Claude Code, Codex, and Antigravity (`agy`), and included them in `package.json` `files`.
+  - Extended `evolve skill install|upgrade|status` in `src/workflow-install.ts` and `src/workflow-cli.ts` with `--plugin` and `--path <dir>` to install project/user plugins, upsert Codex `.agents/plugins/marketplace.json` while preserving existing entries, emit Claude local marketplace manifests, render host-specific agent definitions (`.toml` for Codex, `.md` for Claude/AGY), and export standalone universal or per-host plugin bundles excluding `release-gate`.
+  - Added project-scoped plugin `skills/` directories to `projectSkillRoots` in `src/workflow-skills.ts` so committed plugin installations bind cleanly to `evolve skill validate` and Runs.
+  - Updated `README.md` and `docs/install.md` with multi-host plugin installation, Marketplace commands, and global CLI (`npm install -g self-evolving-workflow`) guidance.
+- **Deferred Closeout & Session-Scoped Reminder Hygiene (`src/memory-history.ts`, `src/memory-reminders.ts`, `AGENTS.md`, `skills/`)**:
+  - Filtered active session IDs in `buildSessionStartNotice()` and updated hook notices, `AGENTS.md`, `ew-impeccable`, `ew-odyssey`, and `ew-orchestrate` step workflows to defer `kb harvest` until explicit closeout or `evolve session complete`.
+
+### Verification
+
+- `npm run build`: passed
+- `npm test` (`node --test test/*.test.mjs`): 125/125 passed
+- `npm run test:ew-layout`: passed
+- `npm run test:release-gate-flow`: passed (`candidate_passed: true`, `rollback: verified`)
+- `npm pack --dry-run`: 341 files, 8.4 MB unpacked
+
 ## [0.3.1] - 2026-11-23
 
 ### Highlights
