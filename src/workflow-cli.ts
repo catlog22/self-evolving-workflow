@@ -14,11 +14,11 @@ import {
   type WorktreeSpec,
 } from './orchestrator.js';
 import { WorkflowStore, workflowId, type Mutation, type WorkflowStep } from './workflow-runtime.js';
-import { bindWorkflowSkill, commandNames } from './workflow-skills.js';
+import { bindWorkflowSkill, commandNames, discoverWorkflowCommands, validateWorkflowSkill } from './workflow-skills.js';
 import { wikiLookupScope } from './workflow-knowledge.js';
 import {
   exportPlugins, installPlugins, installSkills, installStatus, installWorkflow,
-  pluginStatus, workflowDocument, workflowDocuments,
+  pluginStatus, syncProjectSkills, workflowDocument, workflowDocuments,
 } from './workflow-install.js';
 
 const string = { type: 'string' } as const;
@@ -37,6 +37,7 @@ const options = {
   stream: bool, timeout: string, force: bool, 'delete-branch': bool, branch: string, 'base-ref': string,
   project: string, global: bool, apply: bool, 'knowhow-only': bool,
   scope: string, host: string, skill: strings, yes: bool, upgrade: bool, prune: bool, plugin: bool,
+  all: bool,
 } as const;
 
 const usage = [
@@ -50,9 +51,10 @@ const usage = [
   'evolve run artifact-read <run> <alias> --session <id> [--scope <Wiki scope JSON>]',
   'evolve run decide <decision-id> --verdict proceed|fix|escalate --summary <text> [--confidence <0-100>] [--target-step <step-id>] [--evidence <ref>] --session <id> [--actor <id>]',
   'evolve run task controller|add|update|delete|list --session <id> --run <id>',
-  'evolve skill install|upgrade [<package>...] [--plugin] [--scope project|user] [--host codex|claude|agy|all] [--path <dir>] [--yes]',
+  'evolve skill install|upgrade|sync [<package>...] [--plugin] [--scope project|user] [--host codex|claude|agy|all] [--path <dir>] [--yes]',
   'evolve skill status [--plugin] [--scope project|user] [--host codex|claude|agy|all]',
   'evolve skill validate|workflows [show <id>]',
+  'evolve history collect|list|search|show [options]',
   'evolve agent exec <prompt> --to codex|agy|claude --mode analysis|write [--worktree <name> | --isolate] [--agent-session <id>] [--stream]',
   'evolve agent providers|list|get|create|send|delete|worktree [options]',
 ].join('\n');
@@ -89,7 +91,7 @@ const agentHelp = [
   '  evolve skill workflows show agent-usage',
 ].join('\n');
 
-const knowledgeCommands = new Set(['code', 'kb', 'search']);
+const knowledgeCommands = new Set(['code', 'kb', 'search', 'history']);
 const skillEvolutionActions = new Set(['review', 'draft', 'replay', 'apply', 'rollback', 'retire', 'learnings', 'design']);
 
 function needsWasmCodeGraph(group: string | undefined, action: string | undefined, values: Record<string, unknown>): boolean {
@@ -371,9 +373,9 @@ async function runWorkflowCli(argv: string[]) {
   const root = resolve(values.root ?? '.');
   const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
   if (group === 'skill' && action === 'workflows') {
-    if (!args.length) return print(workflowDocuments());
+    if (!args.length) return print(workflowDocuments(root));
     if (args[0] === 'show' && args.length === 2) {
-      process.stdout.write(workflowDocument(args[1]));
+      process.stdout.write(workflowDocument(args[1], root));
       return;
     }
     throw new InputError('Usage: evolve skill workflows [show <id>]');
@@ -406,13 +408,42 @@ async function runWorkflowCli(argv: string[]) {
         upgrade, prune: Boolean(values.prune), force: Boolean(values.force),
       }));
     }
+    if (action === 'sync') {
+      return print(syncProjectSkills(root, {
+        scope: installScope(),
+        host: values.host,
+        skill: [...(values.skill ?? []), ...args],
+        force: Boolean(values.force),
+      }));
+    }
     if (action === 'status' && !args.length) {
       return print(values.plugin
         ? pluginStatus(root, { scope: installScope(), host: values.host })
         : installStatus(root, { scope: installScope(), host: values.host }));
     }
-    if (action === 'validate') return print(bindWorkflowSkill(root, requireText(args[0], 'Skill command')));
-    if (!action || action === 'list') return print(commandNames.map(command => ({ command })));
+    if (action === 'validate') {
+      if (values.all) {
+        const commands = discoverWorkflowCommands(root);
+        if (!commands.length) throw new InputError('No committed Skill packages found in this project');
+        const results = commands.map(command => {
+          try {
+            return { command, ok: true, result: validateWorkflowSkill(root, command) };
+          } catch (error) {
+            return { command, ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        });
+        const failed = results.filter(item => !item.ok);
+        if (failed.length) process.exitCode = 1;
+        return print({ total: results.length, passed: results.length - failed.length, failed: failed.length, results });
+      }
+      return print(validateWorkflowSkill(root, requireText(args[0], 'Skill command')));
+    }
+    if (!action || action === 'list') {
+      const custom = discoverWorkflowCommands(root).filter(
+        name => !commandNames.includes(name) && name !== 'ew-orchestrate' && name !== 'ew-odyssey',
+      );
+      return print([...commandNames, ...custom].map(command => ({ command })));
+    }
     throw new InputError('Unknown Skill command: ' + action);
   }
   if (group === 'agent' && action === 'exec') {

@@ -3,7 +3,7 @@
 /dist/
 /.evolve/
 /.agent-memory/
-/.codegraph/
+/.codegraph*/
 /.workflow/
 /.agents/hooks.json
 /.claude/settings.local.json
