@@ -527,6 +527,88 @@ test('Evolve tracks install manifests, reports status, upgrades outdated package
   assert.ok(statusAfter.targets[0].skills.every(item => item.status === 'up_to_date'));
 });
 
+test('Evolve update auto-detects project and user skills/plugins and supports quick install', async t => {
+  const root = await temp(t);
+  const home = await temp(t);
+  const workflowCli = fileURLToPath(new URL('../dist/workflow-cli.js', import.meta.url));
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    CODEX_HOME: join(home, '.codex'),
+    CLAUDE_CONFIG_DIR: join(home, '.claude'),
+  };
+  const evolve = async (...args) => JSON.parse(
+    (await run(process.execPath, [workflowCli, ...args], { cwd: root, encoding: 'utf8', env })).stdout,
+  );
+
+  // 1. Fresh environment with no existing installations quick-installs user scope across all hosts.
+  const quick = await evolve('update');
+  assert.equal(quick.status, 'updated');
+  assert.equal(quick.mode, 'quick_install');
+  assert.deepEqual(quick.scopes, ['user']);
+  assert.equal(quick.skills.targets.length, 3);
+  assert.ok(quick.skills.installed.includes('ew-knowledge'));
+  await access(join(home, '.codex', 'skills', 'ew-knowledge', 'SKILL.md'));
+  await access(join(home, '.claude', 'skills', 'ew-knowledge', 'SKILL.md'));
+  await access(join(home, '.gemini', 'config', 'skills', 'ew-knowledge', 'SKILL.md'));
+
+  // 2. Add project skill (agy), project plugin (codex), stale edits, and retired/custom skills.
+  await evolve('skill', 'install', '--scope', 'project', '--host', 'agy', '--skill', 'ew-knowledge', '--yes');
+  await evolve('skill', 'install', '--plugin', '--scope', 'project', '--host', 'codex', '--yes');
+
+  const projSkill = join(root, '.agents', 'skills', 'ew-knowledge', 'SKILL.md');
+  const originalProjSkill = await readFile(projSkill, 'utf8');
+  await writeFile(projSkill, originalProjSkill + '\n<!-- stale project -->\n');
+  await mkdir(join(root, '.agents', 'skills', 'team-swarm'), { recursive: true });
+  await writeFile(join(root, '.agents', 'skills', 'team-swarm', 'SKILL.md'), '---\nname: team-swarm\n---\n');
+  await mkdir(join(root, '.agents', 'skills', 'custom-user-skill'), { recursive: true });
+  await writeFile(join(root, '.agents', 'skills', 'custom-user-skill', 'SKILL.md'), '---\nname: custom-user-skill\n---\n');
+
+  const userSkill = join(home, '.claude', 'skills', 'ew-knowledge', 'SKILL.md');
+  const originalUserSkill = await readFile(userSkill, 'utf8');
+  await writeFile(userSkill, originalUserSkill + '\n<!-- stale user -->\n');
+
+  const codexPluginSkill = join(root, '.codex', 'plugins', 'self-evolving-workflow', 'skills', 'ew-knowledge', 'SKILL.md');
+  await writeFile(codexPluginSkill, 'stale plugin\n');
+
+  const detected = await evolve('update');
+  assert.equal(detected.status, 'updated');
+  assert.equal(detected.mode, 'detected');
+  assert.deepEqual(detected.scopes, ['project', 'user']);
+  assert.ok(detected.skills.upgraded.includes('ew-knowledge'));
+  assert.ok(detected.skills.installed.includes('ew-swarm'));
+  assert.deepEqual(detected.skills.pruned, ['team-swarm']);
+  assert.deepEqual(detected.plugins.upgraded, ['project:codex']);
+  assert.equal(await readFile(projSkill, 'utf8'), originalProjSkill);
+  assert.equal(await readFile(userSkill, 'utf8'), originalUserSkill);
+  assert.equal(await readFile(codexPluginSkill, 'utf8'), originalProjSkill);
+  await assert.rejects(access(join(root, '.agents', 'skills', 'team-swarm')), { code: 'ENOENT' });
+  await access(join(root, '.agents', 'skills', 'custom-user-skill', 'SKILL.md'));
+
+  // 3. `evolve skill update` alias is idempotent once up to date.
+  const idempotent = await evolve('skill', 'update');
+  assert.equal(idempotent.mode, 'detected');
+  assert.deepEqual(idempotent.skills.installed, []);
+  assert.deepEqual(idempotent.skills.upgraded, []);
+  assert.deepEqual(idempotent.skills.pruned, []);
+  assert.deepEqual(idempotent.plugins.upgraded, []);
+
+  // 4. Explicit `--scope project --host claude` adds/updates only the requested host in project scope.
+  const addedClaude = await evolve('update', '--scope', 'project', '--host', 'claude');
+  assert.deepEqual(addedClaude.scopes, ['project']);
+  assert.equal(addedClaude.skills.targets.length, 1);
+  assert.equal(addedClaude.skills.targets[0].host, 'claude');
+  await access(join(root, '.claude', 'skills', 'ew-orchestrate', 'SKILL.md'));
+
+  // 5. Explicit `--plugin --scope user --host agy` updates/installs only the requested plugin target.
+  const userPlugin = await evolve('skill', 'update', '--plugin', '--scope', 'user', '--host', 'agy');
+  assert.deepEqual(userPlugin.scopes, ['user']);
+  assert.equal(userPlugin.skills.targets.length, 0);
+  assert.deepEqual(userPlugin.plugins.installed, ['user:agy']);
+  await access(join(home, '.gemini', 'config', 'plugins', 'self-evolving-workflow', 'plugin.json'));
+});
+
 test('completion harvesting preserves evidence and records zero-candidate receipts', async t => {
   const root = await temp(t);
   const { harvestCompletion, publishReference } = await import('../dist/closeout.js');

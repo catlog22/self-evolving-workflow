@@ -29,12 +29,15 @@ evolve skill install --scope project --host agy --yes
 # 或导出/安装为各宿主原生插件包（Claude Code / Codex / Antigravity）
 evolve skill install --plugin --scope project --host all --yes
 
+# 快速安装 / 一键自动检测并更新已安装的项目级与用户级 Skill 及插件（默认含 --upgrade --prune --yes）
+evolve update
+
 # 3. 写入并验证一条工作记忆
 evolve kb add --kind episodic "发布前运行回归测试。" --id quickstart-regression --type work_method --session quickstart
 evolve search "回归测试" --mode context --session quickstart
 ```
 
-升级已有安装并清理已退役旧包可执行 `evolve skill install --upgrade --prune --yes`，查看安装状态可执行 `evolve skill status`。常用会话恢复命令：`evolve session list`、`evolve session get --session <id>`、`evolve run get <run-id> --session <id>`、`evolve run read artifact <run-id> <alias> --session <id>`。
+升级已有安装并清理已退役旧包可执行 `evolve update`（或 `evolve skill update` / `evolve skill install --upgrade --prune --yes`），查看安装状态可执行 `evolve skill status`。常用会话恢复命令：`evolve session list`、`evolve session get --session <id>`、`evolve run get <run-id> --session <id>`、`evolve run read artifact <run-id> <alias> --session <id>`。
 
 ### 插件与 Marketplace 安装（Claude Code · Codex · Antigravity）
 

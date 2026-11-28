@@ -20,7 +20,7 @@ import { bindWorkflowSkill, commandNames, discoverWorkflowCommands, validateWork
 import { wikiLookupScope } from './workflow-knowledge.js';
 import {
   bundlePackageVersion, exportPlugins, installPlugins, installSkills, installStatus, installWorkflow,
-  pluginStatus, syncProjectSkills, workflowDocument, workflowDocuments,
+  pluginStatus, syncProjectSkills, updateWorkflow, workflowDocument, workflowDocuments,
 } from './workflow-install.js';
 
 const string = { type: 'string' } as const;
@@ -53,7 +53,8 @@ const usage = [
   'evolve run artifact-read <run> <alias> --session <id> [--scope <Wiki scope JSON>]',
   'evolve run decide <decision-id> --verdict proceed|fix|escalate --summary <text> [--confidence <0-100>] [--target-step <step-id>] [--evidence <ref>] --session <id> [--actor <id>]',
   'evolve run task controller|add|update|delete|list --session <id> --run <id>',
-  'evolve skill install|upgrade|sync [<package>...] [--plugin] [--scope project|user] [--host codex|claude|agy|all] [--path <dir>] [--yes]',
+  'evolve update [<package>...] [--plugin] [--scope project|user] [--host codex|claude|agy|all] [--force]',
+  'evolve skill install|upgrade|update|sync [<package>...] [--plugin] [--scope project|user] [--host codex|claude|agy|all] [--path <dir>] [--yes]',
   'evolve skill status [--plugin] [--scope project|user] [--host codex|claude|agy|all]',
   'evolve skill validate|workflows [show <id>]',
   'evolve history collect|list|search|show [options]',
@@ -352,7 +353,7 @@ async function runAgentCommand(root: string, action: string | undefined, args: s
 async function runWorkflowCli(argv: string[]) {
   const { positionals, values } = parseArgs({ options, args: argv, allowPositionals: true });
   let [group, action, ...args] = positionals;
-  if (group && !['session', 'run', 'agent', 'skill'].includes(group)) throw new InputError('Unknown command: ' + group);
+  if (group && !['session', 'run', 'agent', 'skill', 'update'].includes(group)) throw new InputError('Unknown command: ' + group);
   if (group === 'agent' && values.help) {
     process.stdout.write(agentHelp + '\n');
     return;
@@ -391,7 +392,29 @@ async function runWorkflowCli(argv: string[]) {
     return values.global ? 'user' as const
       : values.scope === undefined ? undefined : select(values.scope, ['project', 'user'] as const, 'Install scope');
   };
+  if (group === 'update') {
+    if (values.path) throw new InputError('--path is only supported with skill install --plugin');
+    const skill = [...(values.skill ?? []), ...(action ? [action] : []), ...args];
+    return print(updateWorkflow(root, {
+      scope: installScope(),
+      host: values.host,
+      skill,
+      force: Boolean(values.force),
+      plugin: Boolean(values.plugin),
+    }));
+  }
   if (group === 'skill') {
+    if (action === 'update') {
+      if (values.path) throw new InputError('--path is only supported with skill install --plugin');
+      const skill = [...(values.skill ?? []), ...args];
+      return print(updateWorkflow(root, {
+        scope: installScope(),
+        host: values.host,
+        skill,
+        force: Boolean(values.force),
+        plugin: Boolean(values.plugin),
+      }));
+    }
     if (action === 'install' || action === 'upgrade') {
       const upgrade = action === 'upgrade' || Boolean(values.upgrade);
       if (values.plugin) {

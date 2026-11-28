@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from '../dist/common.js';
 import { test } from 'node:test';
 import { cli, fixture } from './evolve-workflow-support.mjs';
@@ -749,6 +749,23 @@ test('Plugin install and export create host-valid bundles for claude, codex, and
     assert.ok(existsSync(join(home2, '.claude', 'plugins', 'local', 'self-evolving-workflow', '.claude-plugin', 'plugin.json')));
     assert.ok(existsSync(join(home2, '.agents', 'plugins', 'self-evolving-workflow', '.codex-plugin', 'plugin.json')));
     assert.ok(existsSync(join(home2, '.agents', 'plugins', 'marketplace.json')));
+
+    // Running `evolve update` inside the source checkout itself skips source skills/ and quick-installs user scope.
+    const repoRoot = dirname(dirname(cli));
+    const home3 = join(f.root, 'user-home-repo');
+    mkdirSync(home3, { recursive: true });
+    const repoUpdate = JSON.parse(execFileSync(process.execPath, [cli, 'update'], {
+      cwd: repoRoot,
+      env: { ...f.env, HOME: home3, USERPROFILE: home3, CODEX_HOME: join(home3, '.codex'), CLAUDE_CONFIG_DIR: join(home3, '.claude') },
+      encoding: 'utf8',
+      windowsHide: true,
+    }));
+    assert.equal(repoUpdate.mode, 'quick_install');
+    assert.deepEqual(repoUpdate.scopes, ['user']);
+    assert.ok(existsSync(join(home3, '.codex', 'skills', 'ew-orchestrate', 'SKILL.md')));
+    assert.throws(() => execFileSync(process.execPath, [cli, 'update', '--path', 'out'], {
+      cwd: f.root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    }), /--path is only supported/);
   } finally {
     f.cleanup();
   }

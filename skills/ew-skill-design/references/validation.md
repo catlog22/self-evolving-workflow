@@ -16,6 +16,7 @@ Before finalizing a Skill change, verify every item below:
 - **Checkable Completion Criteria**: Every step ends on an observable, exhaustive done-condition rather than a vague readiness phrase.
 - **Leading Words & Positive Framing**: Repeated multi-word rules are collapsed into sharp leading words; instructions state what to do, with any unavoidable guardrail paired with its positive target.
 - **No-op & Sediment Pruning**: Delete whole no-op sentences (default model behavior, weak qualifiers), stale sediment, duplicate rules, and trivial environment caches.
+- **Self-Evolving Loop Integrity (when applicable)**: Confirm data-layer assets (`playbooks/<domain>/` + `evolve kb` episodic memory) are decoupled from `SKILL.md`, pre-run Retrieve feeds seed cases, post-run Capture deduplicates and reads back writes without direct `wiki/entries/` edits, and process-layer changes are gated behind a `>= 2` proposal.
 
 ## Runtime & Replay Verification
 

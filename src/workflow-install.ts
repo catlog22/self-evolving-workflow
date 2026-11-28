@@ -82,6 +82,14 @@ export interface PluginInstallOptions {
   path?: string;
 }
 
+export interface UpdateOptions {
+  scope?: InstallScope;
+  host?: string;
+  skill?: string[];
+  force?: boolean;
+  plugin?: boolean;
+}
+
 export interface SkillInstallStatus {
   name: string;
   status: 'up_to_date' | 'outdated' | 'not_installed' | 'retired';
@@ -952,6 +960,36 @@ export function installStatus(root: string, options: { scope?: InstallScope; hos
   };
 }
 
+function applySkillTargets(
+  root: string,
+  scope: InstallScope,
+  targets: InstallTarget[],
+  requested: string[],
+  options: InstallSkillsOptions,
+) {
+  const targetResults = targets.map(entry => {
+    const result = installSkillsToTarget(entry, scope, root, requested, options);
+    return {
+      ...(entry.host ? { host: entry.host } : {}),
+      root: entry.target,
+      skills_dir: entry.skillsDir,
+      instructions: entry.instructions,
+      skillsLabel: entry.skillsLabel,
+      ...result,
+    };
+  });
+  const instructionGroups = new Map<string, string[]>();
+  for (const entry of targetResults) {
+    const labels = instructionGroups.get(entry.instructions) ?? [];
+    labels.push(entry.skillsLabel);
+    instructionGroups.set(entry.instructions, labels);
+  }
+  for (const [instructionsPath, labels] of instructionGroups) {
+    provisionInstructions(instructionsPath, activeInstructionLabels(root, scope, instructionsPath, labels));
+  }
+  return targetResults;
+}
+
 export async function installWorkflow(root: string, options: InstallOptions) {
   if (options.plugin) {
     return installPlugins(root, options);
@@ -1023,30 +1061,11 @@ export async function installWorkflow(root: string, options: InstallOptions) {
       : scope === 'project'
         ? [projectRootTarget(root)]
         : [scopeAndHost(root, scope, 'codex')];
-  const targetResults = targets.map(entry => {
-    const result = installSkillsToTarget(entry, scope, root, requested, {
-      upgrade: options.upgrade,
-      prune: options.prune,
-      force: options.force,
-    });
-    return {
-      ...(entry.host ? { host: entry.host } : {}),
-      root: entry.target,
-      skills_dir: entry.skillsDir,
-      instructions: entry.instructions,
-      skillsLabel: entry.skillsLabel,
-      ...result,
-    };
+  const targetResults = applySkillTargets(root, scope, targets, requested, {
+    upgrade: options.upgrade,
+    prune: options.prune,
+    force: options.force,
   });
-  const instructionGroups = new Map<string, string[]>();
-  for (const entry of targetResults) {
-    const labels = instructionGroups.get(entry.instructions) ?? [];
-    labels.push(entry.skillsLabel);
-    instructionGroups.set(entry.instructions, labels);
-  }
-  for (const [instructionsPath, labels] of instructionGroups) {
-    provisionInstructions(instructionsPath, activeInstructionLabels(root, scope, instructionsPath, labels));
-  }
   const skills = targetResults[0].skills;
   const workflows = workflowDocuments().filter(item => skills.includes(item.path.split('/')[1]));
   if (targetResults.length === 1) {
@@ -1571,45 +1590,13 @@ export function syncProjectSkills(
   };
 }
 
-export async function installPlugins(root: string, options: PluginInstallOptions = {}) {
-  if (options.path) {
-    return exportPlugins(root, options.path, options);
-  }
-  let scope: InstallScope = options.scope ?? 'project';
-  let selectedHosts = options.host === undefined ? undefined : parseInstallHosts(options.host);
-  let requested = options.skill ?? [];
-  const shipped = shippedSkills();
-
-  if (!options.yes) {
-    if (!process.stdin.isTTY || !process.stdout.isTTY) {
-      throw new InputError('Use an interactive terminal or pass --yes');
-    }
-    const ui = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      process.stdout.write(workflowTitle + ' plugin installer\n\n');
-      if (!options.scope && !selectedHosts) {
-        const answer = (await ui.question('Install plugin to [1] project or [2] user profile [1]? ')).trim();
-        if (answer && answer !== '1' && answer !== '2') throw new InputError('Choose project (1) or user (2)');
-        scope = answer === '2' ? 'user' : 'project';
-      }
-      if (!selectedHosts) {
-        const answer = (await ui.question('Host [1] Codex, [2] Claude, [3] Agy or [4] All [4]? ')).trim() || '4';
-        if (!['1', '2', '3', '4'].includes(answer)) throw new InputError('Choose Codex (1), Claude (2), Agy (3) or All (4)');
-        selectedHosts = answer === '1' ? ['codex'] : answer === '2' ? ['claude'] : answer === '3' ? ['agy'] : [...installHosts];
-      }
-      const selected = selectSkills(shipped, requested);
-      const targets = selectedHosts.map(host => resolvePluginTarget(root, scope, host));
-      const destination = targets.map(item => item.pluginDir).join(', ');
-      const verb = options.upgrade ? 'Install/upgrade' : 'Install';
-      const answer = (await ui.question(`${verb} plugin (${selected.length} skills) in ${destination}? [y/N] `)).trim();
-      if (!/^y(?:es)?$/i.test(answer)) return { status: 'cancelled' };
-    } finally {
-      ui.close();
-    }
-  }
-
-  const hostsToInstall = selectedHosts ?? [...installHosts];
-  const selectedSkills = selectSkills(shipped, requested);
+function applyPluginTargets(
+  root: string,
+  scope: InstallScope,
+  hostsToInstall: InstallHost[],
+  selectedSkills: string[],
+  options: { upgrade?: boolean; force?: boolean },
+) {
   const filePath = manifestPath(root, scope);
   const manifest = readManifest(filePath);
   const pluginsRecord: Record<string, PluginManifestRecord> = { ...(manifest.plugins ?? {}) };
@@ -1662,6 +1649,52 @@ export async function installPlugins(root: string, options: PluginInstallOptions
   }
   manifest.plugins = pluginsRecord;
   writeManifest(filePath, manifest);
+  return { filePath, targetResults };
+}
+
+export async function installPlugins(root: string, options: PluginInstallOptions = {}) {
+  if (options.path) {
+    return exportPlugins(root, options.path, options);
+  }
+  let scope: InstallScope = options.scope ?? 'project';
+  let selectedHosts = options.host === undefined ? undefined : parseInstallHosts(options.host);
+  let requested = options.skill ?? [];
+  const shipped = shippedSkills();
+
+  if (!options.yes) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new InputError('Use an interactive terminal or pass --yes');
+    }
+    const ui = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      process.stdout.write(workflowTitle + ' plugin installer\n\n');
+      if (!options.scope && !selectedHosts) {
+        const answer = (await ui.question('Install plugin to [1] project or [2] user profile [1]? ')).trim();
+        if (answer && answer !== '1' && answer !== '2') throw new InputError('Choose project (1) or user (2)');
+        scope = answer === '2' ? 'user' : 'project';
+      }
+      if (!selectedHosts) {
+        const answer = (await ui.question('Host [1] Codex, [2] Claude, [3] Agy or [4] All [4]? ')).trim() || '4';
+        if (!['1', '2', '3', '4'].includes(answer)) throw new InputError('Choose Codex (1), Claude (2), Agy (3) or All (4)');
+        selectedHosts = answer === '1' ? ['codex'] : answer === '2' ? ['claude'] : answer === '3' ? ['agy'] : [...installHosts];
+      }
+      const selected = selectSkills(shipped, requested);
+      const targets = selectedHosts.map(host => resolvePluginTarget(root, scope, host));
+      const destination = targets.map(item => item.pluginDir).join(', ');
+      const verb = options.upgrade ? 'Install/upgrade' : 'Install';
+      const answer = (await ui.question(`${verb} plugin (${selected.length} skills) in ${destination}? [y/N] `)).trim();
+      if (!/^y(?:es)?$/i.test(answer)) return { status: 'cancelled' };
+    } finally {
+      ui.close();
+    }
+  }
+
+  const hostsToInstall = selectedHosts ?? [...installHosts];
+  const selectedSkills = selectSkills(shipped, requested);
+  const { filePath, targetResults } = applyPluginTargets(root, scope, hostsToInstall, selectedSkills, {
+    upgrade: options.upgrade,
+    force: options.force,
+  });
 
   if (targetResults.length === 1) {
     return {
@@ -1728,5 +1761,203 @@ export function pluginStatus(root: string, options: { scope?: InstallScope; host
     manifest_exists: existsSync(filePath),
     bundle_version: bundlePackageVersion(),
     targets,
+  };
+}
+
+function hasEvolveSkillFiles(skillsDir: string): boolean {
+  if (!existsSync(skillsDir)) return false;
+  for (const name of [...shippedSkills(), ...retiredShippedSkills]) {
+    if (existsSync(join(skillsDir, name, 'SKILL.md'))) return true;
+  }
+  return false;
+}
+
+function hasEvolveAgentFiles(agentsDir: string, host: InstallHost | undefined): boolean {
+  if (!existsSync(agentsDir)) return false;
+  const ext = agentFileExtension(host);
+  for (const name of shippedAgents()) {
+    if (existsSync(join(agentsDir, `${name}${ext}`))) return true;
+  }
+  return false;
+}
+
+function detectScopeTargets(root: string, scope: InstallScope, hostFilter?: InstallHost[]) {
+  const manifest = readManifest(manifestPath(root, scope));
+  const hostsToCheck = hostFilter ?? [...installHosts];
+  const skillTargets: InstallTarget[] = [];
+
+  if (scope === 'project' && !hostFilter) {
+    const rootTarget = projectRootTarget(root);
+    if (resolve(rootTarget.skillsDir) !== resolve(source)) {
+      const recorded = Boolean(manifest.targets[resolve(rootTarget.skillsDir)]);
+      if (recorded || hasEvolveSkillFiles(rootTarget.skillsDir) || hasEvolveAgentFiles(rootTarget.agentsDir, undefined)) {
+        skillTargets.push(rootTarget);
+      }
+    }
+  }
+
+  for (const host of hostsToCheck) {
+    const target = scopeAndHost(root, scope, host);
+    const recorded = Boolean(manifest.targets[resolve(target.skillsDir)]);
+    if (recorded || existsSync(target.skillsDir) || existsSync(target.agentsDir)) {
+      skillTargets.push(target);
+    }
+  }
+
+  const pluginHosts: InstallHost[] = [];
+  for (const host of hostsToCheck) {
+    const resolved = resolvePluginTarget(root, scope, host);
+    const recorded = Boolean(manifest.plugins?.[resolve(resolved.pluginDir)]);
+    if (recorded || hasPluginManifest(resolved.pluginDir)) {
+      pluginHosts.push(host);
+    }
+  }
+
+  return { skillTargets, pluginHosts };
+}
+
+/**
+ * Auto-detect installed project and user Skill/Plugin targets and update them
+ * non-interactively with `--upgrade --prune --yes` semantics, or quick-install
+ * when no targets exist yet.
+ */
+export function updateWorkflow(root: string, options: UpdateOptions = {}) {
+  const resolvedRoot = resolve(root);
+  const requestedSkills = options.skill ?? [];
+  const selectedSkills = selectSkills(shippedSkills(), requestedSkills);
+  const requestedHosts = options.host === undefined ? undefined : parseInstallHosts(options.host);
+  const scopesToScan: InstallScope[] = options.scope ? [options.scope] : ['project', 'user'];
+
+  const plan = new Map<InstallScope, { skillTargets: InstallTarget[]; pluginHosts: InstallHost[] }>();
+  for (const scope of scopesToScan) {
+    const detected = detectScopeTargets(resolvedRoot, scope, requestedHosts);
+    plan.set(scope, {
+      skillTargets: options.plugin ? [] : detected.skillTargets,
+      pluginHosts: detected.pluginHosts,
+    });
+  }
+
+  const hasDetectedTargets = [...plan.values()].some(
+    entry => entry.skillTargets.length > 0 || entry.pluginHosts.length > 0,
+  );
+  const mode: 'detected' | 'quick_install' = hasDetectedTargets ? 'detected' : 'quick_install';
+
+  if (options.scope) {
+    const entry = plan.get(options.scope)!;
+    if (requestedHosts) {
+      for (const host of requestedHosts) {
+        if (options.plugin) {
+          if (!entry.pluginHosts.includes(host)) entry.pluginHosts.push(host);
+        } else if (!entry.skillTargets.some(item => item.host === host) && !entry.pluginHosts.includes(host)) {
+          entry.skillTargets.push(scopeAndHost(resolvedRoot, options.scope, host));
+        }
+      }
+    } else if (entry.skillTargets.length === 0 && entry.pluginHosts.length === 0) {
+      if (options.plugin) {
+        entry.pluginHosts.push(...installHosts);
+      } else if (options.scope === 'user') {
+        entry.skillTargets.push(...installHosts.map(host => scopeAndHost(resolvedRoot, 'user', host)));
+      } else {
+        const rootTarget = projectRootTarget(resolvedRoot);
+        if (resolve(rootTarget.skillsDir) === resolve(source)) {
+          throw new InputError('Specify --host codex|claude|agy|all when updating project scope inside the source repository');
+        }
+        entry.skillTargets.push(rootTarget);
+      }
+    }
+  } else if (requestedHosts && !hasDetectedTargets) {
+    const projectDetected = resolve(resolvedRoot) !== resolve(bundle) ? detectScopeTargets(resolvedRoot, 'project') : undefined;
+    const targetScope: InstallScope = projectDetected && (projectDetected.skillTargets.length > 0 || projectDetected.pluginHosts.length > 0)
+      ? 'project'
+      : 'user';
+    const entry = plan.get(targetScope)!;
+    if (options.plugin) entry.pluginHosts.push(...requestedHosts);
+    else entry.skillTargets.push(...requestedHosts.map(host => scopeAndHost(resolvedRoot, targetScope, host)));
+  } else if (!hasDetectedTargets) {
+    const entry = plan.get('user')!;
+    if (options.plugin) entry.pluginHosts.push(...installHosts);
+    else entry.skillTargets.push(...installHosts.map(host => scopeAndHost(resolvedRoot, 'user', host)));
+  }
+
+  const skillTargetResults: Array<{
+    scope: InstallScope;
+    host?: InstallHost;
+    root: string;
+    skills_dir: string;
+    instructions: string;
+    skills: string[];
+    installed: string[];
+    upgraded: string[];
+    kept: string[];
+    pruned: string[];
+    agents_dir: string;
+    agents: { names: string[]; installed: string[]; upgraded: string[]; kept: string[]; pruned: string[] };
+    manifest_path: string;
+  }> = [];
+
+  const pluginTargetResults: Array<{
+    scope: InstallScope;
+    host: InstallHost;
+    plugin_dir: string;
+    marketplace_path?: string;
+    instructions?: string;
+    action_status: 'installed' | 'upgraded' | 'kept';
+    version: string;
+    sha256: string;
+    disk_sha256: string;
+    skills: string[];
+    agents: string[];
+    manifest_path: string;
+    next_commands: string[];
+  }> = [];
+
+  for (const scope of scopesToScan) {
+    const entry = plan.get(scope);
+    if (!entry) continue;
+    if (entry.skillTargets.length > 0) {
+      const results = applySkillTargets(resolvedRoot, scope, entry.skillTargets, requestedSkills, {
+        upgrade: true,
+        prune: true,
+        force: options.force,
+      });
+      for (const { skillsLabel: _label, ...item } of results) {
+        skillTargetResults.push({ scope, ...item });
+      }
+    }
+    if (entry.pluginHosts.length > 0) {
+      const { filePath, targetResults } = applyPluginTargets(resolvedRoot, scope, entry.pluginHosts, selectedSkills, {
+        upgrade: true,
+        force: options.force,
+      });
+      for (const item of targetResults) {
+        pluginTargetResults.push({ scope, manifest_path: filePath, ...item });
+      }
+    }
+  }
+
+  const touchedScopes = scopesToScan.filter(scope => {
+    const entry = plan.get(scope);
+    return Boolean(entry && (entry.skillTargets.length > 0 || entry.pluginHosts.length > 0));
+  });
+
+  return {
+    status: 'updated' as const,
+    mode,
+    bundle_version: bundlePackageVersion(),
+    scopes: touchedScopes,
+    skills: {
+      targets: skillTargetResults,
+      installed: [...new Set(skillTargetResults.flatMap(item => item.installed))],
+      upgraded: [...new Set(skillTargetResults.flatMap(item => item.upgraded))],
+      kept: [...new Set(skillTargetResults.flatMap(item => item.kept))],
+      pruned: [...new Set(skillTargetResults.flatMap(item => item.pruned))],
+      agents: summarizeAgentResults(skillTargetResults),
+    },
+    plugins: {
+      targets: pluginTargetResults,
+      installed: pluginTargetResults.filter(item => item.action_status === 'installed').map(item => `${item.scope}:${item.host}`),
+      upgraded: pluginTargetResults.filter(item => item.action_status === 'upgraded').map(item => `${item.scope}:${item.host}`),
+      kept: pluginTargetResults.filter(item => item.action_status === 'kept').map(item => `${item.scope}:${item.host}`),
+    },
   };
 }

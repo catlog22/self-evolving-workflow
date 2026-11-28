@@ -139,9 +139,24 @@ evolve skill status --host all
 
 每个 Skill 会返回以下状态之一：`up_to_date`（与当前发布包一致）、`outdated`（本地副本已过期或有变更）、`not_installed`（尚未安装）或 `retired`（已改名或退役的历史 Evolve 包）。
 
+### 一键快速安装与自动更新（`evolve update` / `evolve skill update`）
+
+`evolve update`（等价别名 `evolve skill update`）默认以非交互模式运行（内置 `--upgrade --prune --yes` 语义），会自动扫描当前项目级与用户级已安装的 Skill 目录和宿主原生插件并完成增量更新与退役清理；若尚未检测到任何已有安装，则默认执行用户级全宿主（`codex` / `claude` / `agy`）快速安装：
+
+```sh
+# 自动检测并更新所有已安装的项目级与用户级 Skill / 插件（无已有安装时快速安装到用户级全部宿主）
+evolve update
+evolve skill update
+
+# 仅快速安装或更新指定范围 / 宿主 / 插件
+evolve update --scope project --host all
+evolve update --scope user --host agy
+evolve update --plugin --scope project --host all
+```
+
 ### 升级已有 Skill 与清理退役旧包
 
-默认 `evolve skill install` 会跳过已存在 `SKILL.md` 的目录，避免覆盖本地文件。需要升级或清理时使用 `--upgrade` / `--prune` / `--force`：
+默认 `evolve skill install` 会跳过已存在 `SKILL.md` 的目录，避免覆盖本地文件。需要升级或清理时使用 `evolve update` 或 `--upgrade` / `--prune` / `--force`：
 
 ```sh
 # 项目级增量升级（仅替换内容不一致的 Skill 并补装缺失包，支持失败自动回滚）
