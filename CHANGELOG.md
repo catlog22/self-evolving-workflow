@@ -2,6 +2,22 @@
 
 All notable changes to `self-evolving-workflow` are documented in this file.
 
+## [0.8.0] - 2026-11-28
+
+### 中文说明
+
+- **一键快速安装与自动更新（`evolve update` / `evolve skill update`）**：默认以非交互模式（`--upgrade --prune --yes`）自动扫描并更新项目级与用户级已安装的 Skill 目录及宿主原生插件，同时清理已退役旧包；若尚未检测到任何安装，则默认快速安装到用户级全部宿主（`codex` / `claude` / `agy`），并补充对应集成与工作流测试及文档。
+- **`ew-skill-design` 自进化闭环设计指南（v0.8.0）**：新增 `references/self-evolving-loop.md`，定义面向高变异性/高频回归领域的双层自进化架构——数据层（按需 `playbooks/<domain>/` + `evolve kb` 记忆的预检检索、分层验证与去重沉淀）与流程层（`>= 2` 重复盲区才触发的受控升级提案），并同步更新包契约与静态校验清单。
+- **发布流程规范化**：更新项目发布指南 Wiki（`wiki/entries/release-guide.md`），统一后续版本发布说明为精简中英文双语格式。
+- **验证**：`npm test` 152/152 通过、`npm run test:ew-layout` 通过、`skill validate --all` 32/32 通过、`npm pack --dry-run` 354 个文件（8.6 MB）。
+
+### English Summary
+
+- **One-Command Quick Install & Auto-Update (`evolve update` / `evolve skill update`)**: Added non-interactive auto-update (`--upgrade --prune --yes` by default) that detects and upgrades installed project/user Skill directories and native host plugins while pruning retired packages, falling back to a user-level quick install across `codex`, `claude`, and `agy` when no existing installation is found, with accompanying docs and tests.
+- **Self-Evolving Loop Design Guide in `ew-skill-design` (v0.8.0)**: Added `references/self-evolving-loop.md` specifying a dual-layer architecture separating per-run data-layer evolution (`playbooks/<domain>/` + `evolve kb` episodic memory) from governed process-layer upgrades (`>= 2` repeated blind spots), and updated package contract and validation checklists.
+- **Release Process Standardization**: Updated `wiki/entries/release-guide.md` to standardize concise bilingual (ZH/EN) release notes for subsequent releases.
+- **Verification**: `npm test` 152/152 passed; `npm run test:ew-layout` passed; `skill validate --all` 32/32 passed; `npm pack --dry-run` 354 files (8.6 MB unpacked).
+
 ## [0.7.0] - 2026-11-24
 
 ### Highlights
